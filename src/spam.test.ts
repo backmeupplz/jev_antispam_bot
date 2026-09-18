@@ -1,0 +1,67 @@
+import { describe, expect, test } from "bun:test";
+import { JevSpamClassifier, parseAssessment, SPAM_QUESTIONS } from "./spam";
+
+function response(probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {}) {
+  return {
+    model: "jev-1.13.0",
+    answers: Object.fromEntries(
+      Object.keys(SPAM_QUESTIONS).map((key) => [
+        key,
+        { type: "noul", noul: probabilities[key as keyof typeof SPAM_QUESTIONS] ?? 0.01 },
+      ]),
+    ),
+  };
+}
+
+describe("parseAssessment", () => {
+  test("deletes when any signal reaches the threshold", () => {
+    const result = parseAssessment(response({ profile_bait: 0.9 }), 0.9);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.strongestSignal).toBe("profile_bait");
+    expect(result.probability).toBe(0.9);
+  });
+
+  test("keeps messages below the threshold", () => {
+    expect(parseAssessment(response({ unsolicited_promotion: 0.899 }), 0.9).shouldDelete).toBe(false);
+  });
+
+  test("rejects malformed answers instead of guessing", () => {
+    const body = response() as { answers: Record<string, { type: string; noul: number }> };
+    body.answers.profile_bait!.noul = 2;
+    expect(() => parseAssessment(body, 0.9)).toThrow("invalid profile_bait answer");
+  });
+});
+
+describe("JevSpamClassifier", () => {
+  test("sends message state and all spam questions to TypeSafe", async () => {
+    let sentBody: unknown;
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0",
+      threshold: 0.9,
+      timeoutMs: 1_000,
+      fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return Response.json(response());
+      },
+    });
+
+    await classifier.classify({ text: "hello", embeddedLinks: [], isForwarded: false });
+    expect(sentBody).toEqual({
+      model: "jev-1.13.0",
+      state: { message: { text: "hello", embeddedLinks: [], isForwarded: false } },
+      questions: SPAM_QUESTIONS,
+    });
+  });
+
+  test("fails open at the caller when TypeSafe is unavailable", async () => {
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0",
+      threshold: 0.9,
+      timeoutMs: 1_000,
+      fetch: async () => new Response(null, { status: 503 }),
+    });
+
+    await expect(classifier.classify({ text: "hello", embeddedLinks: [], isForwarded: false }))
+      .rejects.toThrow("HTTP 503");
+  });
+});
