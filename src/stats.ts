@@ -210,7 +210,9 @@ export class AsyncStatsBuffer implements StatsRecorder {
   private readonly logger: Pick<Console, "info" | "error">;
   private timer?: ReturnType<typeof setTimeout>;
   private writeInFlight?: Promise<void>;
-  private accepting = true;
+  private stopPromise?: Promise<StatsHealth>;
+  private lifecycle: "running" | "draining" | "stopped" = "running";
+  private retryNotBefore = 0;
   private failures = 0;
   private droppedChats = 0;
   private droppedDeletions = 0;
@@ -233,7 +235,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
   }
 
   observeChat({ chatId, seenAt = new Date(), chatType, membershipActive }: ChatObservation): void {
-    if (!this.accepting) return;
+    if (this.lifecycle !== "running") return;
     const key = normalizeId(chatId);
     const previous = this.chats.get(key);
     if (!previous && this.chats.size >= this.maxPendingChats) {
@@ -253,7 +255,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
   }
 
   recordDeletion({ chatId, messageId, deletedAt = new Date() }: DeletionObservation): void {
-    if (!this.accepting) return;
+    if (this.lifecycle !== "running") return;
     const normalizedChatId = normalizeId(chatId);
     const normalizedMessageId = normalizeId(messageId);
     const key = `${normalizedChatId}:${normalizedMessageId}`;
@@ -282,17 +284,18 @@ export class AsyncStatsBuffer implements StatsRecorder {
   }
 
   async flush(): Promise<void> {
-    if (this.writeInFlight || (!this.chats.size && !this.deletions.size)) return;
+    if (this.lifecycle === "stopped" || this.writeInFlight || (!this.chats.size && !this.deletions.size)) return;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
+    this.retryNotBefore = 0;
 
     const chats = [...this.chats.values()].slice(0, this.batchSize);
     const deletions = [...this.deletions.values()].slice(0, this.batchSize);
     const batch = { chats, deletions };
     const startedFailures = this.failures;
-    const operation = this.store.writeBatch(batch).then(
+    const operation = Promise.resolve().then(() => this.store.writeBatch(batch)).then(
       () => {
         for (const chat of chats) {
           if (this.chats.get(chat.chatId) === chat) this.chats.delete(chat.chatId);
@@ -302,6 +305,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
           if (this.deletions.get(key) === deletion) this.deletions.delete(key);
         }
         this.failures = 0;
+        this.retryNotBefore = 0;
         if (!this.storageReady) {
           this.storageReady = true;
           this.logger.info(JSON.stringify({ event: "stats_storage_ready", ...this.health() }));
@@ -312,13 +316,14 @@ export class AsyncStatsBuffer implements StatsRecorder {
       },
       (error) => {
         this.failures += 1;
+        this.retryNotBefore = Date.now() + this.retryDelay();
         this.logFailure("write_failed", error);
       },
     ).finally(() => {
       this.writeInFlight = undefined;
-      if (this.accepting || this.chats.size || this.deletions.size) {
-        const delay = this.failures ? this.retryDelay() : this.flushIntervalMs;
-        this.schedule(delay);
+      if (this.lifecycle === "running") {
+        const waitMs = this.failures ? Math.max(0, this.retryNotBefore - Date.now()) : this.flushIntervalMs;
+        this.schedule(waitMs);
       }
     });
     this.writeInFlight = operation;
@@ -331,7 +336,12 @@ export class AsyncStatsBuffer implements StatsRecorder {
   }
 
   async stop(): Promise<StatsHealth> {
-    this.accepting = false;
+    this.stopPromise ??= this.drainAndClose();
+    return this.stopPromise;
+  }
+
+  private async drainAndClose(): Promise<StatsHealth> {
+    this.lifecycle = "draining";
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     const deadline = Date.now() + this.shutdownTimeoutMs;
@@ -340,23 +350,38 @@ export class AsyncStatsBuffer implements StatsRecorder {
       if (this.writeInFlight) {
         await Promise.race([this.writeInFlight, delay(Math.max(1, deadline - Date.now()))]);
       } else {
-        await this.flush();
+        const retryWaitMs = Math.min(
+          Math.max(0, this.retryNotBefore - Date.now()),
+          Math.max(0, deadline - Date.now()),
+        );
+        if (retryWaitMs > 0) {
+          await delay(retryWaitMs);
+          continue;
+        }
+        await Promise.race([
+          this.flush(),
+          delay(Math.max(1, deadline - Date.now())),
+        ]);
       }
-      if (this.writeInFlight && Date.now() >= deadline) break;
     }
 
+    this.lifecycle = "stopped";
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
     await Promise.race([
-      this.store.close().catch((error) => this.logFailure("close_failed", error)),
-      delay(Math.max(1, deadline - Date.now())),
+      Promise.resolve()
+        .then(() => this.store.close())
+        .catch((error) => this.logFailure("close_failed", error)),
+      delay(Math.max(0, deadline - Date.now())),
     ]);
     return this.health();
   }
 
   private schedule(delayMs: number): void {
-    if (this.timer || this.writeInFlight || (!this.accepting && !this.chats.size && !this.deletions.size)) return;
+    if (this.lifecycle !== "running" || this.timer || this.writeInFlight) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.flush();
+      if (this.lifecycle === "running") void this.flush();
     }, delayMs);
     this.timer.unref();
   }
