@@ -111,6 +111,40 @@ describe("live Jev moderation fixtures", () => {
     expect(result.shouldDelete).toBe(true);
   });
 
+  liveTest("deletes unsolicited paid-work offers and links repeated copies", async () => {
+    const offers = [
+      "Привет, на завтра на 9 утра нужен человек, есть подработка на пол дня, заплачу 5 тысяч, кто свободный отпишите в лс",
+      "Привет, на завтра нужно 2 человека, есть подработка на пару часов, плачу по 5 тысяч, писать в лс",
+    ];
+
+    for (const text of offers) {
+      const first = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(first.signals.unsolicited_paid_work_offer).toBeGreaterThanOrEqual(0.9);
+      expect(first.shouldDelete).toBe(true);
+
+      const repeated = await classifier.classify(
+        { text, embeddedLinks: [], isForwarded: false },
+        [{ text, embeddedLinks: [], isForwarded: false }],
+      );
+      expect(repeated.shouldDelete).toBe(true);
+      expect(repeated.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+    }
+  });
+
+  liveTest("keeps legitimate job and scheduling conversations", async () => {
+    const messages = [
+      "Ты спрашивал про вакансию: завтра смена с 9 утра, оплата 5000 рублей. Напиши мне, если ещё актуально.",
+      "У нас открыта вакансия разработчика; требования и контакты опубликованы в закреплённой теме по просьбе админов.",
+      "Я завтра работаю полдня, потом буду свободен.",
+      "Ищу работу на выходные. Подскажите, пожалуйста, где посмотреть вакансии?",
+    ];
+
+    for (const text of messages) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
   liveTest("keeps a requested consultation followed by a DM instruction", async () => {
     const recentMessages = [{
       text: "Ты спрашивал про консультацию. Первая встреча бесплатна, следующие стоят 5000 рублей.",

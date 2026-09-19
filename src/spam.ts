@@ -96,6 +96,17 @@ export const SPAM_QUESTIONS = {
         "It discusses ordinary salary, business revenue, economics, or income without using an earnings promise as a lure.",
     },
   },
+  unsolicited_paid_work_offer: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly offer paid work or recruit workers and direct group members to contact the sender privately?",
+    criteria: {
+      true:
+        "It offers a fixed payment for a short shift, a few hours, or a simple task; says one or more people are needed; gives a start time or availability request; and asks strangers to write, reply, or DM privately. Count plausible pay as spam when the offer is unsolicited; it does not need to promise unrealistic earnings.",
+      false:
+        "It answers a request for job information, shares a relevant vacancy in an invited hiring discussion, discusses employment normally, coordinates an existing job or shift, or is a job seeker genuinely asking for work without mass-recruiting readers into private contact.",
+    },
+  },
   standalone_link_promotion: {
     type: "noul",
     instructions:
@@ -146,7 +157,7 @@ export const SPAM_QUESTIONS = {
       "Do `recentMessages` followed by `message` form one coordinated spam pitch split across multiple Telegram messages?",
     criteria: {
       true:
-        "Together they form an unsolicited promotion, commercial offer, gambling or bonus pitch, easy-money lure, or profile/private-message funnel even when each fragment is weak alone. A service, sale, rental, contract-transfer, or price claim followed by a short 'write in DM' call is spam. Explicitly count denials such as 'this is not advertising' when they introduce an offer, including 'I will transfer my Vancouver apartment-rental contract' followed by 'DM me', or 'first consultation is free, later ones cost 5000' followed by 'write in DM'. Other examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link.",
+        "Together they form an unsolicited promotion, commercial offer, paid-work recruitment, gambling or bonus pitch, easy-money lure, or profile/private-message funnel even when each fragment is weak alone. A service, sale, rental, contract-transfer, job offer, or price claim followed by a short 'write in DM' call is spam. Repeated copies of the same unsolicited paid-work offer are one spam campaign. Explicitly count denials such as 'this is not advertising' when they introduce an offer, including 'I will transfer my Vancouver apartment-rental contract' followed by 'DM me', or 'first consultation is free, later ones cost 5000' followed by 'write in DM'. Other examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link.",
       false:
         "They are independent conversation, requested help or contact, an already ongoing rental or transaction, ordinary housing discussion, ordinary short replies, a legitimate multi-message explanation, or the recent messages do not materially turn the current message into spam.",
     },
@@ -192,7 +203,7 @@ export class JevSpamClassifier {
         instructions: `Is \`recentMessages[${index}]\` part of the same spam pitch or campaign as \`message\`?`,
         criteria: {
           true:
-            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an unsolicited sale, service, rental, contract-transfer, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising.",
+            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an unsolicited sale, service, rental, contract-transfer, paid-work recruitment, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising. Link repeated copies of the same unsolicited offer.",
           false:
             "It is unrelated legitimate conversation, requested help or contact, an already ongoing transaction, incidental context, or does not belong to the spam pitch containing the current message.",
         },

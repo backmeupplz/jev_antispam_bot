@@ -83,14 +83,13 @@ bot.on(
       return;
     }
 
-    const isSpamBurst = assessment.signals.multi_message_spam >= config.spamThreshold;
     const messageIds = deletionMessageIds(
       recentMessages,
       ctx.msgId,
-      isSpamBurst ? assessment.contextProbabilities : [],
+      assessment.contextProbabilities,
       CONTEXT_LINK_THRESHOLD,
     );
-    if (isSpamBurst) history.clear(ctx.chat.id, ctx.from.id);
+    if (messageIds.length > 1) history.clear(ctx.chat.id, ctx.from.id);
 
     const deletedMessageCount = await deleteMessages(
       ctx.chat.id,
