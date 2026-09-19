@@ -21,13 +21,23 @@ describe("live Jev moderation fixtures", () => {
       "https://ru.wikipedia.org/ - хороший заработок от 5000 рублей в сутки",
       "Вижу, у многих здесь проблемы с блокировками. Я занимаюсь восстановлением аккаунтов, могу помочь каждому, пишите мне.",
       "Шампуни от облысения от автора патента lisaya.zhopa@gmail.com",
-      "Продажа крипты в описании",
     ];
 
     for (const text of messages) {
       const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
       expect(result.shouldDelete).toBe(true);
     }
+  });
+
+  liveTest("deletes commerce bait hidden in the sender description", async () => {
+    const result = await classifier.classify({
+      text: "Продажа крипты в описании",
+      embeddedLinks: [],
+      isForwarded: false,
+    });
+
+    expect(result.signals.profile_description_sales_bait).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
   });
 
   liveTest("keeps legitimate Russian controls", async () => {
@@ -83,6 +93,21 @@ describe("live Jev moderation fixtures", () => {
     expect(result.signals.multi_message_spam).toBeGreaterThanOrEqual(0.9);
     expect(result.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
     expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps a requested consultation followed by a DM instruction", async () => {
+    const recentMessages = [{
+      text: "Ты спрашивал про консультацию. Первая встреча бесплатна, следующие стоят 5000 рублей.",
+      embeddedLinks: [],
+      isForwarded: false,
+    }];
+    const result = await classifier.classify(
+      { text: "Напиши в ЛС, если хочешь записаться.", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeLessThan(0.9);
+    expect(result.shouldDelete).toBe(false);
   });
 
   liveTest("keeps legitimate conversation split across messages", async () => {
