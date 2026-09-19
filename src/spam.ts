@@ -1,4 +1,11 @@
 const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
+export const CONTEXT_LINK_THRESHOLD = 0.75;
+
+type NoulQuestion = {
+  type: "noul";
+  instructions: string;
+  criteria: { true: string; false: string };
+};
 
 export const SPAM_QUESTIONS = {
   unsolicited_promotion: {
@@ -100,7 +107,18 @@ export const SPAM_QUESTIONS = {
         "It explicitly answers a request, supplies a contextually relevant citation or documentation link, shares news/source material in an ongoing discussion, asks a genuine question, warns about the site, or otherwise uses the URL as useful context rather than promoting a visit.",
     },
   },
-} as const;
+  multi_message_spam: {
+    type: "noul",
+    instructions:
+      "Do `recentMessages` followed by `message` form one coordinated spam pitch split across multiple Telegram messages?",
+    criteria: {
+      true:
+        "Together they form a recognizable unsolicited promotion, gambling or bonus pitch, easy-money lure, profile/private-message funnel, or repeated spam burst even when each individual fragment looks harmless. Examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link in another message.",
+      false:
+        "They are independent conversational messages, ordinary short replies, a legitimate multi-message explanation, or the recent messages do not materially turn the current message into spam.",
+    },
+  },
+} as const satisfies Record<string, NoulQuestion>;
 
 export type SpamSignal = keyof typeof SPAM_QUESTIONS;
 
@@ -115,6 +133,7 @@ export type SpamAssessment = {
   strongestSignal: SpamSignal;
   probability: number;
   signals: Record<SpamSignal, number>;
+  contextProbabilities: number[];
   model: string;
 };
 
@@ -131,8 +150,21 @@ export class JevSpamClassifier {
     },
   ) {}
 
-  async classify(message: ModerationMessage): Promise<SpamAssessment> {
+  async classify(message: ModerationMessage, recentMessages: ModerationMessage[] = []): Promise<SpamAssessment> {
     const fetcher = this.options.fetch ?? fetch;
+    const questions: Record<string, NoulQuestion> = { ...SPAM_QUESTIONS };
+    recentMessages.forEach((_recentMessage, index) => {
+      questions[`context_message_${index}`] = {
+        type: "noul",
+        instructions: `Is \`recentMessages[${index}]\` part of the same spam pitch or campaign as \`message\`?`,
+        criteria: {
+          true:
+            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context.",
+          false:
+            "It is unrelated legitimate conversation, incidental context, or does not belong to the spam pitch containing the current message.",
+        },
+      };
+    });
     const response = await fetcher(TYPESAFE_URL, {
       method: "POST",
       headers: {
@@ -141,8 +173,8 @@ export class JevSpamClassifier {
       },
       body: JSON.stringify({
         model: this.options.model,
-        state: { message },
-        questions: SPAM_QUESTIONS,
+        state: { message, recentMessages },
+        questions,
       }),
       signal: AbortSignal.timeout(this.options.timeoutMs),
     });
@@ -152,11 +184,11 @@ export class JevSpamClassifier {
     }
 
     const body: unknown = await response.json();
-    return parseAssessment(body, this.options.threshold);
+    return parseAssessment(body, this.options.threshold, recentMessages.length);
   }
 }
 
-export function parseAssessment(body: unknown, threshold: number): SpamAssessment {
+export function parseAssessment(body: unknown, threshold: number, contextCount = 0): SpamAssessment {
   if (!isRecord(body) || typeof body.model !== "string") {
     throw new Error("TypeSafe returned an invalid response");
   }
@@ -172,6 +204,13 @@ export function parseAssessment(body: unknown, threshold: number): SpamAssessmen
   });
 
   const signals = Object.fromEntries(entries) as Record<SpamSignal, number>;
+  const contextProbabilities = Array.from({ length: contextCount }, (_value, index) => {
+    const answer = answers[`context_message_${index}`];
+    if (!isRecord(answer) || answer.type !== "noul" || !isProbability(answer.noul)) {
+      throw new Error(`TypeSafe returned an invalid context_message_${index} answer`);
+    }
+    return answer.noul;
+  });
   const [strongestSignal, probability] = entries.reduce((strongest, current) =>
     current[1] > strongest[1] ? current : strongest,
   );
@@ -181,6 +220,7 @@ export function parseAssessment(body: unknown, threshold: number): SpamAssessmen
     strongestSignal,
     probability,
     signals,
+    contextProbabilities,
     model: body.model,
   };
 }
