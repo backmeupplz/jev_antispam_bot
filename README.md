@@ -24,6 +24,7 @@ Group administrators and anonymous admin/channel posts are exempt. If Jev or Tel
 
    - `TELEGRAM_BOT_TOKEN`: token from BotFather
    - `TYPESAFE_API_KEY`: TypeSafe API key
+   - `DATABASE_URL` (optional): private PostgreSQL connection URL for chat/deletion statistics
 
 3. Install and run:
 
@@ -43,6 +44,10 @@ Every new or edited text message or media caption from a non-admin group member 
 
 The history is process-local and expires automatically; it is not persisted or logged. The bot does not log message text or sender identity. Each analyzed message produces structured JSON logs with chat/message IDs, message size and link count, all spam-signal probabilities, the strongest signal, the final keep/delete decision, model version, and analysis duration. Failed classifications emit a terminal fail-open `keep` result with unavailable probabilities, and successful deletions are logged separately.
 
+When `DATABASE_URL` is set, the bot also records each chat ID observed in normal Telegram updates, first/last-seen timestamps, chat type, membership-active state when Telegram supplies it, and a lifetime count of confirmed successful deletions. It never stores message text, user profiles, Jev prompts, or credentials. Statistics are optional and fail open: database startup, migration, latency, or outages never block moderation or Telegram deletion calls.
+
+Database writes use one connection and one bounded asynchronous flusher. Chat sightings are coalesced, deletion identities are deduplicated by `(chat_id, message_id)`, and each atomic batch increments counters only for newly inserted identities. Dedupe identities expire after 90 days; lifetime counters do not. The defaults cap pending memory at 1,000 chats plus 1,000 deletions, batch up to 100 of each per flush, retry with exponential backoff and jitter, and attempt a five-second shutdown drain. An abrupt process/container crash or queue overflow can lose records that have not reached PostgreSQL; moderation remains available and overflow/failure health is emitted as rate-limited structured logs.
+
 Jev currently accepts text only, so media without a caption is not classified.
 
 ## Docker
@@ -51,6 +56,25 @@ Jev currently accepts text only, so media without a caption is not classified.
 docker build -t jev-antispam-bot .
 docker run --rm --env-file .env jev-antispam-bot
 ```
+
+## Easypanel PostgreSQL rollout contract
+
+Provision before enabling `DATABASE_URL`:
+
+- Easypanel project: `bots`; PostgreSQL service: `jev-antispam-db`.
+- PostgreSQL 16, one instance, no public domain or published database port.
+- Private Easypanel network only; persistent volume mounted at `/var/lib/postgresql/data`.
+- Database `jev_antispam`; dedicated non-superuser `jev_antispam_app` with only connect, schema create/usage, and DML rights for that database. Generate the password through the protected credential flow; do not put it in Git, chat, or logs.
+- Bot service: keep one replica and its existing start command; add only `DATABASE_URL=postgresql://jev_antispam_app:<protected-password>@<Easypanel-private-host>:5432/jev_antispam`, using the hostname Easypanel exposes for `jev-antispam-db` and the protected generated credential.
+
+The bot applies [`migrations/001_chat_stats.sql`](migrations/001_chat_stats.sql) lazily on the first queued batch with idempotent `IF NOT EXISTS` DDL. Rollout order is database service/volume → least-privilege credential → bot `DATABASE_URL` → bot deploy → observe `statsEnabled:true`, then `stats_storage_ready` after a normal update. Readiness can be checked privately with:
+
+```sql
+SELECT COUNT(*) AS known_chats, COALESCE(SUM(successful_deletions), 0) AS successful_deletions
+FROM known_chats;
+```
+
+Rollback removes `DATABASE_URL` and redeploys the bot, leaving the PostgreSQL volume intact for later recovery. Do not reset or delete the database during rollback.
 
 ## License
 

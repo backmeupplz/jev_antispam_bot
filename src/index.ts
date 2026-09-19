@@ -1,18 +1,26 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import { AdminCache } from "./admin-cache";
 import { loadConfig } from "./config";
+import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier, type SpamAssessment } from "./spam";
+import { createStatsRecorder } from "./stats";
 
 const config = loadConfig();
 const bot = new Bot(config.telegramBotToken);
 const admins = new AdminCache();
 const history = new MessageHistory();
+const stats = createStatsRecorder(config.databaseUrl);
 const classifier = new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
+});
+
+bot.use(async (ctx, next) => {
+  if (ctx.chat) stats.observeChat({ chatId: ctx.chat.id, chatType: ctx.chat.type });
+  await next();
 });
 
 bot.on(
@@ -84,15 +92,13 @@ bot.on(
     );
     if (isSpamBurst) history.clear(ctx.chat.id, ctx.from.id);
 
-    let deletedMessageCount = 0;
-    for (const messageId of messageIds) {
-      try {
-        await ctx.api.deleteMessage(ctx.chat.id, messageId);
-        deletedMessageCount += 1;
-      } catch (error) {
-        logFailure("delete_failed", error, ctx.chat.id, messageId);
-      }
-    }
+    const deletedMessageCount = await deleteMessages(
+      ctx.chat.id,
+      messageIds,
+      (chatId, messageId) => ctx.api.deleteMessage(chatId, messageId),
+      (chatId, messageId) => stats.recordDeletion({ chatId, messageId }),
+      (error, messageId) => logFailure("delete_failed", error, ctx.chat.id, messageId),
+    );
 
     if (deletedMessageCount) {
       console.info(JSON.stringify({
@@ -128,6 +134,11 @@ bot.command("status", async (ctx) => {
 
 bot.on("my_chat_member", async (ctx) => {
   const member = ctx.myChatMember.new_chat_member;
+  stats.observeChat({
+    chatId: ctx.chat.id,
+    chatType: ctx.chat.type,
+    membershipActive: member.status !== "left" && member.status !== "kicked",
+  });
   if (member.status === "left" || member.status === "kicked") return;
 
   const canDelete = member.status === "administrator" && member.can_delete_messages;
@@ -180,8 +191,34 @@ function logAnalysisResult(
   }));
 }
 
-console.info(JSON.stringify({ event: "bot_starting", model: config.jevModel, threshold: config.spamThreshold }));
-await bot.start({
-  allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
-  onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
-});
+let shutdownPromise: Promise<void> | undefined;
+function shutdown(signal: string): Promise<void> {
+  if (!shutdownPromise) {
+    shutdownPromise = (async () => {
+      console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
+      await bot.stop();
+      const health = await stats.stop();
+      console.info(JSON.stringify({ event: "bot_stopped", ...health }));
+    })();
+  }
+  return shutdownPromise;
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
+
+console.info(JSON.stringify({
+  event: "bot_starting",
+  model: config.jevModel,
+  threshold: config.spamThreshold,
+  statsEnabled: Boolean(config.databaseUrl),
+}));
+try {
+  await bot.start({
+    allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
+    onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
+  });
+} finally {
+  if (shutdownPromise) await shutdownPromise;
+  else await stats.stop();
+}

@@ -1,6 +1,7 @@
 export type Config = {
   telegramBotToken: string;
   typesafeApiKey: string;
+  databaseUrl?: string;
   jevModel: string;
   spamThreshold: number;
   jevTimeoutMs: number;
@@ -34,6 +35,7 @@ export function loadConfig(): Config {
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
     typesafeApiKey: required("TYPESAFE_API_KEY"),
+    databaseUrl: process.env.DATABASE_URL?.trim() || undefined,
     jevModel: process.env.JEV_MODEL?.trim() || "jev-1.13.0",
     spamThreshold,
     jevTimeoutMs,
