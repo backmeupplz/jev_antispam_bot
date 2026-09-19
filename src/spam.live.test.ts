@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { JevSpamClassifier } from "./spam";
+import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 const liveTest = apiKey ? test : test.skip;
@@ -40,5 +40,52 @@ describe("live Jev moderation fixtures", () => {
       const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
       expect(result.shouldDelete).toBe(false);
     }
+  });
+
+  liveTest("deletes a promotional pitch split across messages", async () => {
+    const recentMessages = [
+      { text: "Фриспинов", embeddedLinks: [], isForwarded: false },
+      { text: "Получи фриспины", embeddedLinks: [], isForwarded: false },
+    ];
+    const result = await classifier.classify(
+      { text: "Подробности в ЛС", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeGreaterThanOrEqual(0.9);
+    expect(result.contextProbabilities).toHaveLength(2);
+    expect(result.contextProbabilities.every((probability) => probability >= CONTEXT_LINK_THRESHOLD)).toBe(true);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps legitimate conversation split across messages", async () => {
+    const recentMessages = [
+      { text: "Кто сегодня будет на созвоне?", embeddedLinks: [], isForwarded: false },
+      { text: "Я пришлю документ позже.", embeddedLinks: [], isForwarded: false },
+    ];
+    const result = await classifier.classify(
+      { text: "Подробности в ЛС, как договаривались.", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeLessThan(0.9);
+    expect(result.shouldDelete).toBe(false);
+  });
+
+  liveTest("does not link unrelated earlier conversation to a later spam burst", async () => {
+    const recentMessages = [
+      { text: "Спасибо за помощь с настройкой сервера", embeddedLinks: [], isForwarded: false },
+      { text: "Фриспинов", embeddedLinks: [], isForwarded: false },
+      { text: "Получи фриспины", embeddedLinks: [], isForwarded: false },
+    ];
+    const result = await classifier.classify(
+      { text: "Подробности в ЛС", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeGreaterThanOrEqual(0.9);
+    expect(result.contextProbabilities[0]).toBeLessThan(CONTEXT_LINK_THRESHOLD);
+    expect(result.contextProbabilities[1]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+    expect(result.contextProbabilities[2]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
   });
 });

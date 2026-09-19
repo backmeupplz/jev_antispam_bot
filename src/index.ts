@@ -1,12 +1,14 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import { AdminCache } from "./admin-cache";
 import { loadConfig } from "./config";
+import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
-import { JevSpamClassifier, type SpamAssessment } from "./spam";
+import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier, type SpamAssessment } from "./spam";
 
 const config = loadConfig();
 const bot = new Bot(config.telegramBotToken);
 const admins = new AdminCache();
+const history = new MessageHistory();
 const classifier = new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
@@ -39,6 +41,7 @@ bot.on(
     }
 
     const analysisStartedAt = performance.now();
+    const recentMessages = history.recent(ctx.chat.id, ctx.from.id, Date.now(), ctx.msgId);
     console.info(JSON.stringify({
       event: "message_analysis_started",
       chatId: ctx.chat.id,
@@ -46,37 +49,62 @@ bot.on(
       characterCount: message.text.length,
       embeddedLinkCount: message.embeddedLinks.length,
       isForwarded: message.isForwarded,
+      isEdited: "edited_message" in ctx.update,
+      contextMessageCount: recentMessages.length,
     }));
 
     let assessment;
     try {
-      assessment = await classifier.classify(message);
+      assessment = await classifier.classify(
+        message,
+        recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
+      );
     } catch (error) {
-      logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt);
+      history.remember(ctx.chat.id, ctx.from.id, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+      logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
       logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
       await next();
       return;
     }
 
-    logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment);
+    logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
 
     if (!assessment.shouldDelete) {
+      history.remember(ctx.chat.id, ctx.from.id, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
       await next();
       return;
     }
 
-    try {
-      await ctx.deleteMessage();
+    const isSpamBurst = assessment.signals.multi_message_spam >= config.spamThreshold;
+    const messageIds = deletionMessageIds(
+      recentMessages,
+      ctx.msgId,
+      isSpamBurst ? assessment.contextProbabilities : [],
+      CONTEXT_LINK_THRESHOLD,
+    );
+    if (isSpamBurst) history.clear(ctx.chat.id, ctx.from.id);
+
+    let deletedMessageCount = 0;
+    for (const messageId of messageIds) {
+      try {
+        await ctx.api.deleteMessage(ctx.chat.id, messageId);
+        deletedMessageCount += 1;
+      } catch (error) {
+        logFailure("delete_failed", error, ctx.chat.id, messageId);
+      }
+    }
+
+    if (deletedMessageCount) {
       console.info(JSON.stringify({
         event: "spam_deleted",
         chatId: ctx.chat.id,
         messageId: ctx.msgId,
+        deletedMessageCount,
+        attemptedMessageCount: messageIds.length,
         signal: assessment.strongestSignal,
         probability: assessment.probability,
         model: assessment.model,
       }));
-    } catch (error) {
-      logFailure("delete_failed", error, ctx.chat.id, ctx.msgId);
     }
   },
 );
@@ -134,6 +162,7 @@ function logAnalysisResult(
   messageId: number,
   startedAt: number,
   assessment?: SpamAssessment,
+  contextMessageCount = 0,
 ): void {
   console.info(JSON.stringify({
     event: "message_analyzed",
@@ -144,7 +173,9 @@ function logAnalysisResult(
     confidence: assessment?.probability ?? null,
     strongestSignal: assessment?.strongestSignal ?? null,
     signals: assessment?.signals ?? null,
+    contextProbabilities: assessment?.contextProbabilities ?? null,
     model: assessment?.model ?? config.jevModel,
+    contextMessageCount,
     durationMs: Math.round(performance.now() - startedAt),
   }));
 }

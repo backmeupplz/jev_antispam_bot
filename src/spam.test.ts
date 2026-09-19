@@ -1,15 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { JevSpamClassifier, parseAssessment, SPAM_QUESTIONS } from "./spam";
 
-function response(probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {}) {
+function response(
+  probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {},
+  contextProbabilities: number[] = [],
+) {
   return {
     model: "jev-1.13.0",
-    answers: Object.fromEntries(
-      Object.keys(SPAM_QUESTIONS).map((key) => [
+    answers: Object.fromEntries([
+      ...Object.keys(SPAM_QUESTIONS).map((key) => [
         key,
         { type: "noul", noul: probabilities[key as keyof typeof SPAM_QUESTIONS] ?? 0.01 },
       ]),
-    ),
+      ...contextProbabilities.map((probability, index) => [
+        `context_message_${index}`,
+        { type: "noul", noul: probability },
+      ]),
+    ]),
   };
 }
 
@@ -48,9 +55,30 @@ describe("JevSpamClassifier", () => {
     await classifier.classify({ text: "hello", embeddedLinks: [], isForwarded: false });
     expect(sentBody).toEqual({
       model: "jev-1.13.0",
-      state: { message: { text: "hello", embeddedLinks: [], isForwarded: false } },
+      state: { message: { text: "hello", embeddedLinks: [], isForwarded: false }, recentMessages: [] },
       questions: SPAM_QUESTIONS,
     });
+  });
+
+  test("sends recent sender context to TypeSafe", async () => {
+    let sentBody: any;
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0",
+      threshold: 0.9,
+      timeoutMs: 1_000,
+      fetch: async (_url: string | URL | Request, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return Response.json(response({}, [0.95]));
+      },
+    });
+
+    const previous = { text: "Получи фриспины", embeddedLinks: [], isForwarded: false };
+    await classifier.classify(
+      { text: "Подробности в ЛС", embeddedLinks: [], isForwarded: false },
+      [previous],
+    );
+    expect(sentBody.state.recentMessages).toEqual([previous]);
+    expect(sentBody.questions.context_message_0).toBeDefined();
   });
 
   test("fails open at the caller when TypeSafe is unavailable", async () => {
