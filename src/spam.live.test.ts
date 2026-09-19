@@ -1,14 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
+import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
-const liveTest = apiKey ? test : test.skip;
+const liveTest = process.env.RUN_LIVE_JEV === "1" && apiKey ? test : test.skip;
 
 describe("live Jev moderation fixtures", () => {
   const classifier = new JevSpamClassifier(apiKey ?? "unused", {
     model: "jev-1.13.0",
     threshold: 0.9,
     timeoutMs: 10_000,
+  });
+
+  liveTest("deletes the exact forwarded Chinese mass-promotion ad from Telegram #20414", async () => {
+    const result = await classifier.classify({ text: chinesePromotion, embeddedLinks: [], isForwarded: true });
+    expect(result.probability).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps legitimate Chinese official forwards, requested promotion and discussion", async () => {
+    for (const text of chinesePromotionControls) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: true });
+      expect(result.probability).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
+    }
   });
 
   liveTest("deletes the reported Russian spam patterns", async () => {
