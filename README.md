@@ -8,6 +8,7 @@ It targets common Telegram spam:
 - “check my bio/profile” and DM/channel funnels;
 - phishing, wallet drainers, fake support, and fraudulent airdrops;
 - unsolicited bot/game promotion, sexual/DM bait, and easy-money pitches;
+- unsolicited service or product ads that funnel members to DMs, email, or another direct contact;
 - repetitive, irrelevant, or mass-mention spam.
 
 Group administrators and anonymous admin/channel posts are exempt. If Jev or Telegram is unavailable, the bot leaves the message untouched.
