@@ -7,6 +7,7 @@ It targets common Telegram spam:
 - token, investment, referral, gambling, giveaway, and service shilling;
 - “check my bio/profile” and DM/channel funnels;
 - phishing, wallet drainers, fake support, and fraudulent airdrops;
+- unsolicited bot/game promotion, sexual/DM bait, and easy-money pitches;
 - repetitive, irrelevant, or mass-mention spam.
 
 Group administrators and anonymous admin/channel posts are exempt. If Jev or Telegram is unavailable, the bot leaves the message untouched.
@@ -37,7 +38,7 @@ From then on, adding it as an admin is all a group owner needs to do. Run `/stat
 
 ## Policy
 
-Every text message or media caption from a non-admin group member is evaluated in one Jev request using four independent Noul questions. The message is deleted when any spam probability is at least `SPAM_THRESHOLD` (default `0.90`). The model is pinned to `jev-1.13.0` so a new model cannot silently change moderation behavior.
+Every text message or media caption from a non-admin group member is evaluated in one Jev request using nine independent Noul questions. The message is deleted when any spam probability is at least `SPAM_THRESHOLD` (default `0.90`). The model is pinned to `jev-1.13.0` so a new model cannot silently change moderation behavior.
 
 The bot does not log message text or sender identity. Each analyzed message produces structured JSON logs with chat/message IDs, message size and link count, all spam-signal probabilities, the strongest signal, the final keep/delete decision, model version, and analysis duration. Failed classifications emit a terminal fail-open `keep` result with unavailable probabilities, and successful deletions are logged separately.
 

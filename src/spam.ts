@@ -45,6 +45,61 @@ export const SPAM_QUESTIONS = {
         "It is a plausible human contribution, question, joke, greeting, disagreement, or on-topic message, even if short or informal.",
     },
   },
+  bot_promotion: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly advertise or invite group members to use another Telegram bot, game bot, channel, or mini app?",
+    criteria: {
+      true:
+        "It recommends, invites, or tells readers to play, open, start, or use an @...Bot, channel, mini app, or Telegram game, including short pitches such as offering a cool game.",
+      false:
+        "It asks a genuine question about a bot, answers a request, warns about a bot, or mentions one without promoting or inviting use.",
+    },
+  },
+  adult_dm_bait: {
+    type: "noul",
+    instructions:
+      "Does `message` solicit sexual content, dating contact, or private messages from group members?",
+    criteria: {
+      true:
+        "It offers or requests nudes or sexual content, or asks strangers to write in DMs or private chat for sexual or dating reasons, including short slang such as 'nudes in DMs'.",
+      false:
+        "It discusses sexuality or private messages without soliciting contact or content.",
+    },
+  },
+  gambling_promotion: {
+    type: "noul",
+    instructions:
+      "Does `message` advertise or lure readers to a casino, betting, or gambling website?",
+    criteria: {
+      true:
+        "It praises, recommends, links, or directs readers to an online casino, betting site, gambling bonuses, or gambling offer, including when disguised as a joke, pets, games, or an unrelated personal recommendation.",
+      false:
+        "It neutrally discusses gambling, asks about addiction or regulation, reports news, or warns against a gambling site without promoting it.",
+    },
+  },
+  easy_money_bait: {
+    type: "noul",
+    instructions:
+      "Does `message` use an unsolicited easy-money or implausible earnings claim as click bait?",
+    criteria: {
+      true:
+        "It promises or advertises unusually easy, guaranteed, extreme, daily, or unrealistic earnings, especially alongside a URL, profile invitation, or private-message funnel.",
+      false:
+        "It discusses ordinary salary, business revenue, economics, or income without using an earnings promise as a lure.",
+    },
+  },
+  standalone_link_promotion: {
+    type: "noul",
+    instructions:
+      "Is `message` a standalone unsolicited promotional pitch for an external website?",
+    criteria: {
+      true:
+        "It contains a URL plus praise, a personal endorsement, a favorite-site claim, a best-site claim, an invitation, or another reason to visit, and the message itself gives no sign that the group requested it. A bare message in the form 'best site for X - URL' is promotional. Count playful cover stories about cats, turtles, pets, or unrelated subjects when they funnel readers to the URL.",
+      false:
+        "It explicitly answers a request, supplies a contextually relevant citation or documentation link, shares news/source material in an ongoing discussion, asks a genuine question, warns about the site, or otherwise uses the URL as useful context rather than promoting a visit.",
+    },
+  },
 } as const;
 
 export type SpamSignal = keyof typeof SPAM_QUESTIONS;
