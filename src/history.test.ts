@@ -35,7 +35,7 @@ test("isolates history by chat and sender", () => {
   expect(history.recent(-2, 7, 200)).toEqual([]);
 });
 
-test("deletes only prior messages linked to the contextual spam burst", () => {
+test("deletes prior messages linked to any confirmed spam verdict", () => {
   const recent = [message(1, 100), message(2, 200), message(3, 300)];
   expect(deletionMessageIds(recent, 4, [0.95, 0.2, 0.8], 0.75)).toEqual([3, 4]);
   expect(deletionMessageIds(recent, 4, [], 0.75)).toEqual([4]);
