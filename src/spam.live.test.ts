@@ -95,6 +95,22 @@ describe("live Jev moderation fixtures", () => {
     expect(result.shouldDelete).toBe(true);
   });
 
+  liveTest("deletes an unsolicited rental offer split from its DM call", async () => {
+    const recentMessages = [{
+      text: "Не реклама. Переуступлю контракт на аренду квартиры ванкувер",
+      embeddedLinks: [],
+      isForwarded: false,
+    }];
+    const result = await classifier.classify(
+      { text: "В лс", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeGreaterThanOrEqual(0.9);
+    expect(result.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+    expect(result.shouldDelete).toBe(true);
+  });
+
   liveTest("keeps a requested consultation followed by a DM instruction", async () => {
     const recentMessages = [{
       text: "Ты спрашивал про консультацию. Первая встреча бесплатна, следующие стоят 5000 рублей.",
@@ -108,6 +124,36 @@ describe("live Jev moderation fixtures", () => {
 
     expect(result.signals.multi_message_spam).toBeLessThan(0.9);
     expect(result.shouldDelete).toBe(false);
+  });
+
+  liveTest("keeps legitimate rental conversations split across messages", async () => {
+    const cases = [
+      {
+        recent: "Ты спрашивал про мою квартиру в Ванкувере. Могу переуступить тебе договор аренды.",
+        current: "Напиши в ЛС, как договаривались.",
+      },
+      {
+        recent: "Я отправил тебе подписанный договор аренды квартиры.",
+        current: "Проверь ЛС, пожалуйста.",
+      },
+    ];
+
+    for (const { recent, current } of cases) {
+      const result = await classifier.classify(
+        { text: current, embeddedLinks: [], isForwarded: false },
+        [{ text: recent, embeddedLinks: [], isForwarded: false }],
+      );
+
+      expect(result.signals.multi_message_spam).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
+    }
+
+    const discussion = await classifier.classify({
+      text: "В Ванкувере сейчас сложно найти квартиру в аренду.",
+      embeddedLinks: [],
+      isForwarded: false,
+    });
+    expect(discussion.shouldDelete).toBe(false);
   });
 
   liveTest("keeps legitimate conversation split across messages", async () => {
