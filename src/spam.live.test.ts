@@ -29,6 +29,17 @@ describe("live Jev moderation fixtures", () => {
     }
   });
 
+  liveTest("deletes commerce bait hidden in the sender description", async () => {
+    const result = await classifier.classify({
+      text: "Продажа крипты в описании",
+      embeddedLinks: [],
+      isForwarded: false,
+    });
+
+    expect(result.signals.profile_description_sales_bait).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
   liveTest("keeps legitimate Russian controls", async () => {
     const messages = [
       "Кто-нибудь пробовал @SpheriumGameBot? Это официальный бот проекта?",
@@ -41,6 +52,9 @@ describe("live Jev moderation fixtures", () => {
       "Кто-нибудь пробовал шампунь от облысения? Ищу реальные отзывы.",
       "Автор исследования — Иван Иванов, ivan@example.com",
       "Как и просил, вот контакт продавца: seller@example.com",
+      "Я обновил описание проекта, посмотри пожалуйста",
+      "В описании профиля указал рабочую почту, как ты просил",
+      "Где посмотреть описание крипты?",
     ];
 
     for (const text of messages) {
@@ -63,6 +77,37 @@ describe("live Jev moderation fixtures", () => {
     expect(result.contextProbabilities).toHaveLength(2);
     expect(result.contextProbabilities.every((probability) => probability >= CONTEXT_LINK_THRESHOLD)).toBe(true);
     expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("deletes a consultation pitch and its later DM call", async () => {
+    const recentMessages = [{
+      text: "Это не реклама и не спам. Я ничего не продаю. Просто первая консультация бесплатна, следующие стоят 5000 рублей.",
+      embeddedLinks: [],
+      isForwarded: false,
+    }];
+    const result = await classifier.classify(
+      { text: "пишите в лс", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeGreaterThanOrEqual(0.9);
+    expect(result.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps a requested consultation followed by a DM instruction", async () => {
+    const recentMessages = [{
+      text: "Ты спрашивал про консультацию. Первая встреча бесплатна, следующие стоят 5000 рублей.",
+      embeddedLinks: [],
+      isForwarded: false,
+    }];
+    const result = await classifier.classify(
+      { text: "Напиши в ЛС, если хочешь записаться.", embeddedLinks: [], isForwarded: false },
+      recentMessages,
+    );
+
+    expect(result.signals.multi_message_spam).toBeLessThan(0.9);
+    expect(result.shouldDelete).toBe(false);
   });
 
   liveTest("keeps legitimate conversation split across messages", async () => {

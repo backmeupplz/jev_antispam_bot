@@ -129,15 +129,26 @@ export const SPAM_QUESTIONS = {
         "The contact was requested, belongs to official support, is an author citation, is ordinary coordination, or the message asks for product reviews without offering anything.",
     },
   },
+  profile_description_sales_bait: {
+    type: "noul",
+    instructions:
+      "Does `message` advertise a sale, product, or service and direct readers to the sender's profile, bio, or description for details or contact?",
+    criteria: {
+      true:
+        "It announces that crypto, goods, services, prices, contact details, or an offer are available in the sender's profile or description. Treat short pitches such as 'crypto sale in the description', 'details in bio', or equivalent hidden-profile commerce as spam even without a URL.",
+      false:
+        "It discusses or edits a normal project or listing description, answers a request about profile information, mentions that requested contact details were added, asks where a description is, or contains no promotional call to visit the sender's profile.",
+    },
+  },
   multi_message_spam: {
     type: "noul",
     instructions:
       "Do `recentMessages` followed by `message` form one coordinated spam pitch split across multiple Telegram messages?",
     criteria: {
       true:
-        "Together they form a recognizable unsolicited promotion, gambling or bonus pitch, easy-money lure, profile/private-message funnel, or repeated spam burst even when each individual fragment looks harmless. Examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link in another message.",
+        "Together they form an unsolicited promotion, commercial offer, gambling or bonus pitch, easy-money lure, or profile/private-message funnel even when each fragment is weak alone. A service pitch or price claim followed by a short 'write in DM' call is spam. Explicitly count a denial such as 'this is not advertising or spam; first consultation is free, later ones cost 5000' followed by 'write in DM' as one commercial spam burst. Other examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link.",
       false:
-        "They are independent conversational messages, ordinary short replies, a legitimate multi-message explanation, or the recent messages do not materially turn the current message into spam.",
+        "They are independent conversation, requested help or contact, an ongoing transaction, ordinary short replies, a legitimate multi-message explanation, or the recent messages do not materially turn the current message into spam.",
     },
   },
 } as const satisfies Record<string, NoulQuestion>;
