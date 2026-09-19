@@ -39,7 +39,7 @@ From then on, adding it as an admin is all a group owner needs to do. Run `/stat
 
 Every text message or media caption from a non-admin group member is evaluated in one Jev request using four independent Noul questions. The message is deleted when any spam probability is at least `SPAM_THRESHOLD` (default `0.90`). The model is pinned to `jev-1.13.0` so a new model cannot silently change moderation behavior.
 
-The bot does not log message text or sender identity. Logs contain only operational event names, chat/message IDs, the strongest spam signal, probability, and model version.
+The bot does not log message text or sender identity. Each analyzed message produces structured JSON logs with chat/message IDs, message size and link count, all spam-signal probabilities, the strongest signal, the final keep/delete decision, model version, and analysis duration. Failed classifications emit a terminal fail-open `keep` result with unavailable probabilities, and successful deletions are logged separately.
 
 Jev currently accepts text only, so media without a caption is not classified.
 

@@ -2,7 +2,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import { AdminCache } from "./admin-cache";
 import { loadConfig } from "./config";
 import { toModerationMessage } from "./message";
-import { JevSpamClassifier } from "./spam";
+import { JevSpamClassifier, type SpamAssessment } from "./spam";
 
 const config = loadConfig();
 const bot = new Bot(config.telegramBotToken);
@@ -38,14 +38,27 @@ bot.on(
       return;
     }
 
+    const analysisStartedAt = performance.now();
+    console.info(JSON.stringify({
+      event: "message_analysis_started",
+      chatId: ctx.chat.id,
+      messageId: ctx.msgId,
+      characterCount: message.text.length,
+      embeddedLinkCount: message.embeddedLinks.length,
+      isForwarded: message.isForwarded,
+    }));
+
     let assessment;
     try {
       assessment = await classifier.classify(message);
     } catch (error) {
+      logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt);
       logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
       await next();
       return;
     }
+
+    logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment);
 
     if (!assessment.shouldDelete) {
       await next();
@@ -114,6 +127,26 @@ function logFailure(event: string, error: unknown, chatId?: number, messageId?: 
         ? error.name
         : "unknown";
   console.error(JSON.stringify({ event, kind, chatId, messageId }));
+}
+
+function logAnalysisResult(
+  chatId: number,
+  messageId: number,
+  startedAt: number,
+  assessment?: SpamAssessment,
+): void {
+  console.info(JSON.stringify({
+    event: "message_analyzed",
+    status: assessment ? "completed" : "failed",
+    chatId,
+    messageId,
+    decision: assessment?.shouldDelete ? "delete" : "keep",
+    confidence: assessment?.probability ?? null,
+    strongestSignal: assessment?.strongestSignal ?? null,
+    signals: assessment?.signals ?? null,
+    model: assessment?.model ?? config.jevModel,
+    durationMs: Math.round(performance.now() - startedAt),
+  }));
 }
 
 console.info(JSON.stringify({ event: "bot_starting", model: config.jevModel, threshold: config.spamThreshold }));
