@@ -15,7 +15,7 @@ export class MessageHistory {
     setInterval(() => this.pruneExpired(Date.now()), Math.min(ttlMs, 60_000)).unref();
   }
 
-  recent(chatId: number, senderId: number, now = Date.now(), excludeMessageId?: number): RecentMessage[] {
+  recent(chatId: number, senderId: number | string, now = Date.now(), excludeMessageId?: number): RecentMessage[] {
     const key = `${chatId}:${senderId}`;
     const recent = (this.messages.get(key) ?? []).filter(
       (message) => now - message.receivedAt < this.ttlMs && message.messageId !== excludeMessageId,
@@ -26,12 +26,12 @@ export class MessageHistory {
     return recent;
   }
 
-  remember(chatId: number, senderId: number, message: RecentMessage): void {
+  remember(chatId: number, senderId: number | string, message: RecentMessage): void {
     const recent = this.recent(chatId, senderId, message.receivedAt, message.messageId);
     this.messages.set(`${chatId}:${senderId}`, [...recent, message].slice(-this.maxMessages));
   }
 
-  clear(chatId: number, senderId: number): void {
+  clear(chatId: number, senderId: number | string): void {
     this.messages.delete(`${chatId}:${senderId}`);
   }
 
