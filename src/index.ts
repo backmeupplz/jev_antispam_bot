@@ -38,6 +38,16 @@ bot.on(
       return;
     }
 
+    const analysisStartedAt = performance.now();
+    console.info(JSON.stringify({
+      event: "message_analysis_started",
+      chatId: ctx.chat.id,
+      messageId: ctx.msgId,
+      characterCount: message.text.length,
+      embeddedLinkCount: message.embeddedLinks.length,
+      isForwarded: message.isForwarded,
+    }));
+
     let assessment;
     try {
       assessment = await classifier.classify(message);
@@ -46,6 +56,18 @@ bot.on(
       await next();
       return;
     }
+
+    console.info(JSON.stringify({
+      event: "message_analyzed",
+      chatId: ctx.chat.id,
+      messageId: ctx.msgId,
+      decision: assessment.shouldDelete ? "delete" : "keep",
+      confidence: assessment.probability,
+      strongestSignal: assessment.strongestSignal,
+      signals: assessment.signals,
+      model: assessment.model,
+      durationMs: Math.round(performance.now() - analysisStartedAt),
+    }));
 
     if (!assessment.shouldDelete) {
       await next();
