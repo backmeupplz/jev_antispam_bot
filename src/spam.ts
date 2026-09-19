@@ -107,6 +107,28 @@ export const SPAM_QUESTIONS = {
         "It explicitly answers a request, supplies a contextually relevant citation or documentation link, shares news/source material in an ongoing discussion, asks a genuine question, warns about the site, or otherwise uses the URL as useful context rather than promoting a visit.",
     },
   },
+  direct_contact_solicitation: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly advertise a product or service and direct group members to contact the sender privately?",
+    criteria: {
+      true:
+        "It offers account recovery, consulting, help, products, treatments, sales, or another commercial service to the group and asks readers to write, DM, email, call, or otherwise contact the advertiser directly. Count a product or service pitch followed by an email address, phone number, username, or private-contact instruction as the call to action even when it does not explicitly say 'contact me'.",
+      false:
+        "It answers a request for help or a recommendation, shares contact details requested in the conversation, coordinates privately with someone already engaged, points to official support, or mentions a product or service without unsolicitedly soliciting customers or private contact.",
+    },
+  },
+  direct_response_advertising: {
+    type: "noul",
+    instructions:
+      "Is `message` an unsolicited direct-response advertisement where a product or service claim is paired with contact details as the way to respond?",
+    criteria: {
+      true:
+        "A product, treatment, service, or commercial offer is presented and an email address, phone number, username, or other contact is appended so readers can inquire or buy. Treat a message like 'hair-loss shampoos from the patent author' followed by an email address as advertising spam even without an explicit 'contact me' phrase.",
+      false:
+        "The contact was requested, belongs to official support, is an author citation, is ordinary coordination, or the message asks for product reviews without offering anything.",
+    },
+  },
   multi_message_spam: {
     type: "noul",
     instructions:
