@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
+import {
+  investmentTestimonial,
+  investmentTestimonialControls,
+} from "./fixtures/investment-testimonial";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 const liveTest = process.env.RUN_LIVE_JEV === "1" && apiKey ? test : test.skip;
@@ -22,6 +26,24 @@ describe("live Jev moderation fixtures", () => {
     for (const text of chinesePromotionControls) {
       const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: true });
       expect(result.probability).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
+  liveTest("deletes the exact profitable-investment testimonial funnel from Telegram #20507", async () => {
+    const result = await classifier.classify({
+      text: investmentTestimonial,
+      embeddedLinks: ["https://t.me/+fJCjtu9P2IVmNWZk"],
+      isForwarded: true,
+    });
+
+    expect(result.signals.investment_testimonial_funnel).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps legitimate investment discussion, requested guidance and scam warnings", async () => {
+    for (const text of investmentTestimonialControls) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
       expect(result.shouldDelete).toBe(false);
     }
   });
