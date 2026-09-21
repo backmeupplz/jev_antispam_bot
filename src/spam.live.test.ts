@@ -148,13 +148,22 @@ describe("live Jev moderation fixtures", () => {
 
   liveTest("deletes terse one-off cash task offers", async () => {
     const offers = [
-      "Помочь поклеить обои в гостиной, работы на часа 4, на карту или наличком 6 000",
-      "На завтра! Выгрузить ящики с продуктами в магазин. Кто готов пишите 4 600",
-      "Нужен ответственный человек для выполнения заказов по городу. Работа по готовым заявкам: получение отправления, доставка адресату и подтверждение выполнения. Вознаграждение — от 8 500 рублей за задание. Рабочие расходы компенсируются.",
+      {
+        text: "Помочь поклеить обои в гостиной, работы на часа 4, на карту или наличком 6 000",
+        isForwarded: false,
+      },
+      {
+        text: "На завтра! Выгрузить ящики с продуктами в магазин. Кто готов пишите 4 600",
+        isForwarded: true,
+      },
+      {
+        text: "Нужен ответственный человек для выполнения заказов по городу. Работа по готовым заявкам: получение отправления, доставка адресату и подтверждение выполнения. Вознаграждение — от 8 500 рублей за задание. Рабочие расходы компенсируются.",
+        isForwarded: false,
+      },
     ];
 
-    for (const text of offers) {
-      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+    for (const { text, isForwarded } of offers) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded });
       expect(result.signals.one_off_cash_task_offer).toBeGreaterThanOrEqual(0.9);
       expect(result.shouldDelete).toBe(true);
     }
