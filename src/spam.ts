@@ -99,12 +99,23 @@ export const SPAM_QUESTIONS = {
   unsolicited_paid_work_offer: {
     type: "noul",
     instructions:
-      "Does `message` unsolicitedly offer paid work or recruit workers and direct group members to contact the sender privately?",
+      "Does `message` unsolicitedly recruit group members for paid work, a short cash task, or an informal one-off job?",
     criteria: {
       true:
-        "It offers a fixed payment for a short shift, a few hours, or a simple task; says one or more people are needed; gives a start time or availability request; and asks strangers to write, reply, or DM privately. Count plausible pay as spam when the offer is unsolicited; it does not need to promise unrealistic earnings.",
+        "It offers a fixed payment for a short shift, a few hours, delivery, unloading, construction, repairs, wallpapering, errands, or another simple task; says someone is needed or asks who is available; or advertises per-task pay and expenses. Count plausible pay as spam when the offer is unsolicited, even without an explicit DM instruction or unrealistic earnings claim.",
       false:
-        "It answers a request for job information, shares a relevant vacancy in an invited hiring discussion, discusses employment normally, coordinates an existing job or shift, or is a job seeker genuinely asking for work without mass-recruiting readers into private contact.",
+        "It answers a request for job information or practical help, shares a relevant vacancy in an invited hiring discussion, discusses employment normally, coordinates an existing job or shift, asks friends for help without offering pay, or is a job seeker genuinely asking for work without mass-recruiting readers.",
+    },
+  },
+  one_off_cash_task_offer: {
+    type: "noul",
+    instructions:
+      "Is `message` a terse unsolicited cash-for-task advertisement recruiting group members for a one-off physical chore?",
+    criteria: {
+      true:
+        "It pairs a concrete chore such as wallpapering, unloading boxes, demolition, delivery, construction, moving, cleaning, or repairs with a date/duration and an explicit payment amount or payment method. Isolated group posts like 'Help wallpaper a living room, four hours, card or cash 6000', 'Tomorrow! unload boxes at a store. Who is ready, write, 4600', and 'city deliveries, 8500 per task, expenses covered' are true. Count these terse fragments as recruitment spam even if they omit the words job, vacancy, contact, or DM; forwarding does not make the offer legitimate.",
+      false:
+        "It continues a requested or already arranged task, asks friends for unpaid help, discusses pricing or an invoice for completed work, describes one's own ordinary workday, or posts a relevant vacancy in an invited hiring context.",
     },
   },
   standalone_link_promotion: {
@@ -127,6 +138,28 @@ export const SPAM_QUESTIONS = {
         "It offers account recovery, consulting, help, products, treatments, sales, or another commercial service to the group and asks readers to write, DM, email, call, or otherwise contact the advertiser directly. Count a product or service pitch followed by an email address, phone number, username, or private-contact instruction as the call to action even when it does not explicitly say 'contact me'.",
       false:
         "It answers a request for help or a recommendation, shares contact details requested in the conversation, coordinates privately with someone already engaged, points to official support, or mentions a product or service without unsolicitedly soliciting customers or private contact.",
+    },
+  },
+  unsolicited_service_referral: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly promote a paid professional, tutor, consultant, or service provider and funnel group members into private contact?",
+    criteria: {
+      true:
+        "It gives an enthusiastic testimonial or recommendation for a tutor, teacher, coach, repairer, consultant, or other paid provider, says the provider has openings or availability, and asks interested strangers to message privately or request the contact. Count a forwarded or friend-style endorsement as promotion when the group did not ask for it.",
+      false:
+        "It answers an explicit request for a recommendation, shares a requested contact, discusses a provider without soliciting customers, coordinates with a provider already involved, or gives a neutral review without a private-contact funnel.",
+    },
+  },
+  explicit_content_promotion: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly promote leaked, sexual, or explicit content, an adult channel, or registration to access such content?",
+    criteria: {
+      true:
+        "It advertises leaks, explicit videos, incest-themed or other sensational sexual material, a private/closed adult channel, an archive, daily updates, or one-time registration to access the content. Count short teaser captions and forwarded channel promotions even when no URL or username is visible.",
+      false:
+        "It reports or criticizes explicit-content spam, discusses sexuality without promoting content, warns about an adult channel, quotes such wording for moderation, or refers to age restrictions without inviting access.",
     },
   },
   direct_response_advertising: {
