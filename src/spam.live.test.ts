@@ -146,12 +146,73 @@ describe("live Jev moderation fixtures", () => {
     }
   });
 
+  liveTest("deletes terse one-off cash task offers", async () => {
+    const offers = [
+      {
+        text: "Помочь поклеить обои в гостиной, работы на часа 4, на карту или наличком 6 000",
+        isForwarded: false,
+      },
+      {
+        text: "На завтра! Выгрузить ящики с продуктами в магазин. Кто готов пишите 4 600",
+        isForwarded: true,
+      },
+      {
+        text: "Нужен ответственный человек для выполнения заказов по городу. Работа по готовым заявкам: получение отправления, доставка адресату и подтверждение выполнения. Вознаграждение — от 8 500 рублей за задание. Рабочие расходы компенсируются.",
+        isForwarded: false,
+      },
+    ];
+
+    for (const { text, isForwarded } of offers) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded });
+      expect(result.signals.one_off_cash_task_offer).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    }
+  });
+
+  liveTest("deletes an unsolicited tutor referral with a private-contact funnel", async () => {
+    const result = await classifier.classify({
+      text: "Есть как раз проверенный на себе репетитор грузинского языка — носитель, и по Грузии берет раза в 2 дешевле остальных. Куча перепробовал разных уже, намучался. Думал грузинский не моё. А оказалось дело в учителе было. С ней быстро начинаешь разговаривать. Да и оплачивал строго после каждого урока. И плюс она русский хорошо знает. Так что кому нужен мне не жалко поделиться со всеми. Только маякните напрямую, а не в чате",
+      embeddedLinks: [],
+      isForwarded: true,
+    });
+
+    expect(result.signals.unsolicited_service_referral).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("deletes a forwarded explicit-content channel promotion", async () => {
+    const result = await classifier.classify({
+      text: "Сливы ВИДЕО С БРАТОМ И СЕСТРОЙ И ПАНТЕРОЙ ПЕРВЫМИ!!! Закрытый канал, архив 847 ГБ, вход только через одноразовую регистрацию.",
+      embeddedLinks: [],
+      isForwarded: true,
+    });
+
+    expect(result.signals.explicit_content_promotion).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
   liveTest("keeps legitimate job and scheduling conversations", async () => {
     const messages = [
       "Ты спрашивал про вакансию: завтра смена с 9 утра, оплата 5000 рублей. Напиши мне, если ещё актуально.",
       "У нас открыта вакансия разработчика; требования и контакты опубликованы в закреплённой теме по просьбе админов.",
       "Я завтра работаю полдня, потом буду свободен.",
       "Ищу работу на выходные. Подскажите, пожалуйста, где посмотреть вакансии?",
+      "Ты просил помочь поклеить обои. Смогу приехать завтра на четыре часа.",
+      "Кто сможет помочь разгрузить мои коробки после переезда? Денег не предлагаю, просто нужна помощь друзей.",
+    ];
+
+    for (const text of messages) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
+  liveTest("keeps requested service referrals and non-promotional adult-content discussion", async () => {
+    const messages = [
+      "Ты просил посоветовать преподавателя грузинского. Напиши мне лично, пришлю контакт моего репетитора.",
+      "Кто-нибудь может порекомендовать хорошего репетитора грузинского языка?",
+      "В группе опять рекламируют закрытый канал со сливами — не регистрируйтесь, это спам.",
+      "Обсуждаем, как модераторам удалять рекламу сексуального контента из чата.",
     ];
 
     for (const text of messages) {
