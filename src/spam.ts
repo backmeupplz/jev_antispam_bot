@@ -96,6 +96,17 @@ export const SPAM_QUESTIONS = {
         "It discusses ordinary salary, business revenue, economics, or income without using an earnings promise as a lure.",
     },
   },
+  investment_testimonial_funnel: {
+    type: "noul",
+    instructions:
+      "Does `message` use an unsolicited success testimonial about profitable investing or crypto trading to funnel readers to a trader, account manager, Telegram invite, or investment channel?",
+    criteria: {
+      true:
+        "It praises a named trader, mentor, account manager, or investment opportunity; claims substantial profit, portfolio gains, or unusually successful results; and directs readers to Telegram links, a channel, private contact, or the promoted investment service. Count first-person gratitude stories and forwarded customer testimonials as promotion even when they avoid guarantees or direct commands.",
+      false:
+        "It is ordinary portfolio discussion, a requested recommendation, neutral financial news or research, a warning about investment fraud, criticism of a testimonial, or discussion that does not funnel readers to an investment provider or channel.",
+    },
+  },
   unsolicited_paid_work_offer: {
     type: "noul",
     instructions:
