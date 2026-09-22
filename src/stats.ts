@@ -20,6 +20,13 @@ export type DeletionObservation = {
   deletedAt?: Date;
 };
 
+export type ClassificationAttemptObservation = {
+  chatId: ChatId;
+  messageId: number | bigint | string;
+  updateId: number | bigint | string;
+  attemptedAt?: Date;
+};
+
 type PendingChat = {
   chatId: string;
   firstSeenAt: string;
@@ -34,9 +41,17 @@ type PendingDeletion = {
   deletedAt: string;
 };
 
+type PendingClassificationAttempt = {
+  chatId: string;
+  messageId: string;
+  updateId: string;
+  attemptedAt: string;
+};
+
 export type StatsBatch = {
   chats: PendingChat[];
   deletions: PendingDeletion[];
+  classificationAttempts: PendingClassificationAttempt[];
 };
 
 export interface StatsStore {
@@ -46,6 +61,7 @@ export interface StatsStore {
 
 export interface StatsRecorder {
   observeChat(observation: ChatObservation): void;
+  recordClassificationAttempt(observation: ClassificationAttemptObservation): void;
   recordDeletion(observation: DeletionObservation): void;
   stop(): Promise<StatsHealth>;
   health(): StatsHealth;
@@ -53,8 +69,10 @@ export interface StatsRecorder {
 
 export type StatsHealth = {
   pendingChats: number;
+  pendingClassificationAttempts: number;
   pendingDeletions: number;
   droppedChats: number;
+  droppedClassificationAttempts: number;
   droppedDeletions: number;
   flushFailures: number;
 };
@@ -63,6 +81,7 @@ type BufferOptions = {
   flushIntervalMs?: number;
   batchSize?: number;
   maxPendingChats?: number;
+  maxPendingClassificationAttempts?: number;
   maxPendingDeletions?: number;
   dbTimeoutMs?: number;
   retryBaseMs?: number;
@@ -97,15 +116,32 @@ deletion_rows AS (
     "deletedAt" TIMESTAMPTZ
   )
 ),
-deletion_chats AS (
+attempt_rows AS (
+  SELECT
+    "chatId"::BIGINT AS chat_id,
+    "messageId"::BIGINT AS message_id,
+    "updateId"::BIGINT AS update_id,
+    "attemptedAt" AS attempted_at
+  FROM jsonb_to_recordset($3::jsonb) AS x(
+    "chatId" TEXT,
+    "messageId" TEXT,
+    "updateId" TEXT,
+    "attemptedAt" TIMESTAMPTZ
+  )
+),
+event_chats AS (
   SELECT
     chat_id,
-    MIN(deleted_at) AS first_seen_at,
-    MAX(deleted_at) AS last_seen_at,
+    MIN(seen_at) AS first_seen_at,
+    MAX(seen_at) AS last_seen_at,
     NULL::TEXT AS chat_type,
     NULL::BOOLEAN AS membership_active
-  FROM deletion_rows
-  WHERE NOT EXISTS (SELECT 1 FROM supplied_chats WHERE supplied_chats.chat_id = deletion_rows.chat_id)
+  FROM (
+    SELECT chat_id, deleted_at AS seen_at FROM deletion_rows
+    UNION ALL
+    SELECT chat_id, attempted_at AS seen_at FROM attempt_rows
+  ) AS events
+  WHERE NOT EXISTS (SELECT 1 FROM supplied_chats WHERE supplied_chats.chat_id = events.chat_id)
   GROUP BY chat_id
 ),
 inserted_deletions AS (
@@ -120,6 +156,18 @@ deletion_counts AS (
   FROM inserted_deletions
   GROUP BY chat_id
 ),
+inserted_attempts AS (
+  INSERT INTO classification_attempt_dedup (update_id, chat_id, message_id, attempted_at)
+  SELECT attempt_rows.update_id, attempt_rows.chat_id, attempt_rows.message_id, attempt_rows.attempted_at
+  FROM attempt_rows
+  ON CONFLICT (update_id) DO NOTHING
+  RETURNING chat_id
+),
+attempt_counts AS (
+  SELECT chat_id, COUNT(*)::BIGINT AS increment
+  FROM inserted_attempts
+  GROUP BY chat_id
+),
 upserted_chats AS (
   INSERT INTO known_chats (
     chat_id,
@@ -127,7 +175,8 @@ upserted_chats AS (
     last_seen_at,
     chat_type,
     membership_active,
-    successful_deletions
+    successful_deletions,
+    processed_messages
   )
   SELECT
     chats.chat_id,
@@ -135,24 +184,32 @@ upserted_chats AS (
     chats.last_seen_at,
     chats.chat_type,
     chats.membership_active,
-    COALESCE(deletion_counts.increment, 0)
+    COALESCE(deletion_counts.increment, 0),
+    COALESCE(attempt_counts.increment, 0)
   FROM (
     SELECT * FROM supplied_chats
     UNION ALL
-    SELECT * FROM deletion_chats
+    SELECT * FROM event_chats
   ) AS chats
   LEFT JOIN deletion_counts USING (chat_id)
+  LEFT JOIN attempt_counts USING (chat_id)
   ON CONFLICT (chat_id) DO UPDATE SET
     first_seen_at = LEAST(known_chats.first_seen_at, EXCLUDED.first_seen_at),
     last_seen_at = GREATEST(known_chats.last_seen_at, EXCLUDED.last_seen_at),
     chat_type = COALESCE(EXCLUDED.chat_type, known_chats.chat_type),
     membership_active = COALESCE(EXCLUDED.membership_active, known_chats.membership_active),
     successful_deletions = known_chats.successful_deletions + EXCLUDED.successful_deletions,
+    processed_messages = known_chats.processed_messages + EXCLUDED.processed_messages,
     updated_at = NOW()
   RETURNING chat_id
+),
+pruned_deletions AS (
+  DELETE FROM deletion_dedup
+  WHERE deleted_at < NOW() - ($4::INTEGER * INTERVAL '1 day')
+  RETURNING 1
 )
-DELETE FROM deletion_dedup
-WHERE deleted_at < NOW() - ($3::INTEGER * INTERVAL '1 day');
+DELETE FROM classification_attempt_dedup
+WHERE attempted_at < NOW() - ($4::INTEGER * INTERVAL '1 day');
 `;
 
 export class PostgresStatsStore implements StatsStore {
@@ -174,7 +231,12 @@ export class PostgresStatsStore implements StatsStore {
 
   async writeBatch(batch: StatsBatch): Promise<void> {
     await this.ensureMigrated();
-    await this.pool.query(BATCH_SQL, [JSON.stringify(batch.chats), JSON.stringify(batch.deletions), DEDUPE_RETENTION_DAYS]);
+    await this.pool.query(BATCH_SQL, [
+      JSON.stringify(batch.chats),
+      JSON.stringify(batch.deletions),
+      JSON.stringify(batch.classificationAttempts),
+      DEDUPE_RETENTION_DAYS,
+    ]);
   }
 
   async close(): Promise<void> {
@@ -197,10 +259,12 @@ export class PostgresStatsStore implements StatsStore {
 
 export class AsyncStatsBuffer implements StatsRecorder {
   private readonly chats = new Map<string, PendingChat>();
+  private readonly classificationAttempts = new Map<string, PendingClassificationAttempt>();
   private readonly deletions = new Map<string, PendingDeletion>();
   private readonly flushIntervalMs: number;
   private readonly batchSize: number;
   private readonly maxPendingChats: number;
+  private readonly maxPendingClassificationAttempts: number;
   private readonly maxPendingDeletions: number;
   private readonly dbTimeoutMs: number;
   private readonly retryBaseMs: number;
@@ -215,6 +279,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
   private retryNotBefore = 0;
   private failures = 0;
   private droppedChats = 0;
+  private droppedClassificationAttempts = 0;
   private droppedDeletions = 0;
   private lastFailureLogAt = 0;
   private lastOverflowLogAt = 0;
@@ -224,6 +289,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
     this.flushIntervalMs = options.flushIntervalMs ?? 1_000;
     this.batchSize = options.batchSize ?? 100;
     this.maxPendingChats = options.maxPendingChats ?? 1_000;
+    this.maxPendingClassificationAttempts = options.maxPendingClassificationAttempts ?? 10_000;
     this.maxPendingDeletions = options.maxPendingDeletions ?? 1_000;
     this.dbTimeoutMs = options.dbTimeoutMs ?? 2_000;
     this.retryBaseMs = options.retryBaseMs ?? 1_000;
@@ -254,6 +320,29 @@ export class AsyncStatsBuffer implements StatsRecorder {
     this.schedule(this.flushIntervalMs);
   }
 
+  recordClassificationAttempt({
+    chatId,
+    messageId,
+    updateId,
+    attemptedAt = new Date(),
+  }: ClassificationAttemptObservation): void {
+    if (this.lifecycle !== "running") return;
+    const normalizedUpdateId = normalizeId(updateId);
+    if (this.classificationAttempts.has(normalizedUpdateId)) return;
+    if (this.classificationAttempts.size >= this.maxPendingClassificationAttempts) {
+      this.droppedClassificationAttempts += 1;
+      this.logOverflow();
+      return;
+    }
+    this.classificationAttempts.set(normalizedUpdateId, {
+      chatId: normalizeId(chatId),
+      messageId: normalizeId(messageId),
+      updateId: normalizedUpdateId,
+      attemptedAt: attemptedAt.toISOString(),
+    });
+    this.schedule(this.flushIntervalMs);
+  }
+
   recordDeletion({ chatId, messageId, deletedAt = new Date() }: DeletionObservation): void {
     if (this.lifecycle !== "running") return;
     const normalizedChatId = normalizeId(chatId);
@@ -276,15 +365,21 @@ export class AsyncStatsBuffer implements StatsRecorder {
   health(): StatsHealth {
     return {
       pendingChats: this.chats.size,
+      pendingClassificationAttempts: this.classificationAttempts.size,
       pendingDeletions: this.deletions.size,
       droppedChats: this.droppedChats,
+      droppedClassificationAttempts: this.droppedClassificationAttempts,
       droppedDeletions: this.droppedDeletions,
       flushFailures: this.failures,
     };
   }
 
   async flush(): Promise<void> {
-    if (this.lifecycle === "stopped" || this.writeInFlight || (!this.chats.size && !this.deletions.size)) return;
+    if (
+      this.lifecycle === "stopped" ||
+      this.writeInFlight ||
+      (!this.chats.size && !this.classificationAttempts.size && !this.deletions.size)
+    ) return;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -292,8 +387,9 @@ export class AsyncStatsBuffer implements StatsRecorder {
     this.retryNotBefore = 0;
 
     const chats = [...this.chats.values()].slice(0, this.batchSize);
+    const classificationAttempts = [...this.classificationAttempts.values()].slice(0, this.batchSize);
     const deletions = [...this.deletions.values()].slice(0, this.batchSize);
-    const batch = { chats, deletions };
+    const batch = { chats, classificationAttempts, deletions };
     const startedFailures = this.failures;
     const operation = Promise.resolve().then(() => this.store.writeBatch(batch)).then(
       () => {
@@ -303,6 +399,11 @@ export class AsyncStatsBuffer implements StatsRecorder {
         for (const deletion of deletions) {
           const key = `${deletion.chatId}:${deletion.messageId}`;
           if (this.deletions.get(key) === deletion) this.deletions.delete(key);
+        }
+        for (const attempt of classificationAttempts) {
+          if (this.classificationAttempts.get(attempt.updateId) === attempt) {
+            this.classificationAttempts.delete(attempt.updateId);
+          }
         }
         this.failures = 0;
         this.retryNotBefore = 0;
@@ -346,7 +447,10 @@ export class AsyncStatsBuffer implements StatsRecorder {
     this.timer = undefined;
     const deadline = Date.now() + this.shutdownTimeoutMs;
 
-    while ((this.chats.size || this.deletions.size || this.writeInFlight) && Date.now() < deadline) {
+    while (
+      (this.chats.size || this.classificationAttempts.size || this.deletions.size || this.writeInFlight) &&
+      Date.now() < deadline
+    ) {
       if (this.writeInFlight) {
         await Promise.race([this.writeInFlight, delay(Math.max(1, deadline - Date.now()))]);
       } else {
@@ -413,10 +517,19 @@ export class AsyncStatsBuffer implements StatsRecorder {
 
 class DisabledStatsRecorder implements StatsRecorder {
   observeChat(): void {}
+  recordClassificationAttempt(): void {}
   recordDeletion(): void {}
   async stop(): Promise<StatsHealth> { return this.health(); }
   health(): StatsHealth {
-    return { pendingChats: 0, pendingDeletions: 0, droppedChats: 0, droppedDeletions: 0, flushFailures: 0 };
+    return {
+      pendingChats: 0,
+      pendingClassificationAttempts: 0,
+      pendingDeletions: 0,
+      droppedChats: 0,
+      droppedClassificationAttempts: 0,
+      droppedDeletions: 0,
+      flushFailures: 0,
+    };
   }
 }
 

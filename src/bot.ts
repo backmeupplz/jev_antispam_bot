@@ -143,6 +143,11 @@ export function registerBotHandlers(bot: Bot, {
 
       let assessment;
       try {
+        stats.recordClassificationAttempt({
+          chatId: ctx.chat.id,
+          messageId: ctx.msgId,
+          updateId: ctx.update.update_id,
+        });
         assessment = await classifier.classify(
           senderProfile ? { ...message, senderProfile } : message,
           recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
