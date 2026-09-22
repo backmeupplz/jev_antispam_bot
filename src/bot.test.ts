@@ -139,7 +139,6 @@ test("emoji bait is classified with forwarded-user bio and personal-channel text
       bio: "private adult access",
       personalChannel: {
         title: personalChannel.title,
-        username: undefined,
         description: "private videos, registration required",
       },
     },
@@ -158,9 +157,15 @@ test("profile metadata failure logs safely and continues message-only classifica
   const h = harness();
   h.setProfileError();
   await h.send({ text: "❤️" });
+  await h.send({ text: "Another short hook" });
   expect(h.classifications[0]?.message).toEqual({ text: "❤️", embeddedLinks: [], isForwarded: false });
+  expect(h.classifications[1]?.message).toEqual({
+    text: "Another short hook", embeddedLinks: [], isForwarded: false,
+  });
   expect(h.logs.filter((log) => log.event === "profile_metadata_failed")).toHaveLength(1);
-  expect(h.logs.find((log) => log.event === "message_analysis_started")?.senderProfilePresent).toBe(false);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === user.id)).toHaveLength(1);
+  expect(h.logs.filter((log) => log.event === "message_analysis_started")
+    .every((log) => log.senderProfilePresent === false)).toBe(true);
   expect(JSON.stringify(h.logs)).not.toContain("private API detail");
   await h.stats.stop();
 });

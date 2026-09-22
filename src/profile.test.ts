@@ -50,7 +50,6 @@ test("loads and caches private bio plus personal-channel text", async () => {
     bio: "adult bio",
     personalChannel: {
       title: "Full Heat",
-      username: "adult_channel",
       description: "Private videos",
     },
   });
@@ -58,8 +57,8 @@ test("loads and caches private bio plus personal-channel text", async () => {
   expect(calls).toEqual([7, -1007]);
 });
 
-test("does not cache failures and keeps the cache bounded", async () => {
-  const cache = new SenderProfileCache(600_000, 1);
+test("briefly caches failures and retries after the negative-cache TTL", async () => {
+  const cache = new SenderProfileCache(600_000, 1, 1_500, 10);
   let fail = true;
   const calls: number[] = [];
   const getChat = async (id: number) => {
@@ -70,8 +69,40 @@ test("does not cache failures and keeps the cache bounded", async () => {
 
   await expect(cache.get(1, getChat)).rejects.toThrow();
   fail = false;
+  await expect(cache.get(1, getChat)).resolves.toBeUndefined();
+  expect(calls).toEqual([1]);
+  await Bun.sleep(15);
   await cache.get(1, getChat);
-  await cache.get(2, getChat);
+  expect(calls).toEqual([1, 1]);
+});
+
+test("removes expired profile text without requiring another access", async () => {
+  const cache = new SenderProfileCache(10, 1);
+  const getChat = async (id: number) => privateChat(id);
   await cache.get(1, getChat);
-  expect(calls).toEqual([1, 1, 2, 1]);
+  expect(cache["entries"].size).toBe(1);
+  await Bun.sleep(15);
+  expect(cache["entries"].size).toBe(0);
+});
+
+test("bounds pending lookups as well as settled entries", async () => {
+  const cache = new SenderProfileCache(600_000, 2);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const calls: number[] = [];
+  const getChat = async (id: number) => {
+    calls.push(id);
+    await gate;
+    return privateChat(id);
+  };
+
+  const first = cache.get(1, getChat);
+  const second = cache.get(2, getChat);
+  await expect(cache.get(3, getChat)).resolves.toBeUndefined();
+  expect(calls).toEqual([1, 2]);
+  expect(cache["inFlight"].size).toBe(2);
+  release();
+  await Promise.all([first, second]);
+  expect(cache["entries"].size).toBe(2);
+  expect(cache["inFlight"].size).toBe(0);
 });

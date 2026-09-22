@@ -242,7 +242,6 @@ export type SenderProfile = {
   bio?: string;
   personalChannel?: {
     title: string;
-    username?: string;
     description?: string;
   };
 };
