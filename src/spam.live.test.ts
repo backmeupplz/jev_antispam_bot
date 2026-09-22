@@ -5,6 +5,12 @@ import {
   investmentTestimonial,
   investmentTestimonialControls,
 } from "./fixtures/investment-testimonial";
+import {
+  directCryptoTradeControls,
+  directCryptoTradeOffer,
+  flightCourierRecruitment,
+  flightCourierRecruitmentControls,
+} from "./fixtures/crypto-trade-courier";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 const liveTest = process.env.RUN_LIVE_JEV === "1" && apiKey ? test : test.skip;
@@ -43,6 +49,42 @@ describe("live Jev moderation fixtures", () => {
 
   liveTest("keeps legitimate investment discussion, requested guidance and scam warnings", async () => {
     for (const text of investmentTestimonialControls) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
+  liveTest("deletes the exact direct USDT-buy solicitation from Telegram #20593", async () => {
+    const result = await classifier.classify({
+      text: directCryptoTradeOffer,
+      embeddedLinks: [],
+      isForwarded: false,
+    });
+
+    expect(result.signals.unsolicited_crypto_trade_offer).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps requested crypto trades, ordinary discussion and scam warnings", async () => {
+    for (const text of directCryptoTradeControls) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
+  liveTest("deletes the exact forwarded flight-courier recruitment from Telegram #20593", async () => {
+    const result = await classifier.classify({
+      text: flightCourierRecruitment,
+      embeddedLinks: [],
+      isForwarded: true,
+    });
+
+    expect(result.signals.unsolicited_paid_work_offer).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+  });
+
+  liveTest("keeps official logistics hiring, existing shipment coordination and warnings", async () => {
+    for (const text of flightCourierRecruitmentControls) {
       const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
       expect(result.shouldDelete).toBe(false);
     }
