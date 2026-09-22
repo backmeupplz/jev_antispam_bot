@@ -57,13 +57,13 @@ Every new/edited message skipped before classification emits exactly one `messag
 
 `bun run check` runs typechecking and deterministic tests, including the real grammY handlers with mocked Telegram/classifier calls. These tests prove routing, deletion selection, skip telemetry, history isolation, and unchanged statistics hooks—not live Jev probabilities or Telegram UI behavior.
 
-Live model regression tests require explicit `RUN_LIVE_JEV=1` plus `TYPESAFE_API_KEY` supplied through a protected credential environment authorized for `api.typesafe.ai`:
+Live model regression tests require explicit `RUN_LIVE_JEV=1` plus a valid `TYPESAFE_API_KEY`:
 
 ```sh
 RUN_LIVE_JEV=1 bun test src/spam.live.test.ts
 ```
 
-The suite includes the screenshot-transcribed Chinese advertisement from Telegram #20414, legitimate official-channel forwards, requested promotion, and ordinary forwarded discussion. Keep the 0.90 gate; do not treat mocked handler outcomes as model calibration. Fresh real-account Telegram QA after a reviewed rollout must verify external-channel ad deletion and legitimate/official-channel exemptions. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
+The suite includes a known Chinese advertisement, legitimate official-channel forwards, requested promotion, and ordinary forwarded discussion. Keep the 0.90 gate; do not treat mocked handler outcomes as model calibration. Test Telegram changes with a real account before deploying them. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
 
 ## Docker
 
@@ -72,24 +72,24 @@ docker build -t jev-antispam-bot .
 docker run --rm --env-file .env jev-antispam-bot
 ```
 
-## Easypanel PostgreSQL rollout contract
+## Optional PostgreSQL statistics
 
-Provision before enabling `DATABASE_URL`:
+Create a PostgreSQL database and set `DATABASE_URL` to its connection URL:
 
-- Easypanel project: `bots`; PostgreSQL service: `jev-antispam-db`.
-- PostgreSQL 16, one instance, no public domain or published database port.
-- Private Easypanel network only; persistent volume mounted at `/var/lib/postgresql/data`.
-- Database `jev_antispam`; dedicated non-superuser `jev_antispam_app` with only connect, schema create/usage, and DML rights for that database. Generate the password through the protected credential flow; do not put it in Git, chat, or logs.
-- Bot service: keep one replica and its existing start command; add only `DATABASE_URL=postgresql://jev_antispam_app:<protected-password>@<Easypanel-private-host>:5432/jev_antispam`, using the hostname Easypanel exposes for `jev-antispam-db` and the protected generated credential.
+```sh
+DATABASE_URL=postgresql://jev_antispam:<password>@localhost:5432/jev_antispam
+```
 
-The bot applies [`migrations/001_chat_stats.sql`](migrations/001_chat_stats.sql) lazily on the first queued batch with idempotent `IF NOT EXISTS` DDL. Rollout order is database service/volume → least-privilege credential → bot `DATABASE_URL` → bot deploy → observe `statsEnabled:true`, then `stats_storage_ready` after a normal update. Readiness can be checked privately with:
+The database user needs permission to connect, create tables in its schema, and read/write those tables. Keep the database private and use persistent storage in production.
+
+The bot applies [`migrations/001_chat_stats.sql`](migrations/001_chat_stats.sql) automatically on the first queued batch. The migration is idempotent, so no separate migration command is required. After the bot receives a normal update, a `stats_storage_ready` log confirms that storage is available. You can inspect the totals with:
 
 ```sql
 SELECT COUNT(*) AS known_chats, COALESCE(SUM(successful_deletions), 0) AS successful_deletions
 FROM known_chats;
 ```
 
-Rollback removes `DATABASE_URL` and redeploys the bot, leaving the PostgreSQL volume intact for later recovery. Do not reset or delete the database during rollback.
+To disable statistics, remove `DATABASE_URL` and restart the bot. Existing database data is left untouched.
 
 ## License
 
