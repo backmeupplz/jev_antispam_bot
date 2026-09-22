@@ -3,6 +3,7 @@ import { AdminCache } from "./admin-cache";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
+import { SenderProfileCache } from "./profile";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import type { StatsRecorder } from "./stats";
 
@@ -19,6 +20,7 @@ export function registerBotHandlers(bot: Bot, {
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
+  const profiles = new SenderProfileCache();
 
   bot.use(async (ctx, next) => {
     if (ctx.chat) stats.observeChat({ chatId: ctx.chat.id, chatType: ctx.chat.type });
@@ -53,6 +55,7 @@ export function registerBotHandlers(bot: Bot, {
       // sender_chat is the real actor; Telegram may attach a synthetic bot `from`.
       // Neither that synthetic user nor forward_origin proves administrator status.
       let senderId: string;
+      let profileUserId: number | undefined;
       if (ctx.senderChat) {
         if (ctx.senderChat.id === ctx.chat.id && ctx.senderChat.type === ctx.chat.type) {
           await skip("anonymous_group_admin");
@@ -103,9 +106,28 @@ export function registerBotHandlers(bot: Bot, {
           return;
         }
         senderId = `user:${ctx.from.id}`;
+        profileUserId = ctx.from.id;
+        const forwardOrigin = "forward_origin" in ctx.msg ? ctx.msg.forward_origin : undefined;
+        if (forwardOrigin?.type === "user" && !forwardOrigin.sender_user.is_bot) {
+          profileUserId = forwardOrigin.sender_user.id;
+        }
       }
 
       const analysisStartedAt = performance.now();
+      let senderProfile;
+      if (profileUserId !== undefined && message.text.length <= 280) {
+        try {
+          senderProfile = await profiles.get(
+            profileUserId,
+            (chatId, signal) => ctx.api.getChat(
+              chatId,
+              signal as Parameters<typeof ctx.api.getChat>[1],
+            ),
+          );
+        } catch (error) {
+          logFailure("profile_metadata_failed", error, ctx.chat.id, ctx.msgId);
+        }
+      }
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
@@ -116,12 +138,13 @@ export function registerBotHandlers(bot: Bot, {
         isForwarded: message.isForwarded,
         isEdited: "edited_message" in ctx.update,
         contextMessageCount: recentMessages.length,
+        senderProfilePresent: Boolean(senderProfile),
       }));
 
       let assessment;
       try {
         assessment = await classifier.classify(
-          message,
+          senderProfile ? { ...message, senderProfile } : message,
           recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
         );
       } catch (error) {

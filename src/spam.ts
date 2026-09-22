@@ -30,6 +30,17 @@ export const SPAM_QUESTIONS = {
         "It mentions a profile, bio, private message, or channel for a legitimate conversational reason and is not an unsolicited funnel.",
     },
   },
+  adult_profile_bait: {
+    type: "noul",
+    instructions:
+      "Do `message` and its optional `senderProfile` form adult-content or dating profile bait, where a low-substance group message exists mainly to make readers open the sender's profile or personal channel?",
+    criteria: {
+      true:
+        "The visible message is only an emoji, greeting, generic compliment, vague generated engagement, or another low-information hook, while senderProfile.bio or senderProfile.personalChannel advertises sexual/adult content, private videos, dating contact, registration, paid access, or an equivalent profile funnel. Count forwarded low-substance hooks when the exposed origin profile metadata contains the adult funnel.",
+      false:
+        "The profile metadata is benign; the message is substantive and on-topic despite the sender having an adult-oriented profile; the message reports or warns about profile spam; or no profile metadata exposes an adult/dating/private-content funnel.",
+    },
+  },
   scam_or_phishing: {
     type: "noul",
     instructions:
@@ -227,6 +238,18 @@ export type ModerationMessage = {
   isForwarded: boolean;
 };
 
+export type SenderProfile = {
+  bio?: string;
+  personalChannel?: {
+    title: string;
+    description?: string;
+  };
+};
+
+export type CurrentModerationMessage = ModerationMessage & {
+  senderProfile?: SenderProfile;
+};
+
 export type SpamAssessment = {
   shouldDelete: boolean;
   strongestSignal: SpamSignal;
@@ -249,7 +272,7 @@ export class JevSpamClassifier {
     },
   ) {}
 
-  async classify(message: ModerationMessage, recentMessages: ModerationMessage[] = []): Promise<SpamAssessment> {
+  async classify(message: CurrentModerationMessage, recentMessages: ModerationMessage[] = []): Promise<SpamAssessment> {
     const fetcher = this.options.fetch ?? fetch;
     const questions: Record<string, NoulQuestion> = { ...SPAM_QUESTIONS };
     recentMessages.forEach((_recentMessage, index) => {
