@@ -11,6 +11,7 @@ import {
   flightCourierRecruitment,
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
+import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 const liveTest = process.env.RUN_LIVE_JEV === "1" && apiKey ? test : test.skip;
@@ -86,6 +87,21 @@ describe("live Jev moderation fixtures", () => {
   liveTest("keeps official logistics hiring, existing shipment coordination and warnings", async () => {
     for (const text of flightCourierRecruitmentControls) {
       const result = await classifier.classify({ text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    }
+  });
+
+  liveTest("deletes low-substance hooks backed by an adult personal-channel funnel", async () => {
+    for (const message of profileBaitMessages) {
+      const result = await classifier.classify(message);
+      expect(result.signals.adult_profile_bait).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    }
+  });
+
+  liveTest("keeps benign profiles, substantive discussion, warnings and unprofiled short replies", async () => {
+    for (const message of profileBaitControls) {
+      const result = await classifier.classify(message);
       expect(result.shouldDelete).toBe(false);
     }
   });

@@ -3,7 +3,12 @@ import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
-import { SPAM_QUESTIONS, type ModerationMessage, type SpamAssessment } from "./spam";
+import {
+  SPAM_QUESTIONS,
+  type CurrentModerationMessage,
+  type ModerationMessage,
+  type SpamAssessment,
+} from "./spam";
 import { AsyncStatsBuffer, type StatsBatch } from "./stats";
 
 const botInfo: UserFromGetMe = {
@@ -16,6 +21,8 @@ const botInfo: UserFromGetMe = {
 const group = { id: -1001, type: "supergroup" as const, title: "private group title" };
 const channel = { id: -2001, type: "channel" as const, title: "private channel identity" };
 const user = { id: 12, is_bot: false, first_name: "private sender name", username: "private_username" };
+const forwardedUser = { id: 765432109, is_bot: false, first_name: "forward origin" };
+const personalChannel = { id: -2013, type: "channel" as const, title: "private profile channel" };
 const synthetic = { id: 136817688, is_bot: true, first_name: "Channel" };
 const forwarded = { type: "channel" as const, chat: channel, message_id: 50, date: 1 };
 
@@ -32,14 +39,22 @@ function harness() {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
-  const classifications: { message: ModerationMessage; recent: ModerationMessage[] }[] = [];
+  const classifications: { message: CurrentModerationMessage; recent: ModerationMessage[] }[] = [];
   const batches: StatsBatch[] = [];
   let answer = assessment();
   let classifyError = false;
   let metadataError = false;
+  let profileError = false;
   let adminError = false;
   let memberStatus = "member";
   let metadata: Record<string, unknown> = { ...group, accent_color_id: 0, max_reaction_count: 1 };
+  let profileMetadata: Record<string, unknown> = {
+    id: user.id, type: "private", first_name: "private", accent_color_id: 0,
+    max_reaction_count: 1, accepted_gift_types: {},
+  };
+  let personalChannelMetadata: Record<string, unknown> = {
+    ...personalChannel, accent_color_id: 0, max_reaction_count: 1, accepted_gift_types: {},
+  };
   const failedDeletes = new Set<number>();
   const logger = {
     info: (line: string) => { logs.push(JSON.parse(line)); },
@@ -51,10 +66,18 @@ function harness() {
   }, { autoStart: false, logger });
   bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
-    if ((method === "getChat" && metadataError) || (method === "getChatMember" && adminError)) {
+    const chatId = (payload as { chat_id?: number }).chat_id;
+    const isReceivingGroup = chatId === group.id || chatId === metadata.id;
+    if ((method === "getChat" && isReceivingGroup && metadataError)
+      || (method === "getChat" && !isReceivingGroup && profileError)
+      || (method === "getChatMember" && adminError)) {
       return { ok: false, error_code: 403, description: "private API detail" };
     }
-    if (method === "getChat") return { ok: true, result: metadata } as never;
+    if (method === "getChat") {
+      if (isReceivingGroup) return { ok: true, result: metadata } as never;
+      if (chatId === personalChannel.id) return { ok: true, result: personalChannelMetadata } as never;
+      return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
+    }
     if (method === "getChatMember") return { ok: true, result: { status: memberStatus, user } } as never;
     if (method === "deleteMessage" && failedDeletes.has((payload as { message_id: number }).message_id)) {
       return { ok: false, error_code: 400, description: "private delete detail" };
@@ -82,13 +105,65 @@ function harness() {
     setAnswer: (value: SpamAssessment) => { answer = value; },
     setClassifyError: () => { classifyError = true; },
     setMetadataError: () => { metadataError = true; },
+    setProfileError: () => { profileError = true; },
     setAdminError: () => { adminError = true; },
     setMemberStatus: (value: string) => { memberStatus = value; },
     setMetadata: (value: Record<string, unknown>) => { metadata = value; },
+    setProfileMetadata: (value: Record<string, unknown>) => { profileMetadata = value; },
+    setPersonalChannelMetadata: (value: Record<string, unknown>) => { personalChannelMetadata = value; },
     skipped: () => logs.filter((log) => log.event === "message_skipped"),
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test("emoji bait is classified with forwarded-user bio and personal-channel text", async () => {
+  const h = harness();
+  h.setAnswer(assessment(true));
+  h.setProfileMetadata({
+    id: forwardedUser.id, type: "private", first_name: "private", accent_color_id: 0,
+    max_reaction_count: 1, accepted_gift_types: {}, bio: "private adult access",
+    personal_chat: personalChannel,
+  });
+  h.setPersonalChannelMetadata({
+    ...personalChannel, accent_color_id: 0, max_reaction_count: 1, accepted_gift_types: {},
+    description: "private videos, registration required",
+  });
+
+  const forwardOrigin = { type: "user" as const, sender_user: forwardedUser, date: 1 };
+  await h.send({ text: "❤️", forward_origin: forwardOrigin });
+  await h.send({ text: "❤️", forward_origin: forwardOrigin });
+
+  expect(h.classifications[0]?.message).toEqual({
+    text: "❤️", embeddedLinks: [], isForwarded: true,
+    senderProfile: {
+      bio: "private adult access",
+      personalChannel: {
+        title: personalChannel.title,
+        username: undefined,
+        description: "private videos, registration required",
+      },
+    },
+  });
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === forwardedUser.id)).toHaveLength(1);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === personalChannel.id)).toHaveLength(1);
+  expect(h.deletes()).toEqual([1, 2]);
+  const serialized = JSON.stringify(h.logs);
+  for (const sensitive of ["private adult access", "private videos", personalChannel.title, String(forwardedUser.id)]) {
+    expect(serialized).not.toContain(sensitive);
+  }
+  await h.stats.stop();
+});
+
+test("profile metadata failure logs safely and continues message-only classification", async () => {
+  const h = harness();
+  h.setProfileError();
+  await h.send({ text: "❤️" });
+  expect(h.classifications[0]?.message).toEqual({ text: "❤️", embeddedLinks: [], isForwarded: false });
+  expect(h.logs.filter((log) => log.event === "profile_metadata_failed")).toHaveLength(1);
+  expect(h.logs.find((log) => log.event === "message_analysis_started")?.senderProfilePresent).toBe(false);
+  expect(JSON.stringify(h.logs)).not.toContain("private API detail");
+  await h.stats.stop();
+});
 
 test("external channel Chinese ad reaches classifier and deletion despite synthetic bot from", async () => {
   const h = harness();
@@ -152,7 +227,7 @@ test("ordinary user forwards are classified even when forward origin is the offi
   for (const text of chinesePromotionControls) await h.send({ text, forward_origin: forwarded });
   expect(h.classifications).toHaveLength(chinesePromotionControls.length);
   expect(h.classifications.every(({ message }) => message.isForwarded)).toBe(true);
-  expect(h.calls.some((call) => call.method === "getChat")).toBe(false);
+  expect(h.calls.some((call) => call.method === "getChat" && call.payload.chat_id === group.id)).toBe(false);
   expect(h.deletes()).toEqual([]);
   await h.stats.stop();
 });
@@ -210,7 +285,8 @@ test("channel history isolates identities, synthetic from, human users, receivin
   h.setMetadata(group);
   await h.send({ message_id: 1, sender_chat: channel, from: synthetic, text: "channel A edited" }, true);
   await h.send({ sender_chat: channel, from: synthetic, text: "channel A second" });
-  expect(h.classifications.slice(0, 6).every(({ recent }) => recent.length === 0)).toBe(true);
+  expect(h.classifications.slice(0, 6).map(({ recent }) => recent.map(({ text }) => text)))
+    .toEqual([[], [], [], [], [], []]);
   expect(h.classifications[6]?.recent.map(({ text }) => text)).toEqual(["channel A edited"]);
   // A confirmed linked verdict deletes only A's suffix, never B or other users/chats.
   h.setAnswer(assessment(true, [0.2, 0.98]));
