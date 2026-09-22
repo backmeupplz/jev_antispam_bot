@@ -96,6 +96,17 @@ export const SPAM_QUESTIONS = {
         "It discusses ordinary salary, business revenue, economics, or income without using an earnings promise as a lure.",
     },
   },
+  unsolicited_crypto_trade_offer: {
+    type: "noul",
+    instructions:
+      "Does `message` unsolicitedly offer to buy, sell, exchange, or provide cryptocurrency or stablecoins to group members?",
+    criteria: {
+      true:
+        "It is a direct commercial solicitation to buy, sell, swap, cash out, or exchange USDT, Bitcoin, crypto, stablecoins, or similar assets, including terse offers such as 'will buy usdt, any amount'. Count the offer as spam even when it omits a rate, contact instruction, URL, or explicit profit claim.",
+      false:
+        "It continues a specifically requested or already arranged trade, discusses crypto or markets normally, describes a personal transaction without soliciting strangers, asks a genuine question, quotes an offer for moderation, or warns about crypto-trade spam or scams.",
+    },
+  },
   investment_testimonial_funnel: {
     type: "noul",
     instructions:
@@ -113,9 +124,9 @@ export const SPAM_QUESTIONS = {
       "Does `message` unsolicitedly recruit group members for paid work, a short cash task, or an informal one-off job?",
     criteria: {
       true:
-        "It offers a fixed payment for a short shift, a few hours, delivery, unloading, construction, repairs, wallpapering, errands, or another simple task; says someone is needed or asks who is available; or advertises per-task pay and expenses. Count plausible pay as spam when the offer is unsolicited, even without an explicit DM instruction or unrealistic earnings claim.",
+        "It offers a fixed payment for a short shift, a few hours, delivery, unloading, construction, repairs, wallpapering, errands, international parcel or shipment escorting, or another simple task; says someone is needed or asks who is available; or advertises per-task or per-route pay and expenses. Explicitly count suspicious courier recruitment that requires a passport, promises unusually high pay per flight or route, and covers tickets or expenses. Count plausible pay as spam when the offer is unsolicited, even without an explicit DM instruction or unrealistic earnings claim.",
       false:
-        "It answers a request for job information or practical help, shares a relevant vacancy in an invited hiring discussion, discusses employment normally, coordinates an existing job or shift, asks friends for help without offering pay, or is a job seeker genuinely asking for work without mass-recruiting readers.",
+        "It answers a request for job information or practical help, shares a verified relevant vacancy in an invited or admin-approved hiring discussion, discusses employment normally, coordinates an existing job, shipment, business trip, or shift, warns about suspicious recruitment, asks friends for help without offering pay, or is a job seeker genuinely asking for work without mass-recruiting readers.",
     },
   },
   one_off_cash_task_offer: {
