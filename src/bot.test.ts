@@ -180,6 +180,8 @@ test("external channel Chinese ad reaches classifier and deletion despite synthe
   expect(h.skipped()).toEqual([]);
   await h.stats.stop();
   expect(h.batches[0]?.deletions.map(({ chatId, messageId }) => [chatId, messageId])).toEqual([["-1001", "1"]]);
+  expect(h.batches[0]?.classificationAttempts.map(({ chatId, messageId, updateId }) =>
+    [chatId, messageId, updateId])).toEqual([["-1001", "1", "1"]]);
 });
 
 test("channel identity without from is eligible; edited captions and hidden links are normalized", async () => {
@@ -258,6 +260,7 @@ test.each([
   expect(h.calls).toEqual([]);
   await h.stats.stop();
   expect(h.batches[0]?.chats).toHaveLength(1); // Global observation survives every skip.
+  expect(h.batches[0]?.classificationAttempts).toEqual([]);
   expect(h.batches[0]?.deletions).toEqual([]);
 });
 
@@ -313,6 +316,8 @@ test("classification failure keeps and remembers the channel message with one fa
   expect(JSON.stringify(h.logs)).not.toContain(chinesePromotion);
   expect(JSON.stringify(h.logs)).not.toContain("private model failure");
   await h.stats.stop();
+  expect(h.batches[0]?.classificationAttempts.map(({ messageId, updateId }) =>
+    [messageId, updateId])).toEqual([["1", "1"], ["2", "2"]]);
 });
 
 test("linked deletes persist only successful group/message identities, never sender or content", async () => {
@@ -326,6 +331,11 @@ test("linked deletes persist only successful group/message identities, never sen
   expect(h.logs.filter((log) => log.event === "delete_failed")).toHaveLength(1);
   await h.stats.stop();
   expect(h.batches[0]?.deletions.map(({ chatId, messageId }) => [chatId, messageId])).toEqual([["-1001", "2"]]);
+  expect(h.batches[0]?.classificationAttempts.map(({ chatId, messageId, updateId }) =>
+    [chatId, messageId, updateId])).toEqual([
+      ["-1001", "1", "1"],
+      ["-1001", "2", "2"],
+    ]);
   const serialized = JSON.stringify({ batches: h.batches, logs: h.logs });
   for (const sensitive of [chinesePromotion, "private delete detail", channel.title, user.first_name, user.username, String(channel.id), String(synthetic.id)]) {
     expect(serialized).not.toContain(sensitive);

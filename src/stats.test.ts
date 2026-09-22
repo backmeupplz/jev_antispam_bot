@@ -69,6 +69,33 @@ test("retries the same deletion identity after failure without losing it", async
   await stats.stop();
 });
 
+test("deduplicates classification attempts by Telegram update ID before persistence", async () => {
+  const store = new FakeStore();
+  const stats = new AsyncStatsBuffer(store, { autoStart: false, logger: silentLogger });
+  stats.recordClassificationAttempt({
+    chatId: -1001,
+    messageId: 77,
+    updateId: 9001,
+    attemptedAt: new Date("2026-09-18T03:00:00Z"),
+  });
+  stats.recordClassificationAttempt({
+    chatId: -1001,
+    messageId: 77,
+    updateId: 9001,
+    attemptedAt: new Date("2026-09-18T03:00:01Z"),
+  });
+  await stats.flush();
+
+  expect(store.batches[0]?.classificationAttempts).toEqual([{
+    chatId: "-1001",
+    messageId: "77",
+    updateId: "9001",
+    attemptedAt: "2026-09-18T03:00:00.000Z",
+  }]);
+  expect(stats.health().pendingClassificationAttempts).toBe(0);
+  await stats.stop();
+});
+
 test("running retries still recover after the configured backoff", async () => {
   const store = new FakeStore();
   store.failuresRemaining = 1;
@@ -88,28 +115,36 @@ test("running retries still recover after the configured backoff", async () => {
   await stats.stop();
 });
 
-test("bounds independent chat and deletion queues and recovers after backpressure", async () => {
+test("bounds independent stats queues and recovers after backpressure", async () => {
   const store = new FakeStore();
   const stats = new AsyncStatsBuffer(store, {
     autoStart: false,
     maxPendingChats: 2,
+    maxPendingClassificationAttempts: 2,
     maxPendingDeletions: 2,
     batchSize: 10,
     logger: silentLogger,
   });
   for (let id = 1; id <= 3; id += 1) {
     stats.observeChat({ chatId: -id });
+    stats.recordClassificationAttempt({ chatId: -id, messageId: id, updateId: id });
     stats.recordDeletion({ chatId: -id, messageId: id });
   }
 
   expect(stats.health()).toMatchObject({
     pendingChats: 2,
+    pendingClassificationAttempts: 2,
     pendingDeletions: 2,
     droppedChats: 1,
+    droppedClassificationAttempts: 1,
     droppedDeletions: 1,
   });
   await stats.flush();
-  expect(stats.health()).toMatchObject({ pendingChats: 0, pendingDeletions: 0 });
+  expect(stats.health()).toMatchObject({
+    pendingChats: 0,
+    pendingClassificationAttempts: 0,
+    pendingDeletions: 0,
+  });
   await stats.stop();
 });
 
@@ -117,10 +152,15 @@ test("best-effort shutdown drains queued records and closes the store", async ()
   const store = new FakeStore();
   const stats = new AsyncStatsBuffer(store, { autoStart: false, logger: silentLogger });
   stats.observeChat({ chatId: -1002 });
+  stats.recordClassificationAttempt({ chatId: -1002, messageId: 5, updateId: 5 });
   stats.recordDeletion({ chatId: -1002, messageId: 5 });
 
   const health = await stats.stop();
-  expect(health).toMatchObject({ pendingChats: 0, pendingDeletions: 0 });
+  expect(health).toMatchObject({
+    pendingChats: 0,
+    pendingClassificationAttempts: 0,
+    pendingDeletions: 0,
+  });
   expect(store.batches).toHaveLength(1);
   expect(store.closed).toBe(true);
 });
@@ -214,6 +254,7 @@ test("shutdown is deadline-bounded, idempotent, and ignores late enqueue", async
 
   const healthAtStop = stats.health();
   stats.observeChat({ chatId: -1006 });
+  stats.recordClassificationAttempt({ chatId: -1006, messageId: 8, updateId: 8 });
   stats.recordDeletion({ chatId: -1006, messageId: 8 });
   await stats.flush();
   await stats.stop();
