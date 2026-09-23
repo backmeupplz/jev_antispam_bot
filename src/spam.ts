@@ -74,6 +74,17 @@ export const SPAM_QUESTIONS = {
         "It asks a genuine question about a bot, answers a request, warns about a bot, or mentions one without promoting or inviting use.",
     },
   },
+  unsolicited_testimonial_promotion: {
+    type: "noul",
+    instructions:
+      "Does `message` disguise unsolicited promotion of an identifiable destination as a personal success story or helpful first-person testimonial?",
+    criteria: {
+      true:
+        "It inserts a favorable personal experience, claimed benefit, test result, transformation, or gratitude story to endorse a named bot, channel, group, mini app, website, course, provider, or service and draw readers there. The destination may be a handle, link, embedded link, or identifiable name. Unrequested before-and-after transformation stories crediting a specifically named course and teacher are advertising testimonials even without a URL: the searchable course/provider name itself is the funnel. For example, a standalone claim that a named confidence course changed everything within a week, followed by gratitude for finding it, is promotion rather than ordinary experience reporting. Count conversational camouflage such as agreeing with life advice then crediting a named test or service for personal insight or improvement (Russian: 'попробовала', 'мне помогло', 'результат удивил'). Neither an imperative to start/join/buy nor payment, a referral code, or extravagant claims is required. Forwarded testimonials are not exempt.",
+      false:
+        "It answers an actual request for a recommendation, gives a substantive on-topic experience report rather than inserting a promotional success story, discusses limitations or results without funneling readers, cites a factual source, warns or asks about a service, gives official support instructions, quotes an example for moderation, or merely mentions a destination or shares a bare link. A positive opinion, first-person wording, handle, or forward alone is not proof of promotion.",
+    },
+  },
   adult_dm_bait: {
     type: "noul",
     instructions:

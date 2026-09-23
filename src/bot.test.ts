@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
+import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import {
   SPAM_QUESTIONS,
   type CurrentModerationMessage,
@@ -115,6 +116,31 @@ function harness() {
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test.each([false, true])("testimonial signal deletes normalized human post (forwarded=%s)", async (isForwarded) => {
+  const h = harness();
+  const answer = assessment();
+  answer.signals.unsolicited_testimonial_promotion = 0.9;
+  answer.strongestSignal = "unsolicited_testimonial_promotion";
+  answer.probability = 0.9;
+  answer.shouldDelete = true;
+  h.setAnswer(answer);
+  const text = testimonialPromotions[0]!.text;
+  await h.send({
+    text,
+    entities: [{ type: "mention", offset: text.indexOf("@"), length: "@ClarityExampleBot".length }],
+    ...(isForwarded ? { forward_origin: { type: "hidden_user", sender_user_name: "private origin", date: 1 } } : {}),
+  });
+  expect(h.classifications).toEqual([{ message: { text, embeddedLinks: [], isForwarded }, recent: [] }]);
+  expect(h.deletes()).toEqual([1]);
+  expect(h.skipped()).toEqual([]);
+  const completed = h.logs.filter((log) => log.event === "message_analyzed");
+  expect(completed).toHaveLength(1);
+  expect(completed[0]).toMatchObject({ decision: "delete", strongestSignal: "unsolicited_testimonial_promotion" });
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  expect(JSON.stringify(h.logs)).not.toContain("private origin");
+  await h.stats.stop();
+});
 
 test("emoji bait is classified with forwarded-user bio and personal-channel text", async () => {
   const h = harness();

@@ -12,6 +12,7 @@ import {
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
 import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
+import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 const liveTest = process.env.RUN_LIVE_JEV === "1" && apiKey ? test : test.skip;
@@ -22,6 +23,35 @@ describe("live Jev moderation fixtures", () => {
     threshold: 0.9,
     timeoutMs: 10_000,
   });
+
+  // Supply a private report only through stdin; never commit or print its text.
+  const privateTest = process.env.JEV_PRIVATE_FIXTURE_STDIN === "1" ? liveTest : test.skip;
+  privateTest("deletes a private screenshot transcription supplied via stdin", async () => {
+    const text = (await Bun.stdin.text()).trim();
+    expect(text.length).toBeGreaterThan(0);
+    for (const isForwarded of [true, false]) {
+      const result = await classifier.classify({ text, embeddedLinks: [], isForwarded });
+      expect(result.signals.unsolicited_testimonial_promotion).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    }
+  });
+
+  for (const isForwarded of [false, true]) {
+    for (const fixture of testimonialPromotions) {
+      liveTest(`deletes unsolicited testimonial ${fixture.id} (forwarded=${isForwarded})`, async () => {
+        const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded });
+        expect(result.signals.unsolicited_testimonial_promotion).toBeGreaterThanOrEqual(0.9);
+        expect(result.shouldDelete).toBe(true);
+      });
+    }
+    for (const fixture of testimonialControls) {
+      liveTest(`keeps testimonial control ${fixture.id} (forwarded=${isForwarded})`, async () => {
+        const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded });
+        expect(result.probability).toBeLessThan(0.9);
+        expect(result.shouldDelete).toBe(false);
+      });
+    }
+  }
 
   liveTest("deletes the exact forwarded Chinese mass-promotion ad from Telegram #20414", async () => {
     const result = await classifier.classify({ text: chinesePromotion, embeddedLinks: [], isForwarded: true });
