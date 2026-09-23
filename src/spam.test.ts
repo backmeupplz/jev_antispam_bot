@@ -21,6 +21,16 @@ function response(
 }
 
 describe("parseAssessment", () => {
+  test("testimonial promotion uses the unchanged 0.90 gate", () => {
+    const result = parseAssessment(response({ unsolicited_testimonial_promotion: 0.9 }), 0.9);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.strongestSignal).toBe("unsolicited_testimonial_promotion");
+    expect(parseAssessment(response({ unsolicited_testimonial_promotion: 0.899 }), 0.9).shouldDelete).toBe(false);
+    const body = response();
+    delete body.answers.unsolicited_testimonial_promotion;
+    expect(() => parseAssessment(body, 0.9)).toThrow("invalid unsolicited_testimonial_promotion answer");
+  });
+
   test("deletes when any signal reaches the threshold", () => {
     const result = parseAssessment(response({ profile_bait: 0.9 }), 0.9);
     expect(result.shouldDelete).toBe(true);
