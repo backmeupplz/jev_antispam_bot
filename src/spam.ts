@@ -151,6 +151,17 @@ export const SPAM_QUESTIONS = {
         "It answers a request for job information or practical help, shares a verified relevant vacancy in an invited or admin-approved hiring discussion, discusses employment normally, coordinates an existing job, shipment, business trip, or shift, warns about suspicious recruitment, asks friends for help without offering pay, or is a job seeker genuinely asking for work without mass-recruiting readers.",
     },
   },
+  unsolicited_vague_recruitment: {
+    type: "noul",
+    instructions:
+      "Is the message a terse standalone paid-work recruitment post aimed at group members?",
+    criteria: {
+      true:
+        "A short post counts one or more people as needed for a near-term task or replacement stint and states pay for that work: a sum paid at the end, pay after the job, pay starting at an amount, or a promise to pay after the work. A bare numeral joined to a completion cue such as 'upon completion' or 'after the work' is stated pay for the work, even without a currency symbol; do not reinterpret it as an invoice, a settlement, or a wage discussion. Unnamed work is normal for this pattern, so missing chore details, absent job/vacancy wording, no link, and no 'write me' call do not make it legitimate. Count today, tomorrow, and other near-term times. Forwarded copies count the same as original posts.",
+      false:
+        "It responds to a staffing request, publishes an invited or administrator-approved vacancy, asks friends for unpaid help, coordinates volunteers or an agreed shift, invoices or settles completed work, discusses wages, prices, or employment, asks for work as a seeker, or quotes or warns about a recruitment post. Never invent a payment term: absent any pay for future work, ordinary requests for help are not this appeal, regardless of forwarding.",
+    },
+  },
   one_off_cash_task_offer: {
     type: "noul",
     instructions:

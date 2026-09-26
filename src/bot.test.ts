@@ -4,6 +4,7 @@ import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
+import { reportedRecruitment } from "./fixtures/vague-recruitment";
 import {
   SPAM_QUESTIONS,
   type CurrentModerationMessage,
@@ -116,6 +117,60 @@ function harness() {
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test.each([false, true])("vague paid recruitment reaches the real handler (forwarded=%s)", async (isForwarded) => {
+  const h = harness();
+  const answer = assessment();
+  answer.signals.unsolicited_vague_recruitment = 0.91;
+  answer.strongestSignal = "unsolicited_vague_recruitment";
+  answer.probability = 0.91;
+  answer.shouldDelete = true;
+  h.setAnswer(answer);
+  const text = reportedRecruitment.paidCompletion;
+  await h.send({
+    text,
+    ...(isForwarded ? { forward_origin: { type: "hidden_user", sender_user_name: "private origin", date: 1 } } : {}),
+  });
+  expect(h.classifications).toEqual([{ message: { text, embeddedLinks: [], isForwarded }, recent: [] }]);
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")[0]).toMatchObject({
+    decision: "delete", strongestSignal: "unsolicited_vague_recruitment",
+  });
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
+
+test("ambiguous no-pay recruitment remains below the gate when classifier is uncertain", async () => {
+  const h = harness();
+  const answer = assessment();
+  answer.signals.unsolicited_vague_recruitment = 0.62;
+  answer.strongestSignal = "unsolicited_vague_recruitment";
+  answer.probability = 0.62;
+  h.setAnswer(answer);
+  await h.send({ text: reportedRecruitment.unpaidAmbiguous, forward_origin: {
+    type: "hidden_user", sender_user_name: "private origin", date: 1,
+  } });
+  expect(h.classifications[0]?.message).toMatchObject({ isForwarded: true, text: reportedRecruitment.unpaidAmbiguous });
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+test("repeated reply-shaped paid recruitment deletes only a linked same-actor suffix", async () => {
+  const h = harness();
+  const text = reportedRecruitment.shiftCover;
+  h.setAnswer(assessment(false));
+  await h.send({ text: "Unrelated earlier discussion" });
+  await h.send({ text, reply_to_message: { message_id: 900, date: 1, chat: group, text: "Other topic" } });
+  await h.send({ text, reply_to_message: { message_id: 901, date: 1, chat: group, text: "Other topic" } });
+  h.setAnswer(assessment(true, [0.08, 0.96, 0.97]));
+  await h.send({ text, reply_to_message: { message_id: 902, date: 1, chat: group, text: "Other topic" } });
+  expect(h.classifications[3]?.recent.map((message) => message.text)).toEqual([
+    "Unrelated earlier discussion", text, text,
+  ]);
+  expect(h.deletes()).toEqual([2, 3, 4]);
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
 
 test.each([false, true])("testimonial signal deletes normalized human post (forwarded=%s)", async (isForwarded) => {
   const h = harness();
