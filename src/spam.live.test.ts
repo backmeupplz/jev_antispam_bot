@@ -39,7 +39,7 @@ describe("live Jev moderation fixtures", () => {
       const result = await classifier.classify(toModerationMessage(fixture.input)!, recent);
       expect(result.shouldDelete).toBe(fixture.deleteIt);
       expect(result.contextProbabilities).toHaveLength(recent.length);
-      if (recent.length) {
+      if (fixture.deleteIt && recent.length) {
         expect(result.contextProbabilities[0]!).toBeLessThan(CONTEXT_LINK_THRESHOLD);
         expect(result.contextProbabilities[1]!).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
       }
@@ -64,7 +64,7 @@ describe("live Jev moderation fixtures", () => {
   // GEN32 boundary: without reply context a lone unrequested drop is textually identical to a
   // requested reply, so these must remain below the gate rather than be forced to false confidence.
   for (const fixture of inviteAmbiguousBare) {
-    liveTest(`keeps context-free lone invite ${fixture.id} pending reply-context support`, async () => {
+    liveTest(`keeps context-free lone invite ${fixture.id} with no request or promotional context`, async () => {
       const result = await classifier.classify(toModerationMessage({ text: fixture.text } as Message)!);
       expect(result.shouldDelete).toBe(false);
     });

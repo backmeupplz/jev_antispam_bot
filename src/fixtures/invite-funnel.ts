@@ -1,5 +1,6 @@
 import type { Message } from "grammy/types";
 import type { ModerationMessage } from "../spam";
+import { toModerationMessage } from "../message";
 
 // Synthetic links; the reported invite transcription/destination identity is not committed.
 export const invite = "https://t.me/+ExampleInviteAbc123";
@@ -47,7 +48,7 @@ export const inviteControls = [
   { id: "public-source", text: `Source for this discussion: https://t.me/ExampleCommunity/10` },
 ];
 
-// GEN32 owns shared reply context. These are real requested replies, not inline disclaimers.
+// Use the shared GEN30/GEN32 reply-preview contract, not inline disclaimers.
 export const requestedAdminReplies = [
   { id: "requested-admin-de", text: caption, request: "Wen soll ich kontaktieren, um unserer Lerngruppe beizutreten? Bitte schicke den Kontakt zum Administrator." },
   { id: "requested-admin-en", text: `Contact the administrator below 👇\n${invite}`, request: "Who should I contact to join our study group? Please send the admin contact." },
@@ -58,11 +59,24 @@ export const requestedAdminReplies = [
     from: { id: 13, is_bot: false, first_name: "Requester" }, text: request },
 } as Message }));
 
+export const requestedInviteReplies = [
+  ...[invite, "https://t.me/joinchat/ExampleInviteAbc123", "https://t.me/ExampleCommunity"].map((text, index) => ({
+    id: ["bare", "joinchat", "public"][index]!,
+    input: { ...requestedAdminReplies[1]!.input, text,
+      reply_to_message: { ...requestedAdminReplies[1]!.input.reply_to_message!, text: "Please send the study-group invite" } } as Message,
+  })),
+  ...requestedAdminReplies,
+];
+
 const hiddenLabel = "Kontaktiere den Administrator unten 👇👇";
 const hiddenEntity = { type: "text_link", offset: 0, length: hiddenLabel.length, url: invite };
 const video = { file_id: "fixture", file_unique_id: "fixture", width: 10, height: 10, duration: 25 };
 export const inviteNormalizedCases: { id: string; input: Message; deleteIt: boolean; recent?: ModerationMessage[] }[] = [
-  ...requestedAdminReplies.map(f => ({ ...f, deleteIt: false })),
+  ...requestedInviteReplies.flatMap(f => [
+    { ...f, id: `requested-current-${f.id}`, deleteIt: false },
+    { ...f, id: `requested-current-and-history-${f.id}`, deleteIt: false,
+      recent: [toModerationMessage(f.input)!] },
+  ]),
   ...[false, true].map(forwarded => ({ id: `ambiguous-caption-de-forwarded-${forwarded}`, deleteIt: false,
     input: { caption, video, ...(forwarded ? { forward_origin: { type: "hidden_user", sender_user_name: "Fixture", date: 1 } } : {}) } as Message })),
   ...[false, true].flatMap(isCaption => {
