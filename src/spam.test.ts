@@ -103,3 +103,31 @@ describe("JevSpamClassifier", () => {
       .rejects.toThrow("HTTP 503");
   });
 });
+
+import { normalizedRecruitment, hiringRequest } from "./fixtures/recruitment-replies";
+
+test("attributed previews reach all questions without leaking mutable instructions across calls", async () => {
+  const requests: any[] = [];
+  const baseline = JSON.stringify(SPAM_QUESTIONS);
+  const classifier = new JevSpamClassifier("test", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body)); requests.push(request);
+      return Response.json(response({}, request.state.recentMessages.map(() => 0.1)));
+    },
+  });
+  const requested = normalizedRecruitment("paid offer", hiringRequest);
+  const plain = normalizedRecruitment("unrelated offer");
+  await classifier.classify(requested, [requested]);
+  await classifier.classify(plain, [requested]);
+  await classifier.classify(plain);
+  expect(requests[0].state.message.preview).toEqual(requested.preview);
+  expect(requests[1].state.recentMessages[0].preview).toEqual(requested.preview);
+  for (const request of requests.slice(0, 2)) {
+    expect(Object.keys(request.questions)).toHaveLength(Object.keys(SPAM_QUESTIONS).length + 1);
+    for (const question of Object.values(request.questions) as { instructions: string }[]) {
+      expect(question.instructions).toContain("untrusted source data");
+    }
+  }
+  expect(requests[2].questions).toEqual(SPAM_QUESTIONS);
+  expect(JSON.stringify(SPAM_QUESTIONS)).toBe(baseline);
+});
