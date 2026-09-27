@@ -57,13 +57,15 @@ test("external reply has metadata, not invented full text; quote content stays s
   const missing = toModerationMessage(base as Message);
   expect(missing?.preview).toEqual([{ kind: "external_reply", origin: "external", sourceKind: "channel",
     sourceAuthor: "unknown", isForwarded: false, embeddedLinks: [] }]);
+  // Bot API TextQuote.entities keeps only formatting/custom-emoji/date-time
+  // entities; text_link is not valid there and must not be expected.
   const quoted = toModerationMessage({ ...base,
     quote: { text: "contact for recharge bonus", position: 0,
-      entities: [{ type: "text_link", offset: 0, length: 7, url: "https://example.org" }] },
+      entities: [{ type: "bold", offset: 0, length: 7 }] },
   } as Message);
   expect(quoted?.preview?.[1]).toEqual({ kind: "quote", origin: "external", sourceKind: "channel",
     sourceAuthor: "unknown", isForwarded: false, text: "contact for recharge bonus",
-    embeddedLinks: ["https://example.org"] });
+    embeddedLinks: [] });
   expect(quoted?.embeddedLinks).toEqual([]);
 });
 
