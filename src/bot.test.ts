@@ -3,7 +3,7 @@ import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
-import { invite, caption } from "./fixtures/invite-funnel";
+import { invite, caption, inviteCampaigns } from "./fixtures/invite-funnel";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import {
   SPAM_QUESTIONS,
@@ -131,6 +131,42 @@ test("a below-gate invite verdict keeps the message and logs a keep decision", a
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "message_analyzed")).toMatchObject([{ decision: "keep", strongestSignal: "unsolicited_telegram_invite_funnel" }]);
   expect(JSON.stringify(h.logs)).not.toContain(invite);
+  await h.stats.stop();
+});
+
+test("two requested bare-invite replies preserve the ambiguous projection and both messages", async () => {
+  const h = harness();
+  const bare = { text: invite, embeddedLinks: [], isForwarded: false };
+  for (const [index, request] of ["Please send the study-group invite", "Could you send the invite again?"].entries()) {
+    // Mock scores prove routing only. Pinned live fixtures separately test this exact projection.
+    h.setAnswer(assessment(false, index === 0 ? [] : [0.94]));
+    await h.send({ text: invite, reply_to_message: {
+      message_id: 100 + index, date: 1, chat: group,
+      from: { id: 13, is_bot: false, first_name: "Requester" }, text: request,
+    } });
+  }
+  expect(h.classifications).toEqual([
+    { message: bare, recent: [] }, { message: bare, recent: [bare] },
+  ]);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")).toMatchObject([
+    { decision: "keep" }, { decision: "keep" },
+  ]);
+  expect(JSON.stringify(h.logs)).not.toContain(invite);
+  expect(JSON.stringify(h.logs)).not.toContain("Please send");
+  await h.stats.stop();
+});
+
+test("confirmed invite campaign deletes only linked same-actor suffix, not unrelated history", async () => {
+  const h = harness();
+  const fixture = inviteCampaigns[0]!;
+  for (const prior of fixture.recent) await h.send({ text: prior.text });
+  h.setAnswer(assessment(true, [0.1, 0.97]));
+  await h.send({ text: fixture.text });
+  expect(h.classifications[2]).toEqual({
+    message: { text: fixture.text, embeddedLinks: [], isForwarded: false }, recent: fixture.recent,
+  });
+  expect(h.deletes()).toEqual([2, 3]);
   await h.stats.stop();
 });
 

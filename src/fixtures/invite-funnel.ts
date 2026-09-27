@@ -8,11 +8,21 @@ export const invitePositives = [
   { id: "caption-en", text: `Contact the administrator below 👇\n${invite}` },
 ];
 
-// Bare invite repeated by the same actor is a campaign; prior identical drop is the evidence.
+// Repetition cannot recover another actor's omitted request. These are ambiguous keeps.
 export const inviteRepeats = [
   { id: "repeated-bare", text: invite, recent: [{ text: invite, embeddedLinks: [], isForwarded: false }] },
+  { id: "repeated-public", text: "https://t.me/ExampleCommunity", recent: [{ text: "https://t.me/ExampleCommunity", embeddedLinks: [], isForwarded: false }] },
   { id: "repeated-joinchat", text: "https://t.me/joinchat/ExampleInviteAbc123", recent: [{ text: "https://t.me/joinchat/ExampleInviteAbc123", embeddedLinks: [], isForwarded: false }] },
 ];
+
+export const inviteCampaigns = [{
+  id: "explicit-promotion-with-unrelated-prefix",
+  text: invite,
+  recent: [
+    { text: "The library closes at six today.", embeddedLinks: [], isForwarded: false },
+    { text: `Earn guaranteed easy money every day! Join my earning group: ${invite}`, embeddedLinks: [], isForwarded: false },
+  ],
+}];
 
 // A single unrequested drop and a requested reply are textually identical without reply context;
 // this input cannot distinguish them, so they must stay below the gate (GEN32 owns reply input).

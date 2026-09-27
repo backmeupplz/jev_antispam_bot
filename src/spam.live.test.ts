@@ -12,7 +12,7 @@ import {
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
 import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
-import { inviteAmbiguousBare, inviteControls, invitePositives, inviteRepeats } from "./fixtures/invite-funnel";
+import { inviteAmbiguousBare, inviteCampaigns, inviteControls, invitePositives, inviteRepeats } from "./fixtures/invite-funnel";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
@@ -33,11 +33,19 @@ describe("live Jev moderation fixtures", () => {
     });
   }
   for (const fixture of inviteRepeats) {
-    liveTest(`deletes repeated same-actor invite ${fixture.id} from the parsed context`, async () => {
+    liveTest(`keeps ambiguous repeated same-actor invite ${fixture.id} with missing request context`, async () => {
       const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false }, fixture.recent);
       expect(result.contextProbabilities).toHaveLength(fixture.recent.length);
-      expect(result.signals.unsolicited_telegram_invite_funnel).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+  for (const fixture of inviteCampaigns) {
+    liveTest(`deletes invite with independent promotional context ${fixture.id} and links only its suffix`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false }, fixture.recent);
       expect(result.shouldDelete).toBe(true);
+      expect(result.contextProbabilities).toHaveLength(2);
+      expect(result.contextProbabilities[0]!).toBeLessThan(CONTEXT_LINK_THRESHOLD);
+      expect(result.contextProbabilities[1]!).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
     });
   }
   // GEN32 boundary: without reply context a lone unrequested drop is textually identical to a
