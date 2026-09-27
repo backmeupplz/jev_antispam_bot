@@ -12,7 +12,7 @@ import {
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
 import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
-import { invitePositives, inviteControls } from "./fixtures/invite-funnel";
+import { inviteAmbiguousBare, inviteControls, invitePositives, inviteRepeats } from "./fixtures/invite-funnel";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
@@ -26,13 +26,26 @@ describe("live Jev moderation fixtures", () => {
   });
 
   for (const fixture of invitePositives) {
-    liveTest(`invite funnel candidate ${fixture.id} reaches unchanged gate with evidence`, async () => {
-      const isBare = ["bare", "joinchat", "public"].includes(fixture.id);
-      const recent = isBare ? [{ text: fixture.text, embeddedLinks: [], isForwarded: false }] : [];
-      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: fixture.id === "caption-de" }, recent);
-      expect(result.contextProbabilities).toHaveLength(recent.length);
+    liveTest(`deletes minimal contact-admin invite caption ${fixture.id} at the unchanged gate`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: fixture.id === "caption-de" });
       expect(result.signals.unsolicited_telegram_invite_funnel).toBeGreaterThanOrEqual(0.9);
       expect(result.shouldDelete).toBe(true);
+    });
+  }
+  for (const fixture of inviteRepeats) {
+    liveTest(`deletes repeated same-actor invite ${fixture.id} from the parsed context`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false }, fixture.recent);
+      expect(result.contextProbabilities).toHaveLength(fixture.recent.length);
+      expect(result.signals.unsolicited_telegram_invite_funnel).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    });
+  }
+  // GEN32 boundary: without reply context a lone unrequested drop is textually identical to a
+  // requested reply, so these must remain below the gate rather than be forced to false confidence.
+  for (const fixture of inviteAmbiguousBare) {
+    liveTest(`keeps context-free lone invite ${fixture.id} pending reply-context support`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
     });
   }
   for (const fixture of inviteControls) {

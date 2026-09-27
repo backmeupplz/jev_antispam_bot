@@ -118,6 +118,22 @@ function harness() {
   };
 }
 
+test("a below-gate invite verdict keeps the message and logs a keep decision", async () => {
+  const h = harness();
+  const keep = assessment();
+  keep.signals.unsolicited_telegram_invite_funnel = 0.64;
+  keep.strongestSignal = "unsolicited_telegram_invite_funnel";
+  keep.probability = 0.64;
+  keep.shouldDelete = false;
+  h.setAnswer(keep);
+  await h.send({ text: invite });
+  expect(h.classifications).toHaveLength(1);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")).toMatchObject([{ decision: "keep", strongestSignal: "unsolicited_telegram_invite_funnel" }]);
+  expect(JSON.stringify(h.logs)).not.toContain(invite);
+  await h.stats.stop();
+});
+
 test("invite-only and captioned funnels route through the real handler without leaking link text", async () => {
   for (const shape of ["bare", "hidden", "video", "forwarded-video", "edited-video"]) {
     const h = harness();
