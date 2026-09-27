@@ -136,6 +136,10 @@ export function registerBotHandlers(bot: Bot, {
         characterCount: message.text.length,
         embeddedLinkCount: message.embeddedLinks.length,
         isForwarded: message.isForwarded,
+        preview: message.preview?.map(({ kind, origin, sourceKind, sourceAuthor, text, embeddedLinks }) => ({
+          kind, origin, sourceKind, sourceAuthor, contentAvailable: Boolean(text?.trim()),
+          characterCount: text?.length ?? 0, embeddedLinkCount: embeddedLinks.length,
+        })) ?? [],
         isEdited: "edited_message" in ctx.update,
         contextMessageCount: recentMessages.length,
         senderProfilePresent: Boolean(senderProfile),
@@ -150,6 +154,8 @@ export function registerBotHandlers(bot: Bot, {
         });
         assessment = await classifier.classify(
           senderProfile ? { ...message, senderProfile } : message,
+          // Historical linkage is about the same actor's own words, not
+          // another author's quoted source or cross-chat message.
           recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
         );
       } catch (error) {
