@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
+import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
-import { invite, caption, inviteCampaigns } from "./fixtures/invite-funnel";
+import { invite, caption, inviteCampaigns, requestedAdminReplies } from "./fixtures/invite-funnel";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import {
   SPAM_QUESTIONS,
@@ -156,6 +157,21 @@ test("two requested bare-invite replies preserve the ambiguous projection and bo
   expect(JSON.stringify(h.logs)).not.toContain("Please send");
   await h.stats.stop();
 });
+
+for (const fixture of requestedAdminReplies) {
+  test(`requested admin referral stays kept through real routing: ${fixture.id}`, async () => {
+    const h = harness();
+    // Deterministic keep proves routing only; pinned live tests prove model accuracy separately.
+    h.setAnswer(assessment(false));
+    await h.send({ ...fixture.input });
+    expect(h.classifications).toEqual([{ message: toModerationMessage(fixture.input)!, recent: [] }]);
+    expect(h.deletes()).toEqual([]);
+    expect(h.logs.filter(log => log.event === "message_analyzed")).toMatchObject([{ decision: "keep" }]);
+    expect(JSON.stringify(h.logs)).not.toContain(invite);
+    expect(JSON.stringify(h.classifications)).not.toContain("Requester");
+    await h.stats.stop();
+  });
+}
 
 test("confirmed invite campaign deletes only linked same-actor suffix, not unrelated history", async () => {
   const h = harness();
