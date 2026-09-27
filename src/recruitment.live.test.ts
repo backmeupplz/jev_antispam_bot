@@ -55,3 +55,34 @@ liveTest("keeps unrelated earlier conversation below the linkage boundary", asyn
   );
   expect(result.contextProbabilities[0]).toBeLessThan(CONTEXT_LINK_THRESHOLD);
 });
+
+import { normalizedRecruitment, hiringRequest, invitedHiring, unrelatedReply } from "./fixtures/recruitment-replies";
+
+for (const forwarded of [false, true]) {
+  for (const [label, source, shouldDelete] of [
+    ["requested", hiringRequest, false], ["invited", invitedHiring, false], ["unrelated", unrelatedReply, true],
+  ] as const) {
+    liveTest("paired " + label + " paid reply forwarded=" + forwarded, async () => {
+      const result = await classifier.classify(normalizedRecruitment(reportedRecruitment.paidCompletion, source, forwarded));
+      expect(result.shouldDelete).toBe(shouldDelete);
+      expect(result.contextProbabilities).toHaveLength(0);
+    });
+  }
+}
+
+liveTest("keeps repeated requested replies while retaining complete dynamic answers", async () => {
+  const message = normalizedRecruitment(reportedRecruitment.paidCompletion, hiringRequest);
+  const result = await classifier.classify(message, [message, message]);
+  expect(result.contextProbabilities).toHaveLength(2);
+  expect(result.shouldDelete).toBe(false);
+});
+
+liveTest("does not extend earlier permission to unrelated spam or link the requested reply", async () => {
+  const requested = normalizedRecruitment(reportedRecruitment.paidCompletion, hiringRequest);
+  const spam = normalizedRecruitment(reportedRecruitment.shiftCover, unrelatedReply);
+  const result = await classifier.classify(spam, [requested, spam, spam]);
+  expect(result.shouldDelete).toBe(true);
+  expect(result.contextProbabilities).toHaveLength(3);
+  expect(result.contextProbabilities[0]).toBeLessThan(CONTEXT_LINK_THRESHOLD);
+  expect(result.contextProbabilities.slice(1).every(p => p >= CONTEXT_LINK_THRESHOLD)).toBe(true);
+});

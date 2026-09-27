@@ -5,6 +5,7 @@ import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment } from "./fixtures/vague-recruitment";
+import { hiringRequest, invitedHiring, unrelatedReply, recruitmentReply } from "./fixtures/recruitment-replies";
 import {
   SPAM_QUESTIONS,
   type CurrentModerationMessage,
@@ -463,4 +464,48 @@ test("membership updates retain stats lifecycle and invalidate cached human admi
   expect(h.batches[0]?.chats[0]).toMatchObject({ chatId: String(group.id), chatType: "supergroup", membershipActive: false });
   expect(h.batches[0]?.deletions).toEqual([]);
   expect(h.calls.some((call) => call.method === "sendMessage")).toBe(false);
+});
+
+// Scores here verify routing only; the paired live suite proves classification.
+test.each([false, true])("preserves paired hiring reply context and edits (forwarded=%s)", async (isForwarded) => {
+  for (const source of [undefined, hiringRequest, invitedHiring, unrelatedReply]) {
+    const h = harness();
+    const requested = source === hiringRequest || source === invitedHiring;
+    h.setAnswer(assessment(!requested));
+    const shape = recruitmentReply(reportedRecruitment.paidCompletion, source, isForwarded);
+    await h.send(shape as unknown as Record<string, unknown>);
+    const current = h.classifications[0]!.message;
+    expect(current.text).toBe(reportedRecruitment.paidCompletion);
+    expect(current.isForwarded).toBe(isForwarded);
+    expect(current.preview?.[0]?.text).toBe(source);
+    if (source) expect(current.preview?.[0]?.sourceAuthor).toBe("other_author");
+    expect(h.deletes()).toEqual(requested ? [] : [1]);
+    if (requested) {
+      await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>);
+      await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>, true);
+      expect(h.classifications[1]!.recent[0]!.preview).toEqual(current.preview);
+      expect(h.classifications[2]!.recent).toHaveLength(1);
+      expect(h.deletes()).toEqual([]);
+      // A later unsolicited offer must not erase requested attribution in history.
+      h.setAnswer(assessment(true, [0.1, 0.1]));
+      await h.send({ ...recruitmentReply(reportedRecruitment.paidCompletion, unrelatedReply), message_id: 3 } as unknown as Record<string, unknown>);
+      expect(h.classifications[3]!.recent.map(m => m.preview?.[0]?.text)).toEqual([source, source]);
+      expect(h.deletes()).toEqual([3]);
+    }
+    expect(h.deletes()).not.toContain(900);
+    const logged = JSON.stringify(h.logs);
+    expect(logged).not.toContain(reportedRecruitment.paidCompletion);
+    if (source) expect(logged).not.toContain(source);
+  }
+});
+
+test("requested reply context survives fail-open and never becomes a deletion candidate", async () => {
+  const h = harness();
+  h.setClassifyError();
+  const shape = recruitmentReply(reportedRecruitment.paidCompletion, hiringRequest);
+  await h.send(shape as unknown as Record<string, unknown>);
+  await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>);
+  expect(h.classifications[1]!.recent[0]!.preview?.[0]?.text).toBe(hiringRequest);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter(l => l.event === "classification_failed")).toHaveLength(2);
 });
