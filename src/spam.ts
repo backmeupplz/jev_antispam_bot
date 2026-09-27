@@ -27,7 +27,7 @@ export const SPAM_QUESTIONS = {
       true:
         "It uses bait such as 'check my bio', 'link in profile', 'DM me', or an equivalent call to leave the group, especially with money, dating, investment, or giveaway claims.",
       false:
-        "It mentions a profile, bio, private message, or channel for a legitimate conversational reason and is not an unsolicited funnel.",
+        "It mentions a profile, bio, private message, invite, or channel for a legitimate conversational reason and is not an unsolicited funnel; a moderator report or safety warning quoting a contact-admin invite and asking why it was not recognized is not promoting the quoted funnel.",
     },
   },
   adult_profile_bait: {
@@ -60,7 +60,7 @@ export const SPAM_QUESTIONS = {
       true:
         "It is irrelevant copy-paste outreach, mass mentions, repetitive junk, engagement bait, unsolicited recruitment, or another recognizable spam pattern.",
       false:
-        "It is a plausible human contribution, question, joke, greeting, disagreement, or on-topic message, even if short or informal.",
+        "It is a plausible human contribution, question, joke, greeting, disagreement, on-topic message, safety warning, or moderator report quoting an example of spam (even when the quoted caption and invite would be spam if posted alone).",
     },
   },
   bot_promotion: {
@@ -171,6 +171,14 @@ export const SPAM_QUESTIONS = {
         "It contains a URL plus praise, a personal endorsement, a favorite-site claim, a best-site claim, an invitation, or another reason to visit, and the message itself gives no sign that the group requested it. A bare message in the form 'best site for X - URL' is promotional. Count playful cover stories about cats, turtles, pets, or unrelated subjects when they funnel readers to the URL.",
       false:
         "It explicitly answers a request, supplies a contextually relevant citation or documentation link, shares news/source material in an ongoing discussion, asks a genuine question, warns about the site, or otherwise uses the URL as useful context rather than promoting a visit.",
+    },
+  },
+  unsolicited_telegram_invite_funnel: {
+    type: "noul",
+    instructions: "Do message and any recentMessages show an unsolicited Telegram invite/contact funnel targeting group readers?",
+    criteria: {
+      true: "A current bare t.me/+ invite, joinchat invite, or public Telegram destination repeats the same actor previous unrequested invite in recentMessages: repeated identical off-chat invitation is a campaign, even with no pitch words. Or an unsolicited caption in any language commands group readers to contact an administrator below and immediately supplies one or multiple Telegram invites. The bare imperative plus invite is a destination funnel; it need not identify a product or make a sales claim. Forwarding itself proves neither spam nor legitimacy.",
+      false: "A single bare invite without other evidence is ambiguous: a requested reply and spam drop have identical visible text. Keep it absent other evidence. Likewise keep an actual requested administrator referral, relevant ongoing group coordination, official/admin post, citation, safety warning, or moderator report quoting suspected spam (including a wrapper saying another one was not recognized as spam). A public link, forwarding label or word administrator alone is not proof; private destination content is unknown.",
     },
   },
   direct_contact_solicitation: {

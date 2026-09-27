@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
+import { invite, caption } from "./fixtures/invite-funnel";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import {
   SPAM_QUESTIONS,
@@ -116,6 +117,29 @@ function harness() {
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test("invite-only and captioned funnels route through the real handler without leaking link text", async () => {
+  for (const shape of ["bare", "hidden", "video", "forwarded-video", "edited-video"]) {
+    const h = harness();
+    const result = assessment();
+    result.strongestSignal = "unsolicited_telegram_invite_funnel";
+    result.signals.unsolicited_telegram_invite_funnel = 0.96;
+    result.probability = 0.96;
+    result.shouldDelete = true;
+    h.setAnswer(result);
+    const isVideo = shape.includes("video");
+    const patch = isVideo
+      ? { text: undefined, caption, caption_entities: [{ type: "url", offset: caption.indexOf(invite), length: invite.length }], video: { file_id: "fixture", file_unique_id: "fixture", width: 10, height: 10, duration: 25 }, ...(shape === "forwarded-video" ? { forward_origin: { type: "hidden_user", sender_user_name: "fixture", date: 1 } } : {}) }
+      : { text: shape === "hidden" ? "Join here" : invite, ...(shape === "hidden" ? { entities: [{ type: "text_link", offset: 0, length: 9, url: invite }] } : {}) };
+    await h.send(patch, shape === "edited-video");
+    expect(h.classifications).toHaveLength(1);
+    expect(h.classifications[0]!.message).toMatchObject({ text: isVideo ? caption : shape === "hidden" ? "Join here" : invite, embeddedLinks: shape === "hidden" ? [invite] : [], isForwarded: shape === "forwarded-video" });
+    expect(h.deletes()).toEqual([1]);
+    expect(h.logs.filter((log) => log.event === "message_analyzed")).toHaveLength(1);
+    expect(JSON.stringify(h.logs)).not.toContain(invite);
+    await h.stats.stop();
+  }
+});
 
 test.each([false, true])("testimonial signal deletes normalized human post (forwarded=%s)", async (isForwarded) => {
   const h = harness();

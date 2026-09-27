@@ -12,6 +12,7 @@ import {
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
 import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
+import { invitePositives, inviteControls } from "./fixtures/invite-funnel";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
@@ -23,6 +24,23 @@ describe("live Jev moderation fixtures", () => {
     threshold: 0.9,
     timeoutMs: 10_000,
   });
+
+  for (const fixture of invitePositives) {
+    liveTest(`invite funnel candidate ${fixture.id} reaches unchanged gate with evidence`, async () => {
+      const isBare = ["bare", "joinchat", "public"].includes(fixture.id);
+      const recent = isBare ? [{ text: fixture.text, embeddedLinks: [], isForwarded: false }] : [];
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: fixture.id === "caption-de" }, recent);
+      expect(result.contextProbabilities).toHaveLength(recent.length);
+      expect(result.signals.unsolicited_telegram_invite_funnel).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    });
+  }
+  for (const fixture of inviteControls) {
+    liveTest(`keeps invite control ${fixture.id}`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
 
   // Supply a private report only through stdin; never commit or print its text.
   const privateTest = process.env.JEV_PRIVATE_FIXTURE_STDIN === "1" ? liveTest : test.skip;
