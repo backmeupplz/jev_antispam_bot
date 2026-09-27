@@ -21,6 +21,16 @@ function response(
 }
 
 describe("parseAssessment", () => {
+  test("crypto-loss recovery referral uses the unchanged 0.90 gate and requires its answer", () => {
+    const positive = parseAssessment(response({ unsolicited_crypto_recovery_pitch: 0.9 }), 0.9);
+    expect(positive.shouldDelete).toBe(true);
+    expect(positive.strongestSignal).toBe("unsolicited_crypto_recovery_pitch");
+    expect(parseAssessment(response({ unsolicited_crypto_recovery_pitch: 0.899 }), 0.9).shouldDelete).toBe(false);
+    const body = response();
+    delete body.answers.unsolicited_crypto_recovery_pitch;
+    expect(() => parseAssessment(body, 0.9)).toThrow("invalid unsolicited_crypto_recovery_pitch answer");
+  });
+
   test("testimonial promotion uses the unchanged 0.90 gate", () => {
     const result = parseAssessment(response({ unsolicited_testimonial_promotion: 0.9 }), 0.9);
     expect(result.shouldDelete).toBe(true);

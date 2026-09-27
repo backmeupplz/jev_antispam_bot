@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
+import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import {
   SPAM_QUESTIONS,
@@ -208,6 +209,29 @@ test("external channel Chinese ad reaches classifier and deletion despite synthe
   expect(h.batches[0]?.deletions.map(({ chatId, messageId }) => [chatId, messageId])).toEqual([["-1001", "1"]]);
   expect(h.batches[0]?.classificationAttempts.map(({ chatId, messageId, updateId }) =>
     [chatId, messageId, updateId])).toEqual([["-1001", "1", "1"]]);
+});
+
+test("real grammY routing deletes a recovery pitch, keeps a report, and links same-sender fragments", async () => {
+  const h = harness();
+  const positive = assessment(true, [0.05, 0.92]);
+  positive.strongestSignal = "unsolicited_crypto_recovery_pitch";
+  h.setAnswer(positive);
+  await h.send({ text: cryptoRecoveryPitches[0].text });
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.find((log) => log.event === "message_analyzed")?.strongestSignal)
+    .toBe("unsolicited_crypto_recovery_pitch");
+  h.setAnswer(assessment(false));
+  await h.send({ text: cryptoRecoveryControls.find((fixture) => fixture.id === "report-wrapper")!.text });
+  await h.send({ text: cryptoRecoverySplit.recent });
+  expect(h.deletes()).toEqual([1]);
+  h.setAnswer(positive);
+  await h.send({ text: cryptoRecoverySplit.current });
+  expect(h.classifications[3]?.recent.at(-1)?.text).toBe(cryptoRecoverySplit.recent);
+  expect(h.deletes()).toEqual([1, 3, 4]);
+  const serialized = JSON.stringify(h.logs);
+  expect(serialized).not.toContain(cryptoRecoveryPitches[0].text);
+  expect(serialized).not.toContain(cryptoRecoverySplit.current);
+  await h.stats.stop();
 });
 
 test("channel identity without from is eligible; edited captions and hidden links are normalized", async () => {

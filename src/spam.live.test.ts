@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
+import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import {
   investmentTestimonial,
@@ -25,6 +26,32 @@ describe("live Jev moderation fixtures", () => {
   });
 
   // Supply a private report only through stdin; never commit or print its text.
+  for (const fixture of cryptoRecoveryPitches) {
+    liveTest(`deletes unsolicited crypto recovery pitch ${fixture.id}`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.signals.unsolicited_crypto_recovery_pitch).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    });
+  }
+
+  for (const fixture of cryptoRecoveryControls) {
+    liveTest(`keeps crypto recovery control ${fixture.id}`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.probability).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+
+  liveTest("links a split crypto-loss hook to the later recovery-helper pitch", async () => {
+    const result = await classifier.classify(
+      { text: cryptoRecoverySplit.current, embeddedLinks: [], isForwarded: false },
+      [{ text: cryptoRecoverySplit.recent, embeddedLinks: [], isForwarded: false }],
+    );
+    expect(result.contextProbabilities).toHaveLength(1);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+  });
+
   const privateTest = process.env.JEV_PRIVATE_FIXTURE_STDIN === "1" ? liveTest : test.skip;
   privateTest("deletes a private screenshot transcription supplied via stdin", async () => {
     const text = (await Bun.stdin.text()).trim();
