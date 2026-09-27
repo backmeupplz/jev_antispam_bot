@@ -142,11 +142,11 @@ test.each([false, true])("testimonial signal deletes normalized human post (forw
   await h.stats.stop();
 });
 
-test("emoji bait is classified with forwarded-user bio and personal-channel text", async () => {
+test("emoji bait uses the actual forwarder's bio and personal-channel text", async () => {
   const h = harness();
   h.setAnswer(assessment(true));
   h.setProfileMetadata({
-    id: forwardedUser.id, type: "private", first_name: "private", accent_color_id: 0,
+    id: user.id, type: "private", first_name: "private", accent_color_id: 0,
     max_reaction_count: 1, accepted_gift_types: {}, bio: "private adult access",
     personal_chat: personalChannel,
   });
@@ -169,7 +169,8 @@ test("emoji bait is classified with forwarded-user bio and personal-channel text
       },
     },
   });
-  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === forwardedUser.id)).toHaveLength(1);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === user.id)).toHaveLength(1);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === forwardedUser.id)).toHaveLength(0);
   expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === personalChannel.id)).toHaveLength(1);
   expect(h.deletes()).toEqual([1, 2]);
   const serialized = JSON.stringify(h.logs);
@@ -193,6 +194,82 @@ test("profile metadata failure logs safely and continues message-only classifica
   expect(h.logs.filter((log) => log.event === "message_analysis_started")
     .every((log) => log.senderProfilePresent === false)).toBe(true);
   expect(JSON.stringify(h.logs)).not.toContain("private API detail");
+  await h.stats.stop();
+});
+
+const sticker = {
+  file_id: "opaque-sticker", file_unique_id: "opaque-unique", type: "regular" as const,
+  width: 48, height: 48, is_animated: false, is_video: false, emoji: "❤️",
+};
+
+test("uncaptioned sticker and photo from promotional sender profile reach classifier", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for private video access", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, description: "Paid access, signup required" });
+  h.setAnswer(assessment(true));
+  await h.send({ text: undefined, sticker, forward_origin: { type: "user", sender_user: forwardedUser, date: 1 } });
+  await h.send({ text: undefined, photo: [{ file_id: "photo", file_unique_id: "photo", width: 48, height: 48 }] });
+  expect(h.classifications.map(({ message }) => message)).toEqual([
+    { text: "", embeddedLinks: [], isForwarded: true, mediaOnly: true, senderProfile: {
+      bio: "Register for private video access",
+      personalChannel: { title: personalChannel.title, description: "Paid access, signup required" },
+    } },
+    { text: "", embeddedLinks: [], isForwarded: false, mediaOnly: true, senderProfile: {
+      bio: "Register for private video access",
+      personalChannel: { title: personalChannel.title, description: "Paid access, signup required" },
+    } },
+  ]);
+  expect(h.calls.filter(({ method, payload }) => method === "getChat" && payload.chat_id === forwardedUser.id)).toHaveLength(0);
+  expect(h.deletes()).toEqual([1, 2]);
+  expect(JSON.stringify(h.logs)).not.toContain("Register for private video access");
+  expect(h.logs.filter(({ event }) => event === "profile_lookup").map(({ source, outcome }) => [source, outcome]))
+    .toEqual([["user", "present"], ["channel", "present"], ["cache", "cached_present"]]);
+  await h.stats.stop();
+});
+
+test("ordinary profile hearts stay; unavailable profile media fail open", async () => {
+  const ordinary = harness();
+  ordinary.setProfileMetadata({ id: user.id, type: "private", bio: "Weekend hikes" });
+  await ordinary.send({ text: undefined, sticker });
+  expect(ordinary.classifications[0]?.message).toMatchObject({ mediaOnly: true, senderProfile: { bio: "Weekend hikes" } });
+  expect(ordinary.deletes()).toEqual([]);
+  await ordinary.stats.stop();
+
+  for (const missing of ["empty", "error"]) {
+    const h = harness();
+    if (missing === "error") h.setProfileError();
+    await h.send({ text: undefined, sticker });
+    expect(h.skipped().map(({ reason }) => reason)).toEqual(["media_profile_unavailable"]);
+    expect(h.classifications).toEqual([]);
+    expect(h.deletes()).toEqual([]);
+    await h.stats.stop();
+  }
+});
+
+test("uncaptioned media honors admin and linked-channel exemptions", async () => {
+  const admin = harness();
+  admin.setMemberStatus("administrator");
+  await admin.send({ text: undefined, sticker });
+  expect(admin.skipped().map(({ reason }) => reason)).toEqual(["group_admin"]);
+  expect(admin.calls.filter(({ method }) => method === "getChat")).toEqual([]);
+  await admin.stats.stop();
+
+  const linked = harness();
+  linked.setMetadata({ ...group, linked_chat_id: channel.id });
+  await linked.send({ text: undefined, sticker, sender_chat: channel, from: synthetic });
+  expect(linked.skipped().map(({ reason }) => reason)).toEqual(["official_linked_channel"]);
+  expect(linked.classifications).toEqual([]);
+  await linked.stats.stop();
+});
+
+test("profile-only media verdict does not delete unrelated earlier conversation", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
+  await h.send({ text: "Ordinary conversation about the release" });
+  h.setAnswer(assessment(true, [0.99]));
+  await h.send({ text: undefined, sticker });
+  expect(h.classifications[1]?.recent).toHaveLength(1);
+  expect(h.deletes()).toEqual([2]);
   await h.stats.stop();
 });
 
@@ -268,7 +345,7 @@ test("ordinary user forwards are classified even when forward origin is the offi
 test.each([
   ["private_chat", { chat: { id: 12, type: "private", first_name: "private" } }],
   ["unsupported_chat_type", { chat: channel }],
-  ["no_text_or_caption", { text: undefined, photo: [] }],
+  ["no_text_or_caption", { text: undefined, voice: { file_id: "voice", file_unique_id: "voice", duration: 1 } }],
   ["no_text_or_caption", { text: "  \n " }],
   ["missing_sender", { from: undefined }],
   ["bot_itself", { from: botInfo }],

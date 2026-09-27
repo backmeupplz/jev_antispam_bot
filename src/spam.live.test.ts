@@ -129,6 +129,35 @@ describe("live Jev moderation fixtures", () => {
     }
   });
 
+  liveTest("deletes uncaptioned media only with explicit promotional sender-owned profile", async () => {
+    for (const isForwarded of [false, true]) {
+      const result = await classifier.classify({
+        text: "", embeddedLinks: [], isForwarded, mediaOnly: true,
+        senderProfile: { personalChannel: {
+          title: "Full Access", description: "Private videos. Register for paid access.",
+        } },
+      });
+      expect(result.signals.media_profile_funnel).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    }
+  });
+
+  liveTest("keeps ordinary-media profiles, relevant channel owners and forwarded-origin mismatch", async () => {
+    for (const isForwarded of [false, true]) {
+      for (const senderProfile of [
+        { bio: "Travel photographer", personalChannel: { title: "Weekend hikes", description: "Trail notes" } },
+        { bio: "Project contributor", personalChannel: { title: "Project updates", description: "Release notes" } },
+        { bio: "I forward posts about online safety", personalChannel: { title: "Community", description: "Discussion" } },
+      ]) {
+        const result = await classifier.classify({
+          text: "", embeddedLinks: [], isForwarded, mediaOnly: true, senderProfile,
+        });
+        expect(result.signals.media_profile_funnel).toBeLessThan(0.9);
+        expect(result.shouldDelete).toBe(false);
+      }
+    }
+  });
+
   liveTest("keeps benign profiles, substantive discussion, warnings and unprofiled short replies", async () => {
     for (const message of profileBaitControls) {
       const result = await classifier.classify(message);

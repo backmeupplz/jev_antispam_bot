@@ -76,6 +76,20 @@ test("briefly caches failures and retries after the negative-cache TTL", async (
   expect(calls).toEqual([1, 1]);
 });
 
+test("channel access failure preserves successful bio and privacy-safe outcomes", async () => {
+  const cache = new SenderProfileCache();
+  const outcomes: string[] = [];
+  const lookup = async (id: number) => {
+    if (id === 7) return privateChat(7, -1007);
+    throw new Error("private channel title and id must not reach telemetry");
+  };
+  await expect(cache.get(7, lookup, Date.now(), (source, outcome) => outcomes.push(source + ":" + outcome)))
+    .resolves.toEqual({ bio: "adult bio" });
+  expect(outcomes).toEqual(["user:present", "channel:unavailable"]);
+  await cache.get(7, lookup, Date.now(), (source, outcome) => outcomes.push(source + ":" + outcome));
+  expect(outcomes.at(-1)).toBe("cache:cached_present");
+});
+
 test("removes expired profile text without requiring another access", async () => {
   const cache = new SenderProfileCache(10, 1);
   const getChat = async (id: number) => privateChat(id);

@@ -36,9 +36,20 @@ export const SPAM_QUESTIONS = {
       "Do `message` and its optional `senderProfile` form adult-content or dating profile bait, where a low-substance group message exists mainly to make readers open the sender's profile or personal channel?",
     criteria: {
       true:
-        "The visible message is only an emoji, greeting, generic compliment, vague generated engagement, or another low-information hook, while senderProfile.bio or senderProfile.personalChannel advertises sexual/adult content, private videos, dating contact, registration, paid access, or an equivalent profile funnel. Count forwarded low-substance hooks when the exposed origin profile metadata contains the adult funnel.",
+        "The visible message is only an emoji, greeting, generic compliment, vague generated engagement, or another low-information hook, while the actual sender's senderProfile.bio or senderProfile.personalChannel advertises sexual/adult content, private videos, dating contact, registration, paid access, or an equivalent profile funnel. senderProfile always belongs to the current sender; never treat an original forward author's profile as the forwarder's.",
       false:
         "The profile metadata is benign; the message is substantive and on-topic despite the sender having an adult-oriented profile; the message reports or warns about profile spam; or no profile metadata exposes an adult/dating/private-content funnel.",
+    },
+  },
+  media_profile_funnel: {
+    type: "noul",
+    instructions:
+      "For uncaptioned media only (message.mediaOnly true), does the actual sender's retrieved profile explicitly advertise an unsolicited promotional funnel?",
+    criteria: {
+      true:
+        "The sender-owned bio or personal-channel title/description explicitly advertises paid or gated adult content, registration for private material, a commercial signup, a scam offer, or comparable off-group promotion. The media is a low-substance hook without legitimate conversational context. Do not infer text from an image or avatar.",
+      false:
+        "The profile is unavailable, merely has a channel or adult-looking photo, contains no explicit promotional text, or the media belongs to legitimate conversation, relevant channel-owner discussion, or a requested post. Hearts, stickers, appearance, and forwarding alone do not prove solicitation. Do not attribute an original forward author's profile to its forwarder.",
     },
   },
   scam_or_phishing: {
@@ -247,6 +258,7 @@ export type ModerationMessage = {
   text: string;
   embeddedLinks: string[];
   isForwarded: boolean;
+  mediaOnly?: boolean;
 };
 
 export type SenderProfile = {
@@ -317,7 +329,13 @@ export class JevSpamClassifier {
     }
 
     const body: unknown = await response.json();
-    return parseAssessment(body, this.options.threshold, recentMessages.length);
+    const assessment = parseAssessment(body, this.options.threshold, recentMessages.length);
+    if (message.mediaOnly) {
+      const probability = assessment.signals.media_profile_funnel;
+      return { ...assessment, strongestSignal: "media_profile_funnel", probability,
+        shouldDelete: probability >= this.options.threshold };
+    }
+    return assessment;
   }
 }
 

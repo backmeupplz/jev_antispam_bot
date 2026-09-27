@@ -47,7 +47,8 @@ export function registerBotHandlers(bot: Bot, {
       }
 
       const message = toModerationMessage(ctx.msg);
-      if (!message) {
+      const mediaOnly = !message && ("sticker" in ctx.msg || "photo" in ctx.msg || "video" in ctx.msg || "animation" in ctx.msg);
+      if (!message && !mediaOnly) {
         await skip("no_text_or_caption");
         return;
       }
@@ -107,15 +108,11 @@ export function registerBotHandlers(bot: Bot, {
         }
         senderId = `user:${ctx.from.id}`;
         profileUserId = ctx.from.id;
-        const forwardOrigin = "forward_origin" in ctx.msg ? ctx.msg.forward_origin : undefined;
-        if (forwardOrigin?.type === "user" && !forwardOrigin.sender_user.is_bot) {
-          profileUserId = forwardOrigin.sender_user.id;
-        }
       }
 
       const analysisStartedAt = performance.now();
       let senderProfile;
-      if (profileUserId !== undefined && message.text.length <= 280) {
+      if (profileUserId !== undefined && (!message || message.text.length <= 280)) {
         try {
           senderProfile = await profiles.get(
             profileUserId,
@@ -123,19 +120,30 @@ export function registerBotHandlers(bot: Bot, {
               chatId,
               signal as Parameters<typeof ctx.api.getChat>[1],
             ),
+            Date.now(),
+            (source, outcome) => logger.info(JSON.stringify({
+              event: "profile_lookup", chatId: ctx.chat.id, messageId: ctx.msgId, source, outcome,
+            })),
           );
         } catch (error) {
           logFailure("profile_metadata_failed", error, ctx.chat.id, ctx.msgId);
         }
       }
+      // Uncaptioned media needs actual sender-owned profile metadata.
+      if (!message && !senderProfile) {
+        await skip("media_profile_unavailable");
+        return;
+      }
+      const moderationMessage = message ?? { text: "", embeddedLinks: [], isForwarded: "forward_origin" in ctx.msg, mediaOnly: true };
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
         chatId: ctx.chat.id,
         messageId: ctx.msgId,
-        characterCount: message.text.length,
-        embeddedLinkCount: message.embeddedLinks.length,
-        isForwarded: message.isForwarded,
+        characterCount: moderationMessage.text.length,
+        embeddedLinkCount: moderationMessage.embeddedLinks.length,
+        isForwarded: moderationMessage.isForwarded,
+        mediaOnly: Boolean(mediaOnly),
         isEdited: "edited_message" in ctx.update,
         contextMessageCount: recentMessages.length,
         senderProfilePresent: Boolean(senderProfile),
@@ -149,11 +157,11 @@ export function registerBotHandlers(bot: Bot, {
           updateId: ctx.update.update_id,
         });
         assessment = await classifier.classify(
-          senderProfile ? { ...message, senderProfile } : message,
+          senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
           recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
         );
       } catch (error) {
-        history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (message) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         await next();
@@ -163,12 +171,13 @@ export function registerBotHandlers(bot: Bot, {
       logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
 
       if (!assessment.shouldDelete) {
-        history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (message) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         await next();
         return;
       }
 
-      const messageIds = deletionMessageIds(
+      // Profile-only evidence cannot prove earlier text was part of the ad.
+      const messageIds = mediaOnly ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
         assessment.contextProbabilities,
