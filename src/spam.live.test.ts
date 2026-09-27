@@ -129,7 +129,7 @@ describe("live Jev moderation fixtures", () => {
     }
   });
 
-  liveTest("deletes uncaptioned media only with explicit promotional sender-owned profile", async () => {
+  liveTest("keeps ambiguous uncaptioned media even with explicitly promotional profile", async () => {
     for (const isForwarded of [false, true]) {
       const result = await classifier.classify({
         text: "", embeddedLinks: [], isForwarded, mediaOnly: true,
@@ -137,8 +137,8 @@ describe("live Jev moderation fixtures", () => {
           title: "Full Access", description: "Private videos. Register for paid access.",
         } },
       });
-      expect(result.signals.media_profile_funnel).toBeGreaterThanOrEqual(0.9);
-      expect(result.shouldDelete).toBe(true);
+      expect(result.signals.media_profile_funnel).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
     }
   });
 

@@ -39,9 +39,9 @@ export class SenderProfileCache {
     if (this.entries.size + this.inFlight.size >= this.maxEntries) return undefined;
 
     const request = this.load(userId, getChat, onOutcome)
-      .then((profile) => {
+      .then(({ profile, failed }) => {
         this.inFlight.delete(userId);
-        this.store(userId, profile, this.ttlMs);
+        this.store(userId, profile, failed ? this.failureTtlMs : this.ttlMs, failed);
         return profile;
       }, (error) => {
         this.inFlight.delete(userId);
@@ -70,7 +70,7 @@ export class SenderProfileCache {
     this.entries.delete(userId);
   }
 
-  private async load(userId: number, getChat: GetChat, onOutcome?: Outcome): Promise<SenderProfile | undefined> {
+  private async load(userId: number, getChat: GetChat, onOutcome?: Outcome): Promise<{ profile?: SenderProfile; failed: boolean }> {
     let user: ChatFullInfo;
     try {
       user = await getChat(userId, AbortSignal.timeout(this.timeoutMs));
@@ -86,10 +86,12 @@ export class SenderProfileCache {
     const bio = clean(user.bio);
     onOutcome?.("user", bio || user.personal_chat ? "present" : "empty");
     let personalChannel: SenderProfile["personalChannel"];
+    let failed = false;
     if (user.personal_chat?.type === "channel") {
       try {
         const channel = await getChat(user.personal_chat.id, AbortSignal.timeout(this.timeoutMs));
         if (channel.type !== "channel" || channel.id !== user.personal_chat.id) {
+          failed = true;
           onOutcome?.("channel", "invalid");
         } else {
           personalChannel = { title: channel.title.trim(), description: clean(channel.description) };
@@ -97,11 +99,12 @@ export class SenderProfileCache {
         }
       } catch {
         // A private/inaccessible channel must not discard a successful bio.
+        failed = true;
         onOutcome?.("channel", "unavailable");
       }
     }
 
-    return bio || personalChannel ? { bio, personalChannel } : undefined;
+    return { profile: bio || personalChannel ? { bio, personalChannel } : undefined, failed };
   }
 }
 

@@ -87,7 +87,7 @@ test("channel access failure preserves successful bio and privacy-safe outcomes"
     .resolves.toEqual({ bio: "adult bio" });
   expect(outcomes).toEqual(["user:present", "channel:unavailable"]);
   await cache.get(7, lookup, Date.now(), (source, outcome) => outcomes.push(source + ":" + outcome));
-  expect(outcomes.at(-1)).toBe("cache:cached_present");
+  expect(outcomes.at(-1)).toBe("cache:cached_unavailable");
 });
 
 test("removes expired profile text without requiring another access", async () => {
@@ -120,3 +120,35 @@ test("bounds pending lookups as well as settled entries", async () => {
   expect(cache["entries"].size).toBe(2);
   expect(cache["inFlight"].size).toBe(0);
 });
+
+for (const mode of ["reject", "timeout", "invalid"] as const) {
+  for (const withBio of [false, true]) {
+    test(`partial channel ${mode} preserves bio=${withBio} and retries at failure TTL`, async () => {
+      const cache = new SenderProfileCache(600_000, 10, 5, 60_000);
+      const outcomes: string[] = [];
+      const report = (source: string, outcome: string) => { outcomes.push(source + ":" + outcome); };
+      let fail = true;
+      let calls = 0;
+      const lookup = async (id: number, signal: AbortSignal): Promise<ChatFullInfo> => {
+        calls++;
+        if (id === 7) return { ...privateChat(7, -1007), bio: withBio ? "  adult bio  " : undefined } as ChatFullInfo;
+        if (!fail) return channelChat(id);
+        if (mode === "invalid") return channelChat(-999);
+        if (mode === "timeout") await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("timeout")), { once: true });
+        });
+        throw new Error("private channel failure");
+      };
+      expect(await cache.get(7, lookup, Date.now(), report)).toEqual(withBio ? { bio: "adult bio" } : undefined);
+      expect(outcomes.at(-1)).toBe(mode === "invalid" ? "channel:invalid" : "channel:unavailable");
+      fail = false;
+      expect(await cache.get(7, lookup, Date.now(), report)).toEqual(withBio ? { bio: "adult bio" } : undefined);
+      expect(outcomes.at(-1)).toBe("cache:cached_unavailable");
+      expect(calls).toBe(2);
+      const result = await cache.get(7, lookup, Date.now() + 61_000, report);
+      expect(calls).toBe(4);
+      expect(result?.personalChannel?.title).toBe("Full Heat");
+      expect(result?.bio).toBe(withBio ? "adult bio" : undefined);
+    });
+  }
+}

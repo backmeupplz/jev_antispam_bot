@@ -47,8 +47,8 @@ export function registerBotHandlers(bot: Bot, {
       }
 
       const message = toModerationMessage(ctx.msg);
-      const mediaOnly = !message && ("sticker" in ctx.msg || "photo" in ctx.msg || "video" in ctx.msg || "animation" in ctx.msg);
-      if (!message && !mediaOnly) {
+      const mediaOnly = Boolean(message?.mediaOnly);
+      if (!message) {
         await skip("no_text_or_caption");
         return;
       }
@@ -112,7 +112,7 @@ export function registerBotHandlers(bot: Bot, {
 
       const analysisStartedAt = performance.now();
       let senderProfile;
-      if (profileUserId !== undefined && (!message || message.text.length <= 280)) {
+      if (profileUserId !== undefined && message.text.length <= 280) {
         try {
           senderProfile = await profiles.get(
             profileUserId,
@@ -130,11 +130,11 @@ export function registerBotHandlers(bot: Bot, {
         }
       }
       // Uncaptioned media needs actual sender-owned profile metadata.
-      if (!message && !senderProfile) {
+      if (mediaOnly && !senderProfile) {
         await skip("media_profile_unavailable");
         return;
       }
-      const moderationMessage = message ?? { text: "", embeddedLinks: [], isForwarded: "forward_origin" in ctx.msg, mediaOnly: true };
+      const moderationMessage = message;
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
@@ -158,10 +158,12 @@ export function registerBotHandlers(bot: Bot, {
         });
         assessment = await classifier.classify(
           senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
-          recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
+          recentMessages.map(({ text, embeddedLinks, isForwarded, preview }) => ({
+            text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+          })),
         );
       } catch (error) {
-        if (message) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         await next();
@@ -171,7 +173,7 @@ export function registerBotHandlers(bot: Bot, {
       logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
 
       if (!assessment.shouldDelete) {
-        if (message) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         await next();
         return;
       }
