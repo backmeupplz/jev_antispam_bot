@@ -64,7 +64,9 @@ Live model regression tests require explicit `RUN_LIVE_JEV=1` plus a valid `TYPE
 RUN_LIVE_JEV=1 bun test src/spam.live.test.ts
 ```
 
-The suite includes a known Chinese advertisement, synthetic testimonial promotions across destination types, and forwarded/non-forwarded controls for requested recommendations, ordinary experience, warnings, support, citations, moderation quotes and bare links. To check a private reported post without retaining it as a fixture, supply its transcription on stdin with `JEV_PRIVATE_FIXTURE_STDIN=1 RUN_LIVE_JEV=1 bun test src/spam.live.test.ts -t "private screenshot"`; the test asserts probabilities without printing the text. Keep the 0.90 gate; do not treat mocked handler outcomes as model calibration. Test Telegram changes with a real account before deploying them. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
+The suite includes a known Chinese advertisement, synthetic testimonial promotions across destination types, and forwarded/non-forwarded controls for requested recommendations, ordinary experience, warnings, support, citations, moderation quotes and bare links. To check a private reported post without retaining it as a fixture, supply its transcription on stdin with `JEV_PRIVATE_FIXTURE_STDIN=1 RUN_LIVE_JEV=1 bun test src/spam.live.test.ts -t "private screenshot"`; the test asserts probabilities without printing the text. Keep the 0.90 gate; do not treat mocked handler outcomes as model calibration. Optional real-account Telegram checks provide additional evidence but do not block the General review/test/CI release gate.
+
+Media-profile fixture disposition and attribution boundaries are documented in [Media-profile evidence](docs/media-profile-evidence.md). Run its optional pinned-model suite with `RUN_LIVE_JEV=1 bun test src/media.live.test.ts`; the previously accused media cases are ambiguity controls, not confirmed recall misses. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
 
 ## Docker
 
