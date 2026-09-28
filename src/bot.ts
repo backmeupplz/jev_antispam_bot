@@ -47,6 +47,7 @@ export function registerBotHandlers(bot: Bot, {
       }
 
       const message = toModerationMessage(ctx.msg);
+      const mediaOnly = Boolean(message?.mediaOnly);
       if (!message) {
         await skip("no_text_or_caption");
         return;
@@ -107,10 +108,6 @@ export function registerBotHandlers(bot: Bot, {
         }
         senderId = `user:${ctx.from.id}`;
         profileUserId = ctx.from.id;
-        const forwardOrigin = "forward_origin" in ctx.msg ? ctx.msg.forward_origin : undefined;
-        if (forwardOrigin?.type === "user" && !forwardOrigin.sender_user.is_bot) {
-          profileUserId = forwardOrigin.sender_user.id;
-        }
       }
 
       const analysisStartedAt = performance.now();
@@ -123,11 +120,21 @@ export function registerBotHandlers(bot: Bot, {
               chatId,
               signal as Parameters<typeof ctx.api.getChat>[1],
             ),
+            Date.now(),
+            (source, outcome) => logger.info(JSON.stringify({
+              event: "profile_lookup", chatId: ctx.chat.id, messageId: ctx.msgId, source, outcome,
+            })),
           );
         } catch (error) {
           logFailure("profile_metadata_failed", error, ctx.chat.id, ctx.msgId);
         }
       }
+      // Uncaptioned media needs actual sender-owned profile metadata.
+      if (mediaOnly && !senderProfile) {
+        await skip("media_profile_unavailable");
+        return;
+      }
+      const moderationMessage = message;
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
@@ -140,6 +147,7 @@ export function registerBotHandlers(bot: Bot, {
           kind, origin, sourceKind, sourceAuthor, contentAvailable: Boolean(text?.trim()),
           characterCount: text?.length ?? 0, embeddedLinkCount: embeddedLinks.length,
         })) ?? [],
+        mediaOnly: Boolean(mediaOnly),
         isEdited: "edited_message" in ctx.update,
         contextMessageCount: recentMessages.length,
         senderProfilePresent: Boolean(senderProfile),
@@ -153,13 +161,13 @@ export function registerBotHandlers(bot: Bot, {
           updateId: ctx.update.update_id,
         });
         assessment = await classifier.classify(
-          senderProfile ? { ...message, senderProfile } : message,
+          senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
           recentMessages.map(({ text, embeddedLinks, isForwarded, preview }) => ({
             text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
           })),
         );
       } catch (error) {
-        history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         await next();
@@ -169,12 +177,13 @@ export function registerBotHandlers(bot: Bot, {
       logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
 
       if (!assessment.shouldDelete) {
-        history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         await next();
         return;
       }
 
-      const messageIds = deletionMessageIds(
+      // Profile-only evidence cannot prove earlier text was part of the ad.
+      const messageIds = mediaOnly ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
         assessment.contextProbabilities,

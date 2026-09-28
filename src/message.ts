@@ -37,7 +37,8 @@ function kind(origin: { type: string } | undefined): "user" | "chat" | "channel"
 
 export function toModerationMessage(message: Message): ModerationMessage | null {
   const current = sourceText(message, MAX_CURRENT_CHARS);
-  if (!current.text?.trim()) return null;
+  const mediaOnly = !current.text?.trim() && ("sticker" in message || "photo" in message || "video" in message || "animation" in message);
+  if (!current.text?.trim() && !mediaOnly) return null;
 
   const preview: NonNullable<ModerationMessage["preview"]> = [];
   const reply = "reply_to_message" in message ? message.reply_to_message : undefined;
@@ -83,7 +84,8 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
   }
 
   return {
-    text: current.text.slice(0, MAX_CURRENT_CHARS),
+    text: current.text ?? "",
+    ...(mediaOnly ? { mediaOnly: true } : {}),
     embeddedLinks: current.embeddedLinks,
     isForwarded: "forward_origin" in message && Boolean(message.forward_origin),
     ...(preview.length ? { preview } : {}),

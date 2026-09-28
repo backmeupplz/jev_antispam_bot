@@ -40,7 +40,7 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
   };
 }
 
-function harness() {
+function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -94,7 +94,7 @@ function harness() {
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
       if (classifyError) throw new Error("private model failure including message content");
-      return answer;
+      return classify ? classify(message, recent) : answer;
     } },
   });
   let id = 0;
@@ -356,11 +356,11 @@ test("real handler sees local quote, edited reply, external quote and missing so
   await h.stats.stop();
 });
 
-test("emoji bait is classified with forwarded-user bio and personal-channel text", async () => {
+test("emoji bait uses the actual forwarder's bio and personal-channel text", async () => {
   const h = harness();
   h.setAnswer(assessment(true));
   h.setProfileMetadata({
-    id: forwardedUser.id, type: "private", first_name: "private", accent_color_id: 0,
+    id: user.id, type: "private", first_name: "private", accent_color_id: 0,
     max_reaction_count: 1, accepted_gift_types: {}, bio: "private adult access",
     personal_chat: personalChannel,
   });
@@ -383,7 +383,8 @@ test("emoji bait is classified with forwarded-user bio and personal-channel text
       },
     },
   });
-  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === forwardedUser.id)).toHaveLength(1);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === user.id)).toHaveLength(1);
+  expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === forwardedUser.id)).toHaveLength(0);
   expect(h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === personalChannel.id)).toHaveLength(1);
   expect(h.deletes()).toEqual([1, 2]);
   const serialized = JSON.stringify(h.logs);
@@ -407,6 +408,82 @@ test("profile metadata failure logs safely and continues message-only classifica
   expect(h.logs.filter((log) => log.event === "message_analysis_started")
     .every((log) => log.senderProfilePresent === false)).toBe(true);
   expect(JSON.stringify(h.logs)).not.toContain("private API detail");
+  await h.stats.stop();
+});
+
+const sticker = {
+  file_id: "opaque-sticker", file_unique_id: "opaque-unique", type: "regular" as const,
+  width: 48, height: 48, is_animated: false, is_video: false, emoji: "❤️",
+};
+
+test("uncaptioned sticker and photo from promotional sender profile reach classifier", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for private video access", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, description: "Paid access, signup required" });
+  h.setAnswer(assessment(true));
+  await h.send({ text: undefined, sticker, forward_origin: { type: "user", sender_user: forwardedUser, date: 1 } });
+  await h.send({ text: undefined, photo: [{ file_id: "photo", file_unique_id: "photo", width: 48, height: 48 }] });
+  expect(h.classifications.map(({ message }) => message)).toEqual([
+    { text: "", embeddedLinks: [], isForwarded: true, mediaOnly: true, senderProfile: {
+      bio: "Register for private video access",
+      personalChannel: { title: personalChannel.title, description: "Paid access, signup required" },
+    } },
+    { text: "", embeddedLinks: [], isForwarded: false, mediaOnly: true, senderProfile: {
+      bio: "Register for private video access",
+      personalChannel: { title: personalChannel.title, description: "Paid access, signup required" },
+    } },
+  ]);
+  expect(h.calls.filter(({ method, payload }) => method === "getChat" && payload.chat_id === forwardedUser.id)).toHaveLength(0);
+  expect(h.deletes()).toEqual([1, 2]);
+  expect(JSON.stringify(h.logs)).not.toContain("Register for private video access");
+  expect(h.logs.filter(({ event }) => event === "profile_lookup").map(({ source, outcome }) => [source, outcome]))
+    .toEqual([["user", "present"], ["channel", "present"], ["cache", "cached_present"]]);
+  await h.stats.stop();
+});
+
+test("ordinary profile hearts stay; unavailable profile media fail open", async () => {
+  const ordinary = harness();
+  ordinary.setProfileMetadata({ id: user.id, type: "private", bio: "Weekend hikes" });
+  await ordinary.send({ text: undefined, sticker });
+  expect(ordinary.classifications[0]?.message).toMatchObject({ mediaOnly: true, senderProfile: { bio: "Weekend hikes" } });
+  expect(ordinary.deletes()).toEqual([]);
+  await ordinary.stats.stop();
+
+  for (const missing of ["empty", "error"]) {
+    const h = harness();
+    if (missing === "error") h.setProfileError();
+    await h.send({ text: undefined, sticker });
+    expect(h.skipped().map(({ reason }) => reason)).toEqual(["media_profile_unavailable"]);
+    expect(h.classifications).toEqual([]);
+    expect(h.deletes()).toEqual([]);
+    await h.stats.stop();
+  }
+});
+
+test("uncaptioned media honors admin and linked-channel exemptions", async () => {
+  const admin = harness();
+  admin.setMemberStatus("administrator");
+  await admin.send({ text: undefined, sticker });
+  expect(admin.skipped().map(({ reason }) => reason)).toEqual(["group_admin"]);
+  expect(admin.calls.filter(({ method }) => method === "getChat")).toEqual([]);
+  await admin.stats.stop();
+
+  const linked = harness();
+  linked.setMetadata({ ...group, linked_chat_id: channel.id });
+  await linked.send({ text: undefined, sticker, sender_chat: channel, from: synthetic });
+  expect(linked.skipped().map(({ reason }) => reason)).toEqual(["official_linked_channel"]);
+  expect(linked.classifications).toEqual([]);
+  await linked.stats.stop();
+});
+
+test("profile-only media verdict does not delete unrelated earlier conversation", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
+  await h.send({ text: "Ordinary conversation about the release" });
+  h.setAnswer(assessment(true, [0.99]));
+  await h.send({ text: undefined, sticker });
+  expect(h.classifications[1]?.recent).toHaveLength(1);
+  expect(h.deletes()).toEqual([2]);
   await h.stats.stop();
 });
 
@@ -482,7 +559,7 @@ test("ordinary user forwards are classified even when forward origin is the offi
 test.each([
   ["private_chat", { chat: { id: 12, type: "private", first_name: "private" } }],
   ["unsupported_chat_type", { chat: channel }],
-  ["no_text_or_caption", { text: undefined, photo: [] }],
+  ["no_text_or_caption", { text: undefined, voice: { file_id: "voice", file_unique_id: "voice", duration: 1 } }],
   ["no_text_or_caption", { text: "  \n " }],
   ["missing_sender", { from: undefined }],
   ["bot_itself", { from: botInfo }],
@@ -707,6 +784,51 @@ test("inaccessible reply and ordinary number stay available to classifier withou
   expect(h.classifications[0]!.message.preview?.[0]).toMatchObject({ kind: "reply", sourceAuthor: "unknown" });
   expect(h.classifications[0]!.message.preview?.[0]).not.toHaveProperty("text");
   expect(h.classifications[1]!.message).not.toHaveProperty("preview");
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+for (const kind of ["photo", "video", "animation", "sticker"] as const) {
+  test("media reply preserves requested versus unsolicited evidence: " + kind, async () => {
+    const h = harness(async (message) => assessment(message.preview?.[0]?.text === "Stop posting your paid signup ads here."));
+    h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
+    const media = kind === "sticker" ? sticker : kind === "photo"
+      ? [{ file_id: "photo", file_unique_id: "photo", width: 48, height: 48 }]
+      : { file_id: kind, file_unique_id: kind, width: 48, height: 48, duration: 1 };
+    const reply = (text: string) => ({ message_id: 900, date: 1, chat: group, from: { ...user, id: 13 }, text });
+    await h.send({ text: undefined, [kind]: media, reply_to_message: reply("Please share the screenshot/video/sticker we discussed.") });
+    await h.send({ text: undefined, [kind]: media, reply_to_message: reply("Stop posting your paid signup ads here.") }, true);
+    expect(h.classifications[0]?.message.preview?.[0]).toMatchObject({
+      origin: "same_chat", sourceAuthor: "other_author", sourceKind: "user", isForwarded: false,
+    });
+    expect(h.classifications[0]?.message.senderProfile).toEqual(h.classifications[1]?.message.senderProfile);
+    expect(h.classifications.every(({ recent }) => recent.length === 0)).toBe(true);
+    expect(h.deletes()).toEqual([2]);
+    expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "delete"]);
+    expect(JSON.stringify(h.logs)).not.toContain("paid private videos");
+    await h.stats.stop();
+  });
+}
+
+test("media classifier failure keeps and excludes media from later history", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
+  h.setClassifyError();
+  await h.send({ text: undefined, sticker }, true);
+  await h.send({ text: "Later ordinary text" });
+  expect(h.classifications[1]?.recent).toEqual([]);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")[0]).toMatchObject({ decision: "keep", status: "failed" });
+  await h.stats.stop();
+});
+
+test("unlinked sender_chat media never borrows synthetic user profile", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
+  await h.send({ text: undefined, sticker, sender_chat: channel, from: synthetic });
+  expect(h.calls.filter(({ method }) => method === "getChat").map(({ payload }) => payload.chat_id)).toEqual([group.id]);
+  expect(h.skipped().map(({ reason }) => reason)).toEqual(["media_profile_unavailable"]);
+  expect(h.classifications).toEqual([]);
   expect(h.deletes()).toEqual([]);
   await h.stats.stop();
 });
