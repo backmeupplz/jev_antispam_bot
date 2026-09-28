@@ -3,6 +3,7 @@ import { AdminCache } from "./admin-cache";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
+import { TelegramPreviewCache, type PageRequest } from "./telegram-preview";
 import { SenderProfileCache } from "./profile";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import type { StatsRecorder } from "./stats";
@@ -12,15 +13,18 @@ export function registerBotHandlers(bot: Bot, {
   model,
   stats,
   logger = console,
+  previewRequest,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   model: string;
   stats: StatsRecorder;
   logger?: Pick<Console, "info" | "error">;
+  previewRequest?: PageRequest;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
   const profiles = new SenderProfileCache();
+  const destinations = new TelegramPreviewCache({ request: previewRequest });
 
   bot.use(async (ctx, next) => {
     if (ctx.chat) stats.observeChat({ chatId: ctx.chat.id, chatType: ctx.chat.type });
@@ -134,6 +138,14 @@ export function registerBotHandlers(bot: Bot, {
         await skip("media_profile_unavailable");
         return;
       }
+      try {
+        const destinationPreviews = await destinations.enrich(ctx.msg, (result, source, durationMs) =>
+          logger.info(JSON.stringify({ event: "telegram_preview_lookup", result, source, durationMs })));
+        if (destinationPreviews.length) message.destinationPreviews = destinationPreviews;
+      } catch {
+        // Optional enrichment must never bypass otherwise eligible moderation.
+        logger.info(JSON.stringify({ event: "telegram_preview_lookup", result: "unavailable" }));
+      }
       const moderationMessage = message;
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
@@ -162,8 +174,9 @@ export function registerBotHandlers(bot: Bot, {
         });
         assessment = await classifier.classify(
           senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
-          recentMessages.map(({ text, embeddedLinks, isForwarded, preview }) => ({
+          recentMessages.map(({ text, embeddedLinks, isForwarded, preview, destinationPreviews }) => ({
             text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+            ...(destinationPreviews ? { destinationPreviews } : {}),
           })),
         );
       } catch (error) {
