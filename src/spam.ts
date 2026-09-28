@@ -184,6 +184,17 @@ export const SPAM_QUESTIONS = {
         "It responds to an actual relevant staffing request from another member in its own same-chat reply preview, publishes an invited or administrator-approved vacancy, asks friends for unpaid help, coordinates volunteers or an agreed shift, invoices or settles completed work, discusses wages, prices, or employment, asks for work as a seeker, or quotes or warns about a recruitment post. Never invent a payment term: absent any pay for future work, ordinary requests for help are not this appeal, regardless of forwarding.",
     },
   },
+  unsolicited_paid_care_recruitment: {
+    type: "noul",
+    instructions:
+      "Is the CURRENT message an unsolicited paid care-task recruitment pitch to group readers?",
+    criteria: {
+      true:
+        "It recruits someone to look after pets, a home, or a comparable care responsibility during an upcoming absence, advertises daily pay or payment for the period, and asks who is available or able to do it. Claims that the task is easy or needs no special skills can support the recruitment pitch; neither a link, a private-contact instruction, a currency symbol nor implausible pay is required. Inserting this paid availability appeal beneath unrelated discussion is unsolicited outreach, including repeated copies beneath different unrelated posts. Evaluate the current offer using its own attributed reply context, not permission from an earlier reply. Do not require a particular animal, amount, destination, language or sender.",
+      false:
+        "It answers an actual relevant request from another author in its own same-chat reply preview, such as a job seeker inviting paid care offers, or participates in an explicitly invited relevant community hiring discussion. Also keep unpaid neighbor help, coordination of an already agreed care arrangement, payment settlement, ordinary care or price discussion, job-seeking rather than recruitment, and warnings or reports quoting the offer. A repeated requested reply is still requested. Repetition alone, pet ownership, travel, or a payment mention alone is not spam evidence. Do not infer an invitation from the sender merely saying as requested, or invent missing conversation to force either verdict.",
+    },
+  },
   one_off_cash_task_offer: {
     type: "noul",
     instructions:
@@ -355,9 +366,9 @@ export class JevSpamClassifier {
         instructions: `Is \`recentMessages[${index}]\` part of the same spam pitch or campaign as \`message\`?`,
         criteria: {
           true:
-            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an earlier crypto-fraud loss hook to a later offer of a helper who can recover the losses, even without a link or DM call. Link an unsolicited sale, service, rental, contract-transfer, paid-work recruitment, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising. Link repeated copies of the same unsolicited offer.",
+            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an earlier crypto-fraud loss hook to a later offer of a helper who can recover the losses, even without a link or DM call. Link an unsolicited sale, service, rental, contract-transfer, paid-work recruitment, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising. Link repeated copies of the same unsolicited offer, including paid care-task recruitment during an upcoming absence with daily pay and an availability appeal beneath unrelated posts. The same pitch can remain linked when the current reply target is a photo with no text preview; do not invent photo contents. Require the earlier offer itself to be unsolicited, not merely textually identical.",
           false:
-            "It is unrelated legitimate conversation, requested help or contact, an already ongoing transaction, incidental context, or does not belong to the spam pitch containing the current message.",
+            "It is unrelated legitimate conversation, requested help or contact, an already ongoing transaction or care arrangement, incidental context, or does not belong to the spam pitch containing the current message. Preserve a historical paid care offer answering its own other-author same-chat request even when identical later offers are unsolicited; repetition alone never establishes spam membership.",
         },
       };
     });
