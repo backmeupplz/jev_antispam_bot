@@ -29,13 +29,51 @@ answers fail rather than being filled in. Error output is sanitized; exit 1
 means at least one request/parsing failure, not a model-quality verdict.
 No score assertions force ambiguous tiny replies into a desired outcome.
 
+## Measured credentialed synthetic comparison (2026-09-28)
+
+The committed opt-in evaluator was run in the existing production container using
+candidate source `cc0c56c`, pinned `jev-1.13.0`, and threshold .90. All 16
+synthetic fixtures parsed successfully; there were zero request/parsing failures.
+These are actual model measurements, not mock responses or score assertions.
+
+| Synthetic fixture | `quoted_promotion_amplification` | Additional measured outcome |
+| --- | --- | --- |
+| reported-style-666 | .32 | Strongest signal .35 |
+| short-nice | .68 | |
+| short-emoji | .69 | |
+| short-deal | .76 | |
+| explicit-endorsement | .90 | Strongest .97; selects only current message for deletion |
+| report-to-mods | .03 | |
+| warning | .03 | |
+| criticism | .04 | |
+| verification | .05 | |
+| discussion-citation | .15 | |
+| requested-recommendation | .05 | |
+| ordinary-666 | .02 | |
+| standalone-666 | .03 | |
+| inaccessible-source | .05 | |
+| mixed-history | .69 | Strongest .94; links [.12, .94]; selected IDs [11, 100], excluding requested message 10 |
+| historical-ad-current-warning | .25 | Strongest .26; link .42; no deletion selected |
+
+Selection means the evaluator's synthetic deletion decision, not an actual
+Telegram deletion. Running inside the production container does not mean the
+candidate source was deployed. This was not an exact reproduction of the user
+screenshot, a deployed-source evaluation, or UI testing; no conclusion about
+the real reported case follows from these synthetic results.
+
+**Decision:** these measurements justify no runtime threshold or prompt changes.
+Resolving the tiny-reaction ambiguity requires the exact attributed screenshot
+payload and full advertisement text, or an explicit product-policy decision on
+whether ambiguous tiny reactions should be deletion-worthy. Synthetic scores
+alone do not settle that policy.
+
 ## Interpretation and decision boundary
 
 Mock responses in deterministic tests prove source/current separation, per-message
 request context, strict linkage validation, threshold handling, actor/chat isolation,
 and fail-open behavior through a real grammY handler. They do **not** prove model
-detection. This commit includes no credentialed model results or real-account UI
-proof, and does not claim improved confidence. Such evaluations are nonblocking
+detection. The credentialed synthetic results above are not real-account UI
+proof and do not establish improved confidence. Such evaluations are nonblocking
 for General's review/test/CI gate.
 
 A brief reaction may express endorsement, irony, acknowledgment or discussion;
