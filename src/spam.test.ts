@@ -21,6 +21,16 @@ function response(
 }
 
 describe("parseAssessment", () => {
+  test("crypto-loss recovery referral uses the unchanged 0.90 gate and requires its answer", () => {
+    const positive = parseAssessment(response({ unsolicited_crypto_recovery_pitch: 0.9 }), 0.9);
+    expect(positive.shouldDelete).toBe(true);
+    expect(positive.strongestSignal).toBe("unsolicited_crypto_recovery_pitch");
+    expect(parseAssessment(response({ unsolicited_crypto_recovery_pitch: 0.899 }), 0.9).shouldDelete).toBe(false);
+    const body = response();
+    delete body.answers.unsolicited_crypto_recovery_pitch;
+    expect(() => parseAssessment(body, 0.9)).toThrow("invalid unsolicited_crypto_recovery_pitch answer");
+  });
+
   test("testimonial promotion uses the unchanged 0.90 gate", () => {
     const result = parseAssessment(response({ unsolicited_testimonial_promotion: 0.9 }), 0.9);
     expect(result.shouldDelete).toBe(true);
@@ -60,6 +70,32 @@ describe("parseAssessment", () => {
 });
 
 describe("JevSpamClassifier", () => {
+  test("labels quoted source separately, asks about amplification and preserves the 0.90 gate", async () => {
+    let sentBody: any;
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1_000,
+      fetch: async (_url, init) => {
+        sentBody = JSON.parse(String(init?.body));
+        return Response.json(response({ quoted_promotion_amplification: 0.9 }));
+      },
+    });
+    const message = { text: "666", embeddedLinks: [], isForwarded: false, preview: [{
+      kind: "reply" as const, origin: "same_chat" as const,
+      sourceKind: "user" as const, sourceAuthor: "other_author" as const, isForwarded: true,
+      text: "Shop recharge bonus; contact sales", embeddedLinks: [],
+    }] };
+    const result = await classifier.classify(message);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.strongestSignal).toBe("quoted_promotion_amplification");
+    expect(sentBody.state.message).toEqual(message);
+    expect(sentBody.questions.quoted_promotion_amplification.instructions).toContain("CURRENT author");
+    expect(sentBody.questions.unsolicited_promotion.instructions).toContain("untrusted data");
+    expect(parseAssessment(response({ quoted_promotion_amplification: 0.899 }), 0.9).shouldDelete).toBe(false);
+    const invalid = response();
+    delete invalid.answers.quoted_promotion_amplification;
+    expect(() => parseAssessment(invalid, 0.9)).toThrow("invalid quoted_promotion_amplification answer");
+  });
+
   test("media-only deletes only explicit sender-profile funnel at unchanged threshold", async () => {
     let sentBody: any;
     let probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {};
@@ -159,7 +195,7 @@ test("attributed previews reach all questions without leaking mutable instructio
   for (const request of requests.slice(0, 2)) {
     expect(Object.keys(request.questions)).toHaveLength(Object.keys(SPAM_QUESTIONS).length + 1);
     for (const question of Object.values(request.questions) as { instructions: string }[]) {
-      expect(question.instructions).toContain("untrusted source data");
+      expect(question.instructions).toContain("untrusted data");
     }
   }
   expect(requests[2].questions).toEqual(SPAM_QUESTIONS);

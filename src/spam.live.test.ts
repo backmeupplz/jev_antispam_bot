@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "grammy/types";
 import { toModerationMessage } from "./message";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
+import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import {
   investmentTestimonial,
@@ -75,8 +76,62 @@ describe("live Jev moderation fixtures", () => {
       expect(result.shouldDelete).toBe(false);
     });
   }
+  const previewAd = { kind: "reply" as const, origin: "same_chat" as const,
+    sourceKind: "hidden_user" as const, sourceAuthor: "unknown" as const, isForwarded: true,
+    text: "WORLD SHOP-BOT is offering a recharge bonus. Contact customer service @example_support for details. Automated sales platform, direct from the owner, available 24/7.",
+    embeddedLinks: [] };
+  liveTest("deletes a tiny approving reply amplifying a forwarded shop-bot advertisement", async () => {
+    const result = await classifier.classify({ text: "666", embeddedLinks: [],
+      isForwarded: false, preview: [previewAd] });
+    expect(result.signals.quoted_promotion_amplification).toBeGreaterThanOrEqual(0.9);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.contextProbabilities).toHaveLength(0);
+  });
+
+  liveTest("keeps reports, warnings, verification, discussion and unrelated short replies", async () => {
+    for (const text of ["Mods, please remove this spam", "Warning: this looks like a scam, don't contact them",
+      "Is this a scam? Can someone verify it?", "This is a useful example of promotional spam in the group"]) {
+      const result = await classifier.classify({ text, embeddedLinks: [],
+        isForwarded: false, preview: [previewAd] });
+      expect(result.shouldDelete).toBe(false);
+      expect(result.probability).toBeLessThan(0.9);
+    }
+    const ordinary = await classifier.classify({ text: "666", embeddedLinks: [], isForwarded: false,
+      preview: [{ ...previewAd, isForwarded: false, text: "Nice game yesterday" }] });
+    expect(ordinary.shouldDelete).toBe(false);
+    const unavailable = await classifier.classify({ text: "666", embeddedLinks: [], isForwarded: false,
+      preview: [{ kind: "external_reply", origin: "external", sourceKind: "channel", sourceAuthor: "unknown",
+        isForwarded: false, embeddedLinks: [] }] });
+    expect(unavailable.shouldDelete).toBe(false);
+  });
 
   // Supply a private report only through stdin; never commit or print its text.
+  for (const fixture of cryptoRecoveryPitches) {
+    liveTest(`deletes unsolicited crypto recovery pitch ${fixture.id}`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.signals.unsolicited_crypto_recovery_pitch).toBeGreaterThanOrEqual(0.9);
+      expect(result.shouldDelete).toBe(true);
+    });
+  }
+
+  for (const fixture of cryptoRecoveryControls) {
+    liveTest(`keeps crypto recovery control ${fixture.id}`, async () => {
+      const result = await classifier.classify({ text: fixture.text, embeddedLinks: [], isForwarded: false });
+      expect(result.probability).toBeLessThan(0.9);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+
+  liveTest("links a split crypto-loss hook to the later recovery-helper pitch", async () => {
+    const result = await classifier.classify(
+      { text: cryptoRecoverySplit.current, embeddedLinks: [], isForwarded: false },
+      [{ text: cryptoRecoverySplit.recent, embeddedLinks: [], isForwarded: false }],
+    );
+    expect(result.contextProbabilities).toHaveLength(1);
+    expect(result.shouldDelete).toBe(true);
+    expect(result.contextProbabilities[0]).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+  });
+
   const privateTest = process.env.JEV_PRIVATE_FIXTURE_STDIN === "1" ? liveTest : test.skip;
   privateTest("deletes a private screenshot transcription supplied via stdin", async () => {
     const text = (await Bun.stdin.text()).trim();
