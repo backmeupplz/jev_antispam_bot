@@ -3,7 +3,8 @@ import type { ModerationMessage } from "./spam";
 
 export function toModerationMessage(message: Message): ModerationMessage | null {
   const text = "text" in message ? message.text : "caption" in message ? message.caption : undefined;
-  if (!text?.trim()) return null;
+  const mediaOnly = !text?.trim() && ("sticker" in message || "photo" in message || "video" in message || "animation" in message);
+  if (!text?.trim() && !mediaOnly) return null;
 
   const entities = "entities" in message
     ? message.entities
@@ -42,7 +43,8 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
   }
 
   return {
-    text,
+    text: text ?? "",
+    ...(mediaOnly ? { mediaOnly: true } : {}),
     embeddedLinks: [...new Set(embeddedLinks)],
     isForwarded: "forward_origin" in message,
     ...(preview.length ? { preview } : {}),

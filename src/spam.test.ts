@@ -60,6 +60,30 @@ describe("parseAssessment", () => {
 });
 
 describe("JevSpamClassifier", () => {
+  test("media-only deletes only explicit sender-profile funnel at unchanged threshold", async () => {
+    let sentBody: any;
+    let probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {};
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1_000,
+      fetch: async (_url, init) => {
+        sentBody = JSON.parse(String(init?.body));
+        return Response.json(response(probabilities));
+      },
+    });
+    const message = { text: "", embeddedLinks: [], isForwarded: false, mediaOnly: true,
+      senderProfile: { personalChannel: { title: "Full Access", description: "Register for paid private videos" } } };
+    probabilities = { adult_profile_bait: 0.99, media_profile_funnel: 0.899 };
+    expect((await classifier.classify(message)).shouldDelete).toBe(false);
+    expect(sentBody.state.message).toEqual(message);
+    expect(sentBody.questions.media_profile_funnel).toEqual(SPAM_QUESTIONS.media_profile_funnel);
+    probabilities = { media_profile_funnel: 0.9 };
+    expect(await classifier.classify(message)).toMatchObject({
+      strongestSignal: "media_profile_funnel", probability: 0.9, shouldDelete: true,
+    });
+    probabilities = { media_profile_funnel: 0.01, unsolicited_promotion: 0.99 };
+    expect((await classifier.classify(message)).shouldDelete).toBe(false);
+  });
+
   test("sends message state and all spam questions to TypeSafe", async () => {
     let sentBody: unknown;
     const classifier = new JevSpamClassifier("test-key", {
@@ -141,3 +165,20 @@ test("attributed previews reach all questions without leaking mutable instructio
   expect(requests[2].questions).toEqual(SPAM_QUESTIONS);
   expect(JSON.stringify(SPAM_QUESTIONS)).toBe(baseline);
 });
+
+for (const text of ["Ordinary group discussion", "A requested photo caption"]) {
+  test("media-only signal never deletes text/caption: " + text, async () => {
+    let body = response({ media_profile_funnel: 0.99 });
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1_000,
+      fetch: async () => Response.json(body),
+    });
+    expect(await classifier.classify({ text, embeddedLinks: [], isForwarded: false })).toMatchObject({
+      shouldDelete: false, probability: 0.01,
+    });
+    expect(parseAssessment(body, 0.9).shouldDelete).toBe(false);
+    delete body.answers.media_profile_funnel;
+    await expect(classifier.classify({ text, embeddedLinks: [], isForwarded: false }))
+      .rejects.toThrow("invalid media_profile_funnel answer");
+  });
+}
