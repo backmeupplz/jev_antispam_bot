@@ -1007,3 +1007,53 @@ for (const defect of ["missing-media", "invalid-media", "missing-context"] as co
     await h.stats.stop();
   });
 }
+
+// HTTP responses are artificial: these regressions prove fail-open and suffix
+// routing through the real builder/parser, not paid-care model recognition.
+for (const scenario of ["linked", "requested-barrier", "current-requested", "low-current", "low-last-link", "missing-link", "invalid-link"] as const) {
+  test("care campaign through real parser and grammY: " + scenario, async () => {
+    const requests: { state: { recentMessages: ModerationMessage[] }; questions: Record<string, unknown> }[] = [];
+    const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        const request = JSON.parse(String(init?.body));
+        requests.push(request);
+        const final = requests.length === 4;
+        const score = final ? scenario === "current-requested" || scenario === "low-current" ? 0.899 : 0.9 : 0.01;
+        const links = scenario === "requested-barrier" ? [0.99, 0.1, 0.8]
+          : scenario === "low-last-link" ? [0.99, 0.99, 0.749] : [0.1, 0.75, 0.8];
+        const answers = Object.fromEntries(Object.keys(request.questions).map(key => [key, {
+          type: "noul", noul: key.startsWith("context_message_") ? final ? links[Number(key.slice(16))]! : 0.01
+            : key === "unsolicited_paid_care_recruitment" ? score : 0.01,
+        }]));
+        if (final && scenario === "missing-link") delete answers.context_message_1;
+        if (final && scenario === "invalid-link") answers.context_message_1!.noul = 2;
+        return Response.json({ model: "jev-1.13.0", answers });
+      },
+    });
+    const h = harness((message, recent) => classifier.classify(message, recent));
+    const sources = scenario === "requested-barrier" ? [laptopPreview, careRequest, rvPreview] : [careRequest, laptopPreview, rvPreview];
+    for (const [i, source] of sources.entries()) {
+      await h.send({ ...careReply(reportedCare, source), message_id: i + 1 } as unknown as Record<string, unknown>);
+    }
+    const current = scenario === "current-requested" ? careReply(reportedCare, careRequest) : carePhotoReply();
+    await h.send({ ...current, message_id: 4 } as unknown as Record<string, unknown>);
+    // Assert outside the handler, whose fail-open catch could swallow assertions.
+    expect(requests).toHaveLength(4);
+    expect(requests[3]!.state.recentMessages.map(m => m.preview?.[0]?.text)).toEqual(sources);
+    expect(Object.keys(requests[3]!.questions).filter(key => key.startsWith("context_message_")))
+      .toEqual(["context_message_0", "context_message_1", "context_message_2"]);
+    expect(h.deletes()).toEqual(scenario === "linked" ? [2, 3, 4]
+      : scenario === "requested-barrier" ? [3, 4] : scenario === "low-last-link" ? [4] : []);
+    expect(h.deletes()).not.toContain(900);
+    expect(h.deletes()).not.toContain(902);
+    const failed = scenario === "missing-link" || scenario === "invalid-link";
+    const terminal = h.logs.filter(log => log.event === "message_analyzed");
+    expect(terminal).toHaveLength(4);
+    expect(terminal.at(-1)).toMatchObject({ status: failed ? "failed" : "completed",
+      decision: h.deletes().length ? "delete" : "keep" });
+    if (failed) expect(terminal.at(-1)?.signals).toBeNull();
+    expect(JSON.stringify(h.logs)).not.toContain(reportedCare);
+    expect(JSON.stringify(h.logs)).not.toContain(careRequest);
+    await h.stats.stop();
+  });
+}
