@@ -31,6 +31,16 @@ describe("parseAssessment", () => {
     expect(() => parseAssessment(body, 0.9)).toThrow("invalid unsolicited_testimonial_promotion answer");
   });
 
+  test("invite signal uses the unchanged gate and fails open on a missing answer", () => {
+    const accepted = parseAssessment(response({ unsolicited_telegram_invite_funnel: 0.9 }, [0.8, 0.1]), 0.9, 2);
+    expect(accepted.shouldDelete).toBe(true);
+    expect(accepted.contextProbabilities).toEqual([0.8, 0.1]);
+    expect(parseAssessment(response({ unsolicited_telegram_invite_funnel: 0.899 }), 0.9).shouldDelete).toBe(false);
+    const body = response();
+    delete body.answers.unsolicited_telegram_invite_funnel;
+    expect(() => parseAssessment(body, 0.9)).toThrow("invalid unsolicited_telegram_invite_funnel answer");
+  });
+
   test("deletes when any signal reaches the threshold", () => {
     const result = parseAssessment(response({ profile_bait: 0.9 }), 0.9);
     expect(result.shouldDelete).toBe(true);
