@@ -141,3 +141,33 @@ test("attributed previews reach all questions without leaking mutable instructio
   expect(requests[2].questions).toEqual(SPAM_QUESTIONS);
   expect(JSON.stringify(SPAM_QUESTIONS)).toBe(baseline);
 });
+
+import { careRequest, laptopPreview, normalizedCare, photoCare, reportedCare } from "./fixtures/paid-care";
+
+test("care signal uses unchanged threshold and requires every dynamic answer", async () => {
+  const previous = [normalizedCare(reportedCare, careRequest), normalizedCare(reportedCare, laptopPreview)];
+  let malformed = false;
+  const classifier = new JevSpamClassifier("fixture", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+    fetch: async (_url, init) => {
+      const sent = JSON.parse(String(init?.body));
+      expect(sent.state).toEqual({ message: photoCare(), recentMessages: previous });
+      expect(sent.questions.unsolicited_paid_care_recruitment).toBeDefined();
+      expect(sent.questions.context_message_0).toBeDefined();
+      expect(sent.questions.context_message_1).toBeDefined();
+      expect(sent.questions.context_message_2).toBeUndefined();
+      const body = response({ unsolicited_paid_care_recruitment: 0.9 }, [0.1, 0.8]);
+      if (malformed) delete body.answers.context_message_1;
+      return Response.json(body);
+    },
+  });
+  const result = await classifier.classify(photoCare(), previous);
+  expect(result.shouldDelete).toBe(true);
+  expect(result.strongestSignal).toBe("unsolicited_paid_care_recruitment");
+  expect(result.contextProbabilities).toEqual([0.1, 0.8]);
+  malformed = true;
+  await expect(classifier.classify(photoCare(), previous)).rejects.toThrow("invalid context_message_1 answer");
+  expect(parseAssessment(response({ unsolicited_paid_care_recruitment: 0.899 }), 0.9).shouldDelete).toBe(false);
+  const missing = response();
+  delete missing.answers.unsolicited_paid_care_recruitment;
+  expect(() => parseAssessment(missing, 0.9)).toThrow("invalid unsolicited_paid_care_recruitment answer");
+});

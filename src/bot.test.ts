@@ -606,3 +606,83 @@ test("requested reply context survives fail-open and never becomes a deletion ca
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter(l => l.event === "classification_failed")).toHaveLength(2);
 });
+
+import { careControls, careInvitation, carePhotoReply, careReply, careRequest, laptopPreview, reportedCare, rvPreview } from "./fixtures/paid-care";
+
+// Stubbed assessments prove routing/deletion boundaries, not model accuracy.
+test("paid care replies, photo source and edits retain attribution and terminal privacy", async () => {
+  for (const source of [undefined, laptopPreview, careRequest, careInvitation]) {
+    const h = harness();
+    const requested = source === careRequest || source === careInvitation;
+    const answer = assessment();
+    answer.signals.unsolicited_paid_care_recruitment = requested ? 0.1 : 0.9;
+    answer.probability = requested ? 0.1 : 0.9;
+    answer.shouldDelete = !requested;
+    answer.strongestSignal = "unsolicited_paid_care_recruitment";
+    h.setAnswer(answer);
+    await h.send(careReply(reportedCare, source) as unknown as Record<string, unknown>);
+    await h.send({ ...careReply(reportedCare, source), message_id: 1 } as unknown as Record<string, unknown>, true);
+    expect(h.classifications).toHaveLength(2);
+    for (const call of h.classifications) {
+      expect(call.message.text).toBe(reportedCare);
+      expect(call.message.preview?.[0]?.text).toBe(source);
+      if (source) expect(call.message.preview?.[0]?.sourceAuthor).toBe("other_author");
+      expect(call.recent).toEqual([]);
+    }
+    expect(h.deletes()).toEqual(requested ? [] : [1, 1]);
+    const terminal = h.logs.filter(l => l.event === "message_analyzed");
+    expect(terminal).toHaveLength(2);
+    expect(terminal.every(l => l.decision === (requested ? "keep" : "delete"))).toBe(true);
+    expect(JSON.stringify(h.logs)).not.toContain(reportedCare);
+    if (source) expect(JSON.stringify(h.logs)).not.toContain(source);
+    await h.stats.stop();
+  }
+});
+
+test("care campaign deletes only linked copies, preserves requested history and other authors", async () => {
+  const h = harness();
+  await h.send({ ...careReply(reportedCare, careRequest), message_id: 1 } as unknown as Record<string, unknown>);
+  await h.send({ ...careReply(reportedCare, laptopPreview), message_id: 2 } as unknown as Record<string, unknown>);
+  await h.send({ ...careReply(reportedCare, rvPreview), message_id: 3 } as unknown as Record<string, unknown>);
+  await h.send({ message_id: 50, from: { id: 20, is_bot: false, first_name: "Other" }, text: "An unrelated source post" });
+  const answer = assessment();
+  answer.shouldDelete = true;
+  answer.probability = 0.9;
+  answer.strongestSignal = "unsolicited_paid_care_recruitment";
+  answer.signals.unsolicited_paid_care_recruitment = 0.9;
+  answer.contextProbabilities = [0.1, 0.8, 0.9];
+  h.setAnswer(answer);
+  await h.send({ ...carePhotoReply(), message_id: 4 } as unknown as Record<string, unknown>);
+  const call = h.classifications[4]!;
+  expect(call.message.preview).toBeUndefined(); // no image analysis or invented source text
+  expect(call.recent.map(m => m.preview?.[0]?.text)).toEqual([careRequest, laptopPreview, rvPreview]);
+  expect(h.deletes()).toEqual([2, 3, 4]);
+  expect(h.deletes()).not.toContain(1);
+  expect(h.deletes()).not.toContain(50);
+  expect(h.deletes()).not.toContain(900);
+  expect(h.deletes()).not.toContain(902);
+  expect(h.logs.filter(l => l.event === "message_analyzed")).toHaveLength(5);
+  expect(JSON.stringify(h.logs)).not.toContain(reportedCare);
+  expect(JSON.stringify(h.logs)).not.toContain(careRequest);
+  await h.stats.stop();
+});
+
+test("care low linkage stops suffix cleanup despite a confirmed current verdict", async () => {
+  const h = harness();
+  await h.send(careReply(reportedCare, laptopPreview) as unknown as Record<string, unknown>);
+  await h.send({ ...careReply(reportedCare, rvPreview), message_id: 2 } as unknown as Record<string, unknown>);
+  h.setAnswer(assessment(true, [0.9, 0.74]));
+  await h.send({ ...carePhotoReply(), message_id: 3 } as unknown as Record<string, unknown>, true);
+  expect(h.deletes()).toEqual([3]);
+  await h.stats.stop();
+});
+
+test("benign care controls route normally and preserve low-score outcomes", async () => {
+  const h = harness();
+  for (const text of careControls) await h.send({ text });
+  expect(h.classifications.map(c => c.message.text)).toEqual(careControls);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter(l => l.event === "message_analyzed")).toHaveLength(careControls.length);
+  for (const text of careControls) expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
