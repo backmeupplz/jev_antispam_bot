@@ -16,6 +16,7 @@ export const cryptoRecoveryControls = [
   { id: "report-wrapper", text: "this one wasn't recognized:" + String.fromCharCode(10, 10) + germanRecoveryPitch },
   { id: "requested-support", text: "Du hast nach seriöser Hilfe bei Kryptobetrug gefragt: Melde es zuerst der Polizei und kontaktiere den offiziellen Support deiner Börse." },
   { id: "requested-referral", text: "You asked me for a fraud-response recommendation; use the official police report portal and your exchange's verified support channel." },
+  { id: "requested-recovery-specialist", text: "You asked for a lawyer who handles crypto-fraud recovery claims. The lawyer who helped me document my loss and pursue a civil claim was a licensed asset-recovery specialist; I recommend consulting one through your local bar association. They cannot guarantee recovery, and you should never share wallet keys." },
   { id: "russian-warning", text: "Предупреждение: мошенники обещают вернуть потерянную криптовалюту через помощника. Не отправляйте им деньги." },
 ] as const;
 

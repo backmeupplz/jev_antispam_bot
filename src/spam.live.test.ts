@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { Message } from "grammy/types";
+import { toModerationMessage } from "./message";
 import { CONTEXT_LINK_THRESHOLD, JevSpamClassifier } from "./spam";
 import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
@@ -13,6 +15,7 @@ import {
   flightCourierRecruitmentControls,
 } from "./fixtures/crypto-trade-courier";
 import { profileBaitControls, profileBaitMessages } from "./fixtures/profile-bait";
+import { inviteAmbiguousBare, inviteCampaigns, inviteControls, inviteAmbiguousCaptions, inviteRepeats, inviteNormalizedCases } from "./fixtures/invite-funnel";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 
 const apiKey = process.env.TYPESAFE_API_KEY;
@@ -24,6 +27,55 @@ describe("live Jev moderation fixtures", () => {
     threshold: 0.9,
     timeoutMs: 10_000,
   });
+
+  for (const fixture of inviteAmbiguousCaptions) {
+    liveTest(`keeps ambiguous minimal contact-admin invite caption ${fixture.id} at the unchanged gate`, async () => {
+      const result = await classifier.classify(toModerationMessage({ caption: fixture.text } as Message)!);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+  for (const fixture of inviteNormalizedCases) {
+    liveTest(`production-normalized invite representation ${fixture.id}`, async () => {
+      const recent = fixture.recent ?? [];
+      const result = await classifier.classify(toModerationMessage(fixture.input)!, recent);
+      expect(result.shouldDelete).toBe(fixture.deleteIt);
+      expect(result.contextProbabilities).toHaveLength(recent.length);
+      if (fixture.deleteIt && recent.length) {
+        expect(result.contextProbabilities[0]!).toBeLessThan(CONTEXT_LINK_THRESHOLD);
+        expect(result.contextProbabilities[1]!).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+      }
+    });
+  }
+  for (const fixture of inviteRepeats) {
+    liveTest(`keeps ambiguous repeated same-actor invite ${fixture.id} with missing request context`, async () => {
+      const result = await classifier.classify(toModerationMessage({ text: fixture.text } as Message)!, fixture.recent);
+      expect(result.contextProbabilities).toHaveLength(fixture.recent.length);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+  for (const fixture of inviteCampaigns) {
+    liveTest(`deletes invite with independent promotional context ${fixture.id} and links only its suffix`, async () => {
+      const result = await classifier.classify(toModerationMessage({ text: fixture.text } as Message)!, fixture.recent);
+      expect(result.shouldDelete).toBe(true);
+      expect(result.contextProbabilities).toHaveLength(2);
+      expect(result.contextProbabilities[0]!).toBeLessThan(CONTEXT_LINK_THRESHOLD);
+      expect(result.contextProbabilities[1]!).toBeGreaterThanOrEqual(CONTEXT_LINK_THRESHOLD);
+    });
+  }
+  // GEN32 boundary: without reply context a lone unrequested drop is textually identical to a
+  // requested reply, so these must remain below the gate rather than be forced to false confidence.
+  for (const fixture of inviteAmbiguousBare) {
+    liveTest(`keeps context-free lone invite ${fixture.id} with no request or promotional context`, async () => {
+      const result = await classifier.classify(toModerationMessage({ text: fixture.text } as Message)!);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
+  for (const fixture of inviteControls) {
+    liveTest(`keeps invite control ${fixture.id}`, async () => {
+      const result = await classifier.classify(toModerationMessage({ text: fixture.text } as Message)!);
+      expect(result.shouldDelete).toBe(false);
+    });
+  }
 
   // Supply a private report only through stdin; never commit or print its text.
   for (const fixture of cryptoRecoveryPitches) {

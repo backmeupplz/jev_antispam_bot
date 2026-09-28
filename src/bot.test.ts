@@ -2,9 +2,13 @@ import { expect, test } from "bun:test";
 import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { registerBotHandlers } from "./bot";
+import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
+import { invite, caption, inviteCampaigns, requestedAdminReplies } from "./fixtures/invite-funnel";
 import { testimonialPromotions } from "./fixtures/testimonial-promotion";
+import { reportedRecruitment } from "./fixtures/vague-recruitment";
+import { hiringRequest, invitedHiring, unrelatedReply, recruitmentReply } from "./fixtures/recruitment-replies";
 import {
   SPAM_QUESTIONS,
   type CurrentModerationMessage,
@@ -117,6 +121,155 @@ function harness() {
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test("a below-gate invite verdict keeps the message and logs a keep decision", async () => {
+  const h = harness();
+  const keep = assessment();
+  keep.signals.unsolicited_telegram_invite_funnel = 0.64;
+  keep.strongestSignal = "unsolicited_telegram_invite_funnel";
+  keep.probability = 0.64;
+  keep.shouldDelete = false;
+  h.setAnswer(keep);
+  await h.send({ text: invite });
+  expect(h.classifications).toHaveLength(1);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")).toMatchObject([{ decision: "keep", strongestSignal: "unsolicited_telegram_invite_funnel" }]);
+  expect(JSON.stringify(h.logs)).not.toContain(invite);
+  await h.stats.stop();
+});
+
+test("two requested bare-invite replies preserve current and historical request previews", async () => {
+  const h = harness();
+  const requests = ["Please send the study-group invite", "Could you send the invite again?"];
+  const normalized = requests.map((text): ModerationMessage => ({
+    text: invite, embeddedLinks: [], isForwarded: false,
+    preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user",
+      sourceAuthor: "other_author", isForwarded: false, text, embeddedLinks: [] }],
+  }));
+  for (const [index, request] of requests.entries()) {
+    // Mock scores prove routing only. Pinned live fixtures separately test this exact projection.
+    h.setAnswer(assessment(false, index === 0 ? [] : [0.94]));
+    await h.send({ text: invite, reply_to_message: {
+      message_id: 100 + index, date: 1, chat: group,
+      from: { id: 13, is_bot: false, first_name: "Requester" }, text: request,
+    } });
+  }
+  expect(h.classifications).toEqual([
+    { message: normalized[0]!, recent: [] }, { message: normalized[1]!, recent: [normalized[0]!] },
+  ]);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")).toMatchObject([
+    { decision: "keep" }, { decision: "keep" },
+  ]);
+  expect(JSON.stringify(h.logs)).not.toContain(invite);
+  expect(JSON.stringify(h.logs)).not.toContain("Please send");
+  await h.stats.stop();
+});
+
+for (const fixture of requestedAdminReplies) {
+  test(`requested admin referral stays kept through real routing: ${fixture.id}`, async () => {
+    const h = harness();
+    // Deterministic keep proves routing only; pinned live tests prove model accuracy separately.
+    h.setAnswer(assessment(false));
+    await h.send({ ...fixture.input });
+    expect(h.classifications).toEqual([{ message: toModerationMessage(fixture.input)!, recent: [] }]);
+    expect(h.deletes()).toEqual([]);
+    expect(h.logs.filter(log => log.event === "message_analyzed")).toMatchObject([{ decision: "keep" }]);
+    expect(JSON.stringify(h.logs)).not.toContain(invite);
+    expect(JSON.stringify(h.classifications)).not.toContain("Requester");
+    await h.stats.stop();
+  });
+}
+
+test("confirmed invite campaign deletes only linked same-actor suffix, not unrelated history", async () => {
+  const h = harness();
+  const fixture = inviteCampaigns[0]!;
+  for (const prior of fixture.recent) await h.send({ text: prior.text });
+  h.setAnswer(assessment(true, [0.1, 0.97]));
+  await h.send({ text: fixture.text });
+  expect(h.classifications[2]).toEqual({
+    message: { text: fixture.text, embeddedLinks: [], isForwarded: false }, recent: fixture.recent,
+  });
+  expect(h.deletes()).toEqual([2, 3]);
+  await h.stats.stop();
+});
+
+test("invite-only and captioned funnels route through the real handler without leaking link text", async () => {
+  for (const shape of ["bare", "hidden", "video", "forwarded-video", "edited-video"]) {
+    const h = harness();
+    const result = assessment();
+    result.strongestSignal = "unsolicited_telegram_invite_funnel";
+    result.signals.unsolicited_telegram_invite_funnel = 0.96;
+    result.probability = 0.96;
+    result.shouldDelete = true;
+    h.setAnswer(result);
+    const isVideo = shape.includes("video");
+    const patch = isVideo
+      ? { text: undefined, caption, caption_entities: [{ type: "url", offset: caption.indexOf(invite), length: invite.length }], video: { file_id: "fixture", file_unique_id: "fixture", width: 10, height: 10, duration: 25 }, ...(shape === "forwarded-video" ? { forward_origin: { type: "hidden_user", sender_user_name: "fixture", date: 1 } } : {}) }
+      : { text: shape === "hidden" ? "Join here" : invite, ...(shape === "hidden" ? { entities: [{ type: "text_link", offset: 0, length: 9, url: invite }] } : {}) };
+    await h.send(patch, shape === "edited-video");
+    expect(h.classifications).toHaveLength(1);
+    expect(h.classifications[0]!.message).toMatchObject({ text: isVideo ? caption : shape === "hidden" ? "Join here" : invite, embeddedLinks: shape === "hidden" ? [invite] : [], isForwarded: shape === "forwarded-video" });
+    expect(h.deletes()).toEqual([1]);
+    expect(h.logs.filter((log) => log.event === "message_analyzed")).toHaveLength(1);
+    expect(JSON.stringify(h.logs)).not.toContain(invite);
+    await h.stats.stop();
+  }
+});
+
+test.each([false, true])("vague paid recruitment reaches the real handler (forwarded=%s)", async (isForwarded) => {
+  const h = harness();
+  const answer = assessment();
+  answer.signals.unsolicited_vague_recruitment = 0.91;
+  answer.strongestSignal = "unsolicited_vague_recruitment";
+  answer.probability = 0.91;
+  answer.shouldDelete = true;
+  h.setAnswer(answer);
+  const text = reportedRecruitment.paidCompletion;
+  await h.send({
+    text,
+    ...(isForwarded ? { forward_origin: { type: "hidden_user", sender_user_name: "private origin", date: 1 } } : {}),
+  });
+  expect(h.classifications).toEqual([{ message: { text, embeddedLinks: [], isForwarded }, recent: [] }]);
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed")[0]).toMatchObject({
+    decision: "delete", strongestSignal: "unsolicited_vague_recruitment",
+  });
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
+
+test("ambiguous no-pay recruitment remains below the gate when classifier is uncertain", async () => {
+  const h = harness();
+  const answer = assessment();
+  answer.signals.unsolicited_vague_recruitment = 0.62;
+  answer.strongestSignal = "unsolicited_vague_recruitment";
+  answer.probability = 0.62;
+  h.setAnswer(answer);
+  await h.send({ text: reportedRecruitment.unpaidAmbiguous, forward_origin: {
+    type: "hidden_user", sender_user_name: "private origin", date: 1,
+  } });
+  expect(h.classifications[0]?.message).toMatchObject({ isForwarded: true, text: reportedRecruitment.unpaidAmbiguous });
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+test("repeated reply-shaped paid recruitment deletes only a linked same-actor suffix", async () => {
+  const h = harness();
+  const text = reportedRecruitment.shiftCover;
+  h.setAnswer(assessment(false));
+  await h.send({ text: "Unrelated earlier discussion" });
+  await h.send({ text, reply_to_message: { message_id: 900, date: 1, chat: group, text: "Other topic" } });
+  await h.send({ text, reply_to_message: { message_id: 901, date: 1, chat: group, text: "Other topic" } });
+  h.setAnswer(assessment(true, [0.08, 0.96, 0.97]));
+  await h.send({ text, reply_to_message: { message_id: 902, date: 1, chat: group, text: "Other topic" } });
+  expect(h.classifications[3]?.recent.map((message) => message.text)).toEqual([
+    "Unrelated earlier discussion", text, text,
+  ]);
+  expect(h.deletes()).toEqual([2, 3, 4]);
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
 
 test.each([false, true])("testimonial signal deletes normalized human post (forwarded=%s)", async (isForwarded) => {
   const h = harness();
@@ -432,4 +585,48 @@ test("membership updates retain stats lifecycle and invalidate cached human admi
   expect(h.batches[0]?.chats[0]).toMatchObject({ chatId: String(group.id), chatType: "supergroup", membershipActive: false });
   expect(h.batches[0]?.deletions).toEqual([]);
   expect(h.calls.some((call) => call.method === "sendMessage")).toBe(false);
+});
+
+// Scores here verify routing only; the paired live suite proves classification.
+test.each([false, true])("preserves paired hiring reply context and edits (forwarded=%s)", async (isForwarded) => {
+  for (const source of [undefined, hiringRequest, invitedHiring, unrelatedReply]) {
+    const h = harness();
+    const requested = source === hiringRequest || source === invitedHiring;
+    h.setAnswer(assessment(!requested));
+    const shape = recruitmentReply(reportedRecruitment.paidCompletion, source, isForwarded);
+    await h.send(shape as unknown as Record<string, unknown>);
+    const current = h.classifications[0]!.message;
+    expect(current.text).toBe(reportedRecruitment.paidCompletion);
+    expect(current.isForwarded).toBe(isForwarded);
+    expect(current.preview?.[0]?.text).toBe(source);
+    if (source) expect(current.preview?.[0]?.sourceAuthor).toBe("other_author");
+    expect(h.deletes()).toEqual(requested ? [] : [1]);
+    if (requested) {
+      await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>);
+      await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>, true);
+      expect(h.classifications[1]!.recent[0]!.preview).toEqual(current.preview);
+      expect(h.classifications[2]!.recent).toHaveLength(1);
+      expect(h.deletes()).toEqual([]);
+      // A later unsolicited offer must not erase requested attribution in history.
+      h.setAnswer(assessment(true, [0.1, 0.1]));
+      await h.send({ ...recruitmentReply(reportedRecruitment.paidCompletion, unrelatedReply), message_id: 3 } as unknown as Record<string, unknown>);
+      expect(h.classifications[3]!.recent.map(m => m.preview?.[0]?.text)).toEqual([source, source]);
+      expect(h.deletes()).toEqual([3]);
+    }
+    expect(h.deletes()).not.toContain(900);
+    const logged = JSON.stringify(h.logs);
+    expect(logged).not.toContain(reportedRecruitment.paidCompletion);
+    if (source) expect(logged).not.toContain(source);
+  }
+});
+
+test("requested reply context survives fail-open and never becomes a deletion candidate", async () => {
+  const h = harness();
+  h.setClassifyError();
+  const shape = recruitmentReply(reportedRecruitment.paidCompletion, hiringRequest);
+  await h.send(shape as unknown as Record<string, unknown>);
+  await h.send({ ...shape, message_id: 2 } as unknown as Record<string, unknown>);
+  expect(h.classifications[1]!.recent[0]!.preview?.[0]?.text).toBe(hiringRequest);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter(l => l.event === "classification_failed")).toHaveLength(2);
 });

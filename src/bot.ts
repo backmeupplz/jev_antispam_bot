@@ -150,7 +150,9 @@ export function registerBotHandlers(bot: Bot, {
         });
         assessment = await classifier.classify(
           senderProfile ? { ...message, senderProfile } : message,
-          recentMessages.map(({ text, embeddedLinks, isForwarded }) => ({ text, embeddedLinks, isForwarded })),
+          recentMessages.map(({ text, embeddedLinks, isForwarded, preview }) => ({
+            text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+          })),
         );
       } catch (error) {
         history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
