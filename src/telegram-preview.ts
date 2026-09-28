@@ -66,7 +66,10 @@ export async function requestPublicTelegramPage(url: string, signal: AbortSignal
   return new Promise((resolve, reject) => {
     const req = transport.request(url, {
       method: "GET", signal, agent: false,
-      headers: { Accept: "text/html", "Accept-Encoding": "identity", "User-Agent": "Jev-Public-Preview/1.0" },
+      // Bun 1.3 synthesizes Host: t.me:443 after custom lookup, then uses
+      // that authority for TLS identity. Keep the exact admitted hostname,
+      // without a port; DNS remains pinned and certificate checks stay enabled.
+      headers: { Host: "t.me", Accept: "text/html", "Accept-Encoding": "identity", "User-Agent": "Jev-Public-Preview/1.0" },
       lookup: (_hostname, options, callback) => {
         if (options.all) callback(null, [{ address: addresses[0]!.address, family: 4 }]);
         else callback(null, addresses[0]!.address, 4);

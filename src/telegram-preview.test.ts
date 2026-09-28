@@ -143,7 +143,8 @@ test("real transport checks DNS before socket and pins validated IP for both loo
     sockets++;
     expect(_url).toBe("https://t.me/test"); expect(options.agent).toBe(false);
     expect(options.rejectUnauthorized).not.toBe(false);
-    expect(Object.keys(options.headers).sort()).toEqual(["Accept", "Accept-Encoding", "User-Agent"]);
+    expect(Object.keys(options.headers).sort()).toEqual(["Accept", "Accept-Encoding", "Host", "User-Agent"]);
+    expect(options.headers.Host).toBe("t.me");
     options.lookup("t.me", {}, (error: unknown, address: string, family: number) => { expect(error).toBeNull(); expect(address).toBe("149.154.167.99"); expect(family).toBe(4); });
     options.lookup("t.me", { all: true }, (error: unknown, addresses: unknown) => { expect(error).toBeNull(); expect(addresses).toEqual([{ address: "149.154.167.99", family: 4 }]); });
     const req = new EventEmitter() as any;
