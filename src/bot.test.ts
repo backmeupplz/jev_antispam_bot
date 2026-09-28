@@ -298,6 +298,67 @@ test.each([false, true])("testimonial signal deletes normalized human post (forw
   await h.stats.stop();
 });
 
+test("real handler classifies a tiny reply with forwarded ad preview and deletes only current", async () => {
+  const h = harness();
+  h.setAnswer(assessment(true));
+  const source = { message_id: 783, date: 1, chat: group, from: forwardedUser,
+    forward_origin: { type: "hidden_user", sender_user_name: "outside", date: 1 },
+    text: "Shop bot recharge bonus. Contact for details",
+    entities: [{ type: "text_link", offset: 0, length: 4, url: "https://example.org/shop" }],
+  };
+  await h.send({ text: "666", reply_to_message: source });
+  expect(h.classifications[0]?.message).toMatchObject({ text: "666", embeddedLinks: [],
+    isForwarded: false, preview: [{ kind: "reply", origin: "same_chat",
+      sourceAuthor: "unknown", isForwarded: true, text: source.text,
+      embeddedLinks: ["https://example.org/shop"] }] });
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.find((log) => log.event === "message_analysis_started")?.preview).toEqual([{
+    kind: "reply", origin: "same_chat", sourceKind: "hidden_user", sourceAuthor: "unknown", contentAvailable: true,
+    characterCount: source.text.length, embeddedLinkCount: 1,
+  }]);
+  for (const sensitive of [source.text, "outside", "https://example.org/shop", String(forwardedUser.id)]) {
+    expect(JSON.stringify(h.logs)).not.toContain(sensitive);
+  }
+  await h.stats.stop();
+});
+
+test("real handler sees local quote, edited reply, external quote and missing source without fetching it", async () => {
+  const h = harness();
+  const source = { message_id: 783, date: 1, chat: group, from: forwardedUser,
+    text: "Free refill bonus", entities: [{ type: "text_link", offset: 0, length: 4,
+      url: "https://example.org/hidden" }] };
+  await h.send({ text: "is this legitimate?", reply_to_message: source,
+    quote: { text: "Free refill", position: 0 } });
+  await h.send({ text: "report to mods", reply_to_message: source }, true);
+  await h.send({ text: "do not use this", external_reply: {
+    origin: { type: "channel", chat: channel, message_id: 900, date: 1 }, chat: channel, message_id: 900,
+  }, quote: { text: "Bonus: contact the shop bot", position: 0 } });
+  await h.send({ text: "666", external_reply: {
+    origin: { type: "channel", chat: channel, message_id: 901, date: 1 }, chat: channel, message_id: 901,
+  } });
+  await h.send({ text: "ordinary 666", reply_to_message: {
+    message_id: 784, date: 1, chat: group, from: forwardedUser,
+    photo: [{ file_id: "x", file_unique_id: "y", width: 1, height: 1 }],
+  } });
+  expect(h.classifications).toHaveLength(5);
+  expect(h.classifications[0]?.message.preview).toMatchObject([
+    { kind: "reply", origin: "same_chat", sourceAuthor: "other_author", text: source.text,
+      embeddedLinks: ["https://example.org/hidden"] },
+    { kind: "quote", origin: "same_chat", text: "Free refill" },
+  ]);
+  expect(h.classifications[1]?.message.preview?.[0]?.text).toBe(source.text);
+  expect(h.classifications[2]?.message.preview).toMatchObject([
+    { kind: "external_reply", origin: "external", embeddedLinks: [] },
+    { kind: "quote", origin: "external", text: "Bonus: contact the shop bot" },
+  ]);
+  expect(h.classifications[3]?.message.preview?.[0]).not.toHaveProperty("text");
+  expect(h.classifications[4]?.message.preview?.[0]).not.toHaveProperty("text");
+  expect(h.deletes()).toEqual([]);
+  expect(h.calls.every((call) => ["getChatMember", "getChat"].includes(call.method))).toBe(true);
+  expect(JSON.stringify(h.logs)).not.toContain(source.text);
+  await h.stats.stop();
+});
+
 test("emoji bait uses the actual forwarder's bio and personal-channel text", async () => {
   const h = harness();
   h.setAnswer(assessment(true));
@@ -708,6 +769,49 @@ test("requested reply context survives fail-open and never becomes a deletion ca
   expect(h.classifications[1]!.recent[0]!.preview?.[0]?.text).toBe(hiringRequest);
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter(l => l.event === "classification_failed")).toHaveLength(2);
+});
+
+// Mocked assessments prove routing/deletion scope, not model accuracy.
+test.each([
+  "Mods, please remove this spam", "Warning: don't contact this scammer",
+  "This is deceptive advertising", "Can anyone verify this?",
+  "This is an example for our discussion", "Unrelated: the train is late",
+])("quoted-source control retains its attribution: %s", async (text) => {
+  const h = harness();
+  await h.send({ text, reply_to_message: { message_id: 900, date: 1, chat: group,
+    from: forwardedUser, text: "Shop recharge bonus. Contact sales" } });
+  expect(h.classifications[0]!.message.text).toBe(text);
+  expect(h.classifications[0]!.message.preview?.[0]?.sourceAuthor).toBe("other_author");
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+test("edited external quote remains attached to current actor history; source and unrelated suffix survive", async () => {
+  const h = harness();
+  const external_reply = { origin: { type: "channel", chat: channel, message_id: 900, date: 1 },
+    chat: channel, message_id: 900 };
+  await h.send({ text: "warning", external_reply, quote: { text: "old quote", position: 0 } });
+  await h.send({ message_id: 1, text: "updated warning", external_reply,
+    quote: { text: "edited quote", position: 0 } }, true);
+  await h.send({ text: "buy here", external_reply, quote: { text: "shop bonus", position: 0 } });
+  expect(h.classifications[2]!.recent).toHaveLength(1);
+  expect(h.classifications[2]!.recent[0]!.preview?.[1]?.text).toBe("edited quote");
+  h.setAnswer(assessment(true, [0.01, 0.99]));
+  await h.send({ text: "great deal", external_reply, quote: { text: "shop bonus", position: 0 } });
+  expect(h.deletes()).toEqual([3, 4]);
+  expect(h.calls.filter(c => c.method === "deleteMessage").every(c => c.payload.chat_id === group.id)).toBe(true);
+  await h.stats.stop();
+});
+
+test("inaccessible reply and ordinary number stay available to classifier without invented content", async () => {
+  const h = harness();
+  await h.send({ text: "666", reply_to_message: { message_id: 900, date: 0, chat: group } });
+  await h.send({ text: "666" });
+  expect(h.classifications[0]!.message.preview?.[0]).toMatchObject({ kind: "reply", sourceAuthor: "unknown" });
+  expect(h.classifications[0]!.message.preview?.[0]).not.toHaveProperty("text");
+  expect(h.classifications[1]!.message).not.toHaveProperty("preview");
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
 });
 
 for (const kind of ["photo", "video", "animation", "sticker"] as const) {
