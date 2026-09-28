@@ -8,7 +8,7 @@ Set the exact admitted `Host: t.me` explicitly. Keep the original URL, validated
 
 `bun test src/telegram-preview.tls.test.ts` creates ephemeral test CA/leaf certificates using `openssl` (required on test/build hosts), binds a loopback HTTPS server, and exercises the production request options with only the validated-IP-to-local-socket seam substituted. The valid t.me certificate succeeds; a trusted certificate for another hostname and an untrusted certificate both fail before HTTP handling. No global CA trust is changed. Temporary keys are deleted.
 
-The test fails on deployed Bun 1.3.0 with the explicit Host removed and passes with it restored. CI now runs the full suite on both 1.3.0 and 1.4.0, including PostgreSQL integration. Existing tests retain DNS admission, both callback shapes, redirects, body caps, deadline capacity and real-handler failure/context coverage.
+The test fails on deployed Bun 1.3.0 with the explicit Host removed and passes with it restored. The unchanged CI runs the full suite on 1.4.0 with PostgreSQL integration; the managed-container test below supplies the separate Bun 1.3.0 runtime proof. Existing tests retain DNS admission, both callback shapes, redirects, body caps, deadline capacity and real-handler failure/context coverage.
 
 ## Candidate runtime evidence (not deployment)
 
@@ -23,4 +23,4 @@ On 2026-09-28, an isolated candidate under `/tmp/gen41-candidate` in the existin
 
 ## Release handoff
 
-Reviewer must obtain green exact-head and merged-main matrix CI, merge, inspect existing Easypanel actions before triggering the managed bots/jev-antispam-bot rollout, preserve its env/DB/state, and verify action completion, running commit/task and deployed module hash. Repeat public-rich/generic/fail-open checks against deployed source; do not call this candidate evidence a rollout. Only after that verification return predecessor GEN-KANEO-40 to Done alongside this correction. Raw invites and fetched text must not appear in logs.
+Reviewer must obtain green exact-head and merged-main CI, merge, inspect existing Easypanel actions before triggering the managed bots/jev-antispam-bot rollout, preserve its env/DB/state, and verify action completion, running commit/task and deployed module hash. Repeat public-rich/generic/fail-open checks against deployed source; do not call this candidate evidence a rollout. Only after that verification return predecessor GEN-KANEO-40 to Done alongside this correction. Raw invites and fetched text must not appear in logs.
