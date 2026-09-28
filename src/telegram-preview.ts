@@ -111,6 +111,7 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
     nonVisibleDepth++;
     element.onEndTag(() => { nonVisibleDepth--; });
   } });
+  const boundaries = new Set(["br", "hr", "address", "article", "aside", "blockquote", "div", "dl", "dt", "dd", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "li", "main", "nav", "ol", "p", "pre", "section", "table", "thead", "tbody", "tfoot", "tr", "td", "th", "ul"]);
   for (const [key, selector] of [["title", ".tgme_page_title"], ["description", ".tgme_page_description"]] as const) {
     parser.on(selector, {
       element(element) {
@@ -129,11 +130,22 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
       },
       text(chunk) { if (!nonVisibleDepth) visible[key] += chunk.text; },
     });
+    // Preserve line/block boundaries, but not arbitrary inline element edges:
+    // in<strong>vest</strong>ment is still one word. No CSS/JS evaluation.
+    parser.on(`${selector} *`, { element(element) {
+      if (nonVisibleDepth || !boundaries.has(element.tagName)) return;
+      visible[key] += " ";
+      if (element.tagName !== "br" && element.tagName !== "hr") {
+        element.onEndTag(() => { visible[key] += " "; });
+      }
+    } });
   }
   await parser.transform(new Response(html)).text();
   if (invalidFields || openFields || !fields.get("title")?.complete
     || [...fields.values()].some(field => !field.complete)) return;
-  const clean = (value: string, max: number) => value.replace(/<[^>]*>/g, " ").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  // Actual markup was excluded structurally. Decoded angle brackets are
+  // literal destination text (including qualifications), never markup to strip.
+  const clean = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
   const title = clean(og["og:title"] || decodeHTML(visible.title!), 200);
   const description = clean(og["og:description"] || decodeHTML(visible.description!), 800);
   // Match complete landing-page boilerplate, never a promotional title/description prefix.
