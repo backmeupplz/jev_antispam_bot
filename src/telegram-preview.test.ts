@@ -58,6 +58,24 @@ test("cache accepts completed distinct fields with legitimate nested formatting"
     { url: "https://t.me/test", status: "available", title: "Study & books", description: "Read more with friends." },
   ]);
 });
+test("cache excludes script/style descendants but preserves visible nested and escaped text", async () => {
+  const body = '<div class="tgme_page_title"><span>Local <b>study</b></span><script>Investment signals</script><style>.ad{content:"Profit"}</style> group</div>'
+    + '<div class="tgme_page_description">We <strong>discuss<script>Join guaranteed daily investment returns</script> books</strong>.'
+    + '<STYLE>.banner { content: "guaranteed profit" }</STYLE> Read &amp; share &lt;script&gt;examples&lt;/script&gt;.</div>';
+  let calls = 0;
+  const cache = new TelegramPreviewCache({ request: async () => { calls++; return page(body); } });
+  const expected = [{ url: "https://t.me/study_group", status: "available" as const, title: "Local study group", description: "We discuss books. Read & share examples ." }];
+  expect(await cache.enrich(msg("https://t.me/study_group"))).toEqual(expected);
+  expect(await cache.enrich(msg("https://t.me/study_group"))).toEqual(expected);
+  expect(calls).toBe(1);
+});
+test("cache rejects unclosed non-visible subtrees rather than publishing partial fields", async () => {
+  for (const tag of ["script", "style"]) {
+    const body = '<div class="tgme_page_title">Study group</div><div class="tgme_page_description">Books<' + tag + '>hidden promotion</div>';
+    const cache = new TelegramPreviewCache({ request: async () => page(body) });
+    expect(await cache.enrich(msg("https://t.me/study_group"))).toEqual([{ url: "https://t.me/study_group", status: "unavailable" }]);
+  }
+});
 test("redirect host/route boundary checked at every hop and loop bound", async () => {
   for (const location of ["https://evil.test/a", "http://t.me/test", "//evil.test/a", "https://t.me@127.0.0.1/a", "https://t.me:443/test", "/proxy?server=127.0.0.1", "/%2e%2e/test"]) {
     let calls = 0;

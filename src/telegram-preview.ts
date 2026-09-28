@@ -100,9 +100,16 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
   const fields = new Map<string, { complete: boolean }>();
   let openFields = 0;
   let invalidFields = false;
+  let nonVisibleDepth = 0;
   const parser = new HTMLRewriter().on("meta", { element(element) {
     const key = element.getAttribute("property")?.toLowerCase();
     if ((key === "og:title" || key === "og:description") && !og[key]) og[key] = decodeHTMLAttribute(element.getAttribute("content") ?? "");
+  } });
+  // Text handlers include all descendants, even raw script/CSS text. Track
+  // those subtrees structurally so escaped visible text remains ordinary data.
+  parser.on("script, style", { element(element) {
+    nonVisibleDepth++;
+    element.onEndTag(() => { nonVisibleDepth--; });
   } });
   for (const [key, selector] of [["title", ".tgme_page_title"], ["description", ".tgme_page_description"]] as const) {
     parser.on(selector, {
@@ -120,7 +127,7 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
           openFields--;
         });
       },
-      text(chunk) { visible[key] += chunk.text; },
+      text(chunk) { if (!nonVisibleDepth) visible[key] += chunk.text; },
     });
   }
   await parser.transform(new Response(html)).text();
