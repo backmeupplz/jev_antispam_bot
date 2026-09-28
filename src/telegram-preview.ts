@@ -97,20 +97,40 @@ export async function requestPublicTelegramPage(url: string, signal: AbortSignal
 export async function extractTelegramPreview(html: string): Promise<{ title: string; description?: string } | undefined> {
   const og: Record<string, string> = {};
   const visible: Record<string, string> = { title: "", description: "" };
-  let telegramPage = false;
+  const fields = new Map<string, { complete: boolean }>();
+  let openFields = 0;
+  let invalidFields = false;
   const parser = new HTMLRewriter().on("meta", { element(element) {
     const key = element.getAttribute("property")?.toLowerCase();
     if ((key === "og:title" || key === "og:description") && !og[key]) og[key] = decodeHTMLAttribute(element.getAttribute("content") ?? "");
-  } }).on(".tgme_page_title", { element() { telegramPage = true; } });
+  } });
   for (const [key, selector] of [["title", ".tgme_page_title"], ["description", ".tgme_page_description"]] as const) {
-    parser.on(selector, { text(chunk) { visible[key] += chunk.text; } });
+    parser.on(selector, {
+      element(element) {
+        // HTMLRewriter repairs truncated trees. Only accept explicitly closed,
+        // distinct containers, never nested/duplicate fields merged as evidence.
+        if (openFields || fields.has(key)) invalidFields = true;
+        const field = { complete: false };
+        fields.set(key, field);
+        openFields++;
+        const tagName = element.tagName;
+        element.onEndTag((tag) => {
+          if (tag.name !== tagName) invalidFields = true;
+          field.complete = true;
+          openFields--;
+        });
+      },
+      text(chunk) { visible[key] += chunk.text; },
+    });
   }
   await parser.transform(new Response(html)).text();
+  if (invalidFields || openFields || !fields.get("title")?.complete
+    || [...fields.values()].some(field => !field.complete)) return;
   const clean = (value: string, max: number) => value.replace(/<[^>]*>/g, " ").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
   const title = clean(og["og:title"] || decodeHTML(visible.title!), 200);
   const description = clean(og["og:description"] || decodeHTML(visible.description!), 800);
   // Match complete landing-page boilerplate, never a promotional title/description prefix.
-  if (!telegramPage || !title || /^(?:telegram|telegram: (?:join group chat|contact @[a-z0-9_]+)|join (?:group|chat)(?: on telegram)?)$/i.test(title)) return;
+  if (!title || /^(?:telegram|telegram: (?:join group chat|contact @[a-z0-9_]+)|join (?:group|chat)(?: on telegram)?)$/i.test(title)) return;
   if (/^you are invited to a group chat on telegram\.(?: click to join\.?)?$/i.test(description)
     || /^you can contact @[a-z0-9_]+ right away\.$/i.test(description)
     || /^you can view and join @[a-z0-9_]+ right away\.$/i.test(description)) return;
