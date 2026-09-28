@@ -10,12 +10,14 @@ import { testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment } from "./fixtures/vague-recruitment";
 import { hiringRequest, invitedHiring, unrelatedReply, recruitmentReply } from "./fixtures/recruitment-replies";
 import {
+  JevSpamClassifier,
   SPAM_QUESTIONS,
   type CurrentModerationMessage,
   type ModerationMessage,
   type SpamAssessment,
 } from "./spam";
 import { AsyncStatsBuffer, type StatsBatch } from "./stats";
+import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -813,8 +815,8 @@ test("inaccessible reply and ordinary number stay available to classifier withou
 });
 
 for (const kind of ["photo", "video", "animation", "sticker"] as const) {
-  test("media reply preserves requested versus unsolicited evidence: " + kind, async () => {
-    const h = harness(async (message) => assessment(message.preview?.[0]?.text === "Stop posting your paid signup ads here."));
+  test("media reply preserves requests and third-party accusations without asserting guilt: " + kind, async () => {
+    const h = harness();
     h.setProfileMetadata({ id: user.id, type: "private", bio: "Register for paid private videos" });
     const media = kind === "sticker" ? sticker : kind === "photo"
       ? [{ file_id: "photo", file_unique_id: "photo", width: 48, height: 48 }]
@@ -827,8 +829,9 @@ for (const kind of ["photo", "video", "animation", "sticker"] as const) {
     });
     expect(h.classifications[0]?.message.senderProfile).toEqual(h.classifications[1]?.message.senderProfile);
     expect(h.classifications.every(({ recent }) => recent.length === 0)).toBe(true);
-    expect(h.deletes()).toEqual([2]);
-    expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "delete"]);
+    expect(h.deletes()).toEqual([]);
+    expect(h.classifications[1]?.message.preview?.[0]?.sourceAuthor).toBe("other_author");
+    expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep"]);
     expect(JSON.stringify(h.logs)).not.toContain("paid private videos");
     await h.stats.stop();
   });
@@ -938,3 +941,69 @@ test("benign care controls route normally and preserve low-score outcomes", asyn
   for (const text of careControls) expect(JSON.stringify(h.logs)).not.toContain(text);
   await h.stats.stop();
 });
+
+// Mock only HTTP/API boundaries: these scores test the production parser/gate and
+// real grammY routing, NOT the model's ability to recognize these fixtures.
+for (const isForwarded of [false, true]) {
+  for (const fixture of mediaFixtures) {
+    test("media fixture through real classifier and handler: " + fixture.id + " forwarded=" + isForwarded, async () => {
+      const requests: { state: { message: CurrentModerationMessage; recentMessages: ModerationMessage[] }; questions: Record<string, unknown> }[] = [];
+      const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+        fetch: async (_url, init) => {
+          const request = JSON.parse(String(init?.body)); requests.push(request);
+          return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, {
+            type: "noul", noul: request.state.message.mediaOnly
+              ? key === "media_profile_funnel" ? fixture.shouldDelete ? 0.9 : 0.56 : 0.99
+              : 0.01,
+          }])) });
+        },
+      });
+      const h = harness((message, recent) => classifier.classify(message, recent));
+      h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+      h.setPersonalChannelMetadata({ ...personalChannel, ...mediaProfile.personalChannel });
+      for (const prior of fixture.recent ?? []) await h.send({ text: prior.text });
+      await h.send({ ...mediaUpdate(fixture, isForwarded), text: undefined });
+      const expected = { message: mediaMessage(fixture, isForwarded), recentMessages: fixture.recent ?? [] };
+      expect(requests.at(-1)?.state).toEqual(expected);
+      expect(Object.keys(requests.at(-1)!.questions).filter(key => key.startsWith("context_message_")))
+        .toEqual((fixture.recent ?? []).map((_, index) => "context_message_" + index));
+      expect(h.deletes()).toEqual(fixture.shouldDelete ? [100] : []);
+      const terminal = h.logs.filter(log => log.event === "message_analyzed").at(-1)!;
+      expect(terminal).toMatchObject({ status: "completed", decision: fixture.shouldDelete ? "delete" : "keep", strongestSignal: "media_profile_funnel" });
+      expect(terminal.contextProbabilities).toEqual((fixture.recent ?? []).map(() => 0.99));
+      expect(h.deletes()).not.toContain(900);
+      const logged = JSON.stringify(h.logs);
+      for (const value of [mediaProfile.personalChannel.title, mediaProfile.personalChannel.description, fixture.source, mediaCampaign].filter(Boolean)) {
+        expect(logged).not.toContain(value!);
+      }
+      expect(h.calls.some(call => call.method === "getChat" && call.payload.chat_id === 765432109)).toBe(false);
+      await h.stats.stop();
+    });
+  }
+}
+
+for (const defect of ["missing-media", "invalid-media", "missing-context"] as const) {
+  test("malformed media classifier response fails open through grammY: " + defect, async () => {
+    const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        const request = JSON.parse(String(init?.body));
+        const answers = Object.fromEntries(Object.keys(request.questions).map(key => [key, { type: "noul", noul: request.state.message.mediaOnly ? 0.99 : 0.01 }]));
+        if (request.state.message.mediaOnly) {
+          if (defect === "missing-media") delete answers.media_profile_funnel;
+          if (defect === "invalid-media") answers.media_profile_funnel!.noul = 2;
+          if (defect === "missing-context") delete answers.context_message_0;
+        }
+        return Response.json({ model: "jev-1.13.0", answers });
+      },
+    });
+    const h = harness((message, recent) => classifier.classify(message, recent));
+    h.setProfileMetadata({ id: user.id, type: "private", bio: mediaProfile.personalChannel.description });
+    await h.send({ text: mediaCampaign });
+    await h.send({ text: undefined, sticker });
+    expect(h.classifications[1]?.recent).toHaveLength(1);
+    expect(h.deletes()).toEqual([]);
+    expect(h.logs.filter(log => log.event === "message_analyzed").at(-1)).toMatchObject({ status: "failed", decision: "keep", signals: null });
+    expect(h.logs.filter(log => log.event === "classification_failed")).toHaveLength(1);
+    await h.stats.stop();
+  });
+}
