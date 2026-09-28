@@ -60,6 +60,33 @@ test("reply actor attribution respects sender_chat, forwards, missing identity a
   expect(toModerationMessage(caption)!.preview![0]).toMatchObject({ text: hiringRequest, sourceAuthor: "unknown" });
 });
 
+import { mediaFixtures, mediaMessage, mediaUpdate, mediaCampaign } from "./fixtures/media-profile";
+
+for (const isForwarded of [false, true]) {
+  test("media fixtures preserve exact live projection forwarded=" + isForwarded, () => {
+    for (const fixture of mediaFixtures) {
+      const { senderProfile: _profile, ...expected } = mediaMessage(fixture, isForwarded);
+      expect(toModerationMessage(mediaUpdate(fixture, isForwarded))).toEqual(expected);
+    }
+  });
+}
+
+test("media campaign text does not turn unknown or external sources into same-chat sender evidence", () => {
+  const fixture = mediaFixtures.find(f => f.id === "same-actor campaign reply")!;
+  const forwarded = mediaUpdate(fixture);
+  Object.assign(forwarded.reply_to_message!, { forward_origin: { type: "user", date: 1, sender_user: forwarded.from } });
+  expect(toModerationMessage(forwarded)?.preview?.[0]).toMatchObject({ text: mediaCampaign, sourceAuthor: "unknown", isForwarded: true });
+  const unknown = mediaUpdate(fixture);
+  delete unknown.reply_to_message!.from;
+  expect(toModerationMessage(unknown)?.preview?.[0]?.sourceAuthor).toBe("unknown");
+  const external = mediaUpdate(fixture);
+  external.reply_to_message!.chat = { id: -2002, type: "supergroup", title: "Elsewhere" };
+  expect(toModerationMessage(external)?.preview?.[0]).toMatchObject({ origin: "external", sourceAuthor: "same_author" });
+  const channel = mediaUpdate(fixture);
+  Object.assign(channel.reply_to_message!, { sender_chat: { id: 12, type: "channel", title: "Not user 12" } });
+  expect(toModerationMessage(channel)?.preview?.[0]?.sourceAuthor).toBe("other_author");
+});
+
 test("keeps original author and a forwarded local reply distinct from current author", () => {
   const chat = { id: -1, type: "supergroup", title: "group" };
   const result = toModerationMessage({
