@@ -71,7 +71,8 @@ remain unchanged and still express the desired detection behavior.
 The evaluator reuses existing normalization fixtures and production suffix
 selection. It deliberately retains earlier copies in supplied history to measure
 recovery of previously missed spam. This is **not** a replay of successful earlier
-deletions: the real handler clears its actor history after a confirmed deletion.
+deletions: the real handler clears actor history before attempting deletion only
+when it selects more than one ID; current-only deletion does not clear history.
 Synthetic IDs are 1..N for history and N+1 for current, never source-post IDs.
 No linked history can delete when the current score is below .90; after a current
 positive, cleanup stops at the first link below .75 even if an older one is high.
