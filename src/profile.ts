@@ -2,11 +2,13 @@ import type { ChatFullInfo } from "grammy/types";
 import type { SenderProfile } from "./spam";
 
 type GetChat = (chatId: number, signal: AbortSignal) => Promise<ChatFullInfo>;
+type Outcome = (source: "user" | "channel" | "cache", outcome: "present" | "empty" | "unavailable" | "invalid" | "cached_present" | "cached_empty" | "cached_unavailable") => void;
 
 export class SenderProfileCache {
   private readonly entries = new Map<number, {
     expiresAt: number;
     profile?: SenderProfile;
+    failed?: boolean;
     timer: ReturnType<typeof setTimeout>;
   }>();
   private readonly inFlight = new Map<number, Promise<SenderProfile | undefined>>();
@@ -18,9 +20,12 @@ export class SenderProfileCache {
     private readonly failureTtlMs = 60_000,
   ) {}
 
-  async get(userId: number, getChat: GetChat, now = Date.now()): Promise<SenderProfile | undefined> {
+  async get(userId: number, getChat: GetChat, now = Date.now(), onOutcome?: Outcome): Promise<SenderProfile | undefined> {
     const cached = this.entries.get(userId);
-    if (cached && cached.expiresAt > now) return cached.profile;
+    if (cached && cached.expiresAt > now) {
+      onOutcome?.("cache", cached.failed ? "cached_unavailable" : cached.profile ? "cached_present" : "cached_empty");
+      return cached.profile;
+    }
     if (cached) this.delete(userId);
 
     const active = this.inFlight.get(userId);
@@ -33,14 +38,14 @@ export class SenderProfileCache {
     }
     if (this.entries.size + this.inFlight.size >= this.maxEntries) return undefined;
 
-    const request = this.load(userId, getChat)
-      .then((profile) => {
+    const request = this.load(userId, getChat, onOutcome)
+      .then(({ profile, failed }) => {
         this.inFlight.delete(userId);
-        this.store(userId, profile, this.ttlMs);
+        this.store(userId, profile, failed ? this.failureTtlMs : this.ttlMs, failed);
         return profile;
       }, (error) => {
         this.inFlight.delete(userId);
-        this.store(userId, undefined, this.failureTtlMs);
+        this.store(userId, undefined, this.failureTtlMs, true);
         throw error;
       })
 
@@ -48,7 +53,7 @@ export class SenderProfileCache {
     return request;
   }
 
-  private store(userId: number, profile: SenderProfile | undefined, ttlMs: number): void {
+  private store(userId: number, profile: SenderProfile | undefined, ttlMs: number, failed = false): void {
     this.delete(userId);
     const expiresAt = Date.now() + ttlMs;
     const timer = setTimeout(() => {
@@ -56,7 +61,7 @@ export class SenderProfileCache {
       if (entry?.expiresAt === expiresAt) this.entries.delete(userId);
     }, ttlMs);
     timer.unref?.();
-    this.entries.set(userId, { expiresAt, profile, timer });
+    this.entries.set(userId, { expiresAt, profile, failed, timer });
   }
 
   private delete(userId: number): void {
@@ -65,24 +70,41 @@ export class SenderProfileCache {
     this.entries.delete(userId);
   }
 
-  private async load(userId: number, getChat: GetChat): Promise<SenderProfile | undefined> {
-    const user = await getChat(userId, AbortSignal.timeout(this.timeoutMs));
-    if (user.type !== "private" || user.id !== userId) throw new Error("Invalid private profile metadata");
-
-    const bio = clean(user.bio);
-    let personalChannel: SenderProfile["personalChannel"];
-    if (user.personal_chat?.type === "channel") {
-      const channel = await getChat(user.personal_chat.id, AbortSignal.timeout(this.timeoutMs));
-      if (channel.type !== "channel" || channel.id !== user.personal_chat.id) {
-        throw new Error("Invalid personal channel metadata");
-      }
-      personalChannel = {
-        title: channel.title.trim(),
-        description: clean(channel.description),
-      };
+  private async load(userId: number, getChat: GetChat, onOutcome?: Outcome): Promise<{ profile?: SenderProfile; failed: boolean }> {
+    let user: ChatFullInfo;
+    try {
+      user = await getChat(userId, AbortSignal.timeout(this.timeoutMs));
+    } catch (error) {
+      onOutcome?.("user", "unavailable");
+      throw error;
+    }
+    if (user.type !== "private" || user.id !== userId) {
+      onOutcome?.("user", "invalid");
+      throw new Error("Invalid private profile metadata");
     }
 
-    return bio || personalChannel ? { bio, personalChannel } : undefined;
+    const bio = clean(user.bio);
+    onOutcome?.("user", bio || user.personal_chat ? "present" : "empty");
+    let personalChannel: SenderProfile["personalChannel"];
+    let failed = false;
+    if (user.personal_chat?.type === "channel") {
+      try {
+        const channel = await getChat(user.personal_chat.id, AbortSignal.timeout(this.timeoutMs));
+        if (channel.type !== "channel" || channel.id !== user.personal_chat.id) {
+          failed = true;
+          onOutcome?.("channel", "invalid");
+        } else {
+          personalChannel = { title: channel.title.trim(), description: clean(channel.description) };
+          onOutcome?.("channel", personalChannel.title || personalChannel.description ? "present" : "empty");
+        }
+      } catch {
+        // A private/inaccessible channel must not discard a successful bio.
+        failed = true;
+        onOutcome?.("channel", "unavailable");
+      }
+    }
+
+    return { profile: bio || personalChannel ? { bio, personalChannel } : undefined, failed };
   }
 }
 

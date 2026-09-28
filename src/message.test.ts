@@ -19,14 +19,14 @@ test("normalizes text and hidden links", () => {
   });
 });
 
-test("ignores messages without text or caption", () => {
+test("normalizes eligible uncaptioned media", () => {
   const message = {
     message_id: 1,
     date: 0,
     chat: { id: -1, type: "supergroup", title: "Test" },
     sticker: { file_id: "x", file_unique_id: "x", type: "regular", width: 1, height: 1, is_animated: false, is_video: false },
   } as Message;
-  expect(toModerationMessage(message)).toBeNull();
+  expect(toModerationMessage(message)).toEqual({ text: "", embeddedLinks: [], isForwarded: false, mediaOnly: true });
 });
 
 import { recruitmentReply, hiringRequest } from "./fixtures/recruitment-replies";
