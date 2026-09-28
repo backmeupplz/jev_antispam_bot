@@ -109,10 +109,18 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
   const clean = (value: string, max: number) => value.replace(/<[^>]*>/g, " ").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
   const title = clean(og["og:title"] || decodeHTML(visible.title!), 200);
   const description = clean(og["og:description"] || decodeHTML(visible.description!), 800);
-  if (!telegramPage || !title || /^(telegram(?:\s*[:–-].*)?|join (?:group|chat)(?: on telegram)?|contact .+ on telegram)$/i.test(title)) return;
-  if (/^you (?:are invited to|can (?:view and join|contact|download))/i.test(description)) return;
+  // Match complete landing-page boilerplate, never a promotional title/description prefix.
+  if (!telegramPage || !title || /^(?:telegram|telegram: (?:join group chat|contact @[a-z0-9_]+)|join (?:group|chat)(?: on telegram)?)$/i.test(title)) return;
+  if (/^you are invited to a group chat on telegram\.(?: click to join\.?)?$/i.test(description)
+    || /^you can contact @[a-z0-9_]+ right away\.$/i.test(description)
+    || /^you can view and join @[a-z0-9_]+ right away\.$/i.test(description)) return;
   return { title, ...(description ? { description } : {}) };
 }
+
+// Count underlying work, not callers waiting for a deadline. DNS lookup is not
+// abortable, so a timed-out lookup must keep its slot until it actually settles.
+// The process-wide counter retains no message, URL or invite-token keys.
+let networkActive = 0;
 
 export class TelegramPreviewCache {
   private readonly entries = new Map<string, { preview: DestinationPreview; result: Category; expires: number; timer: ReturnType<typeof setTimeout> }>();
@@ -134,7 +142,7 @@ export class TelegramPreviewCache {
     let source: "in_flight" | "network" = "in_flight";
     if (!pending) {
       source = "network";
-      if (this.retryAt > this.now() || this.active.size >= PREVIEW_LIMITS.concurrent) {
+      if (this.retryAt > this.now() || networkActive >= PREVIEW_LIMITS.concurrent) {
         outcome?.(this.retryAt > this.now() ? "rate_limit" : "overload", source, 0);
         return { url, status: "unavailable" };
       }
@@ -160,7 +168,9 @@ export class TelegramPreviewCache {
       timer = setTimeout(() => { controller.abort(); reject(new PreviewError("timeout")); }, this.options.timeoutMs ?? PREVIEW_LIMITS.timeoutMs);
     });
     try {
-      const metadata = await Promise.race([this.fetch(url, controller.signal), deadline]);
+      networkActive++;
+      const work = this.fetch(url, controller.signal).finally(() => { networkActive--; });
+      const metadata = await Promise.race([work, deadline]);
       return { preview: { url, status: metadata ? "available" : "unavailable", ...metadata }, result: metadata ? "available" : "unavailable" };
     } catch (error) {
       return { preview: { url, status: "unavailable" }, result: controller.signal.aborted ? "timeout" : error instanceof PreviewError ? error.category : "network" };

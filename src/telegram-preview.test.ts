@@ -43,7 +43,7 @@ test("redirect host/route boundary checked at every hop and loop bound", async (
 });
 test("timeout covers pending body/request; oversized and non-HTML failures are bounded", async () => {
   let signal: AbortSignal | undefined;
-  const cache = new TelegramPreviewCache({ timeoutMs: 10, request: async (_url, s) => { signal = s; return new Promise(() => {}); } });
+  const cache = new TelegramPreviewCache({ timeoutMs: 10, request: async (_url, s) => { signal = s; return new Promise((_resolve, reject) => s.addEventListener("abort", () => reject(s.reason), { once: true })); } });
   const start = performance.now();
   expect((await cache.enrich(msg("https://t.me/test")))[0]?.status).toBe("unavailable");
   expect(signal?.aborted).toBe(true); expect(performance.now() - start).toBeLessThan(200);
@@ -66,7 +66,7 @@ test("cache TTL, negative TTL, physical expiration, eviction and in-flight dedup
 });
 test("global concurrency and per-update bounds shed overload without queueing", async () => {
   let calls = 0;
-  const cache = new TelegramPreviewCache({ timeoutMs: 25, request: async () => { calls++; return new Promise(() => {}); } });
+  const cache = new TelegramPreviewCache({ timeoutMs: 25, request: async (_url, signal) => { calls++; return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })); } });
   const pending = ["aaaa", "bbbb", "cccc", "dddd"].map(name => cache.enrich(msg("https://t.me/" + name)));
   const outcomes: string[] = [];
   expect((await cache.enrich(msg("https://t.me/eeee https://t.me/ffff https://t.me/gggg"), result => outcomes.push(result))).length).toBe(2);
@@ -137,4 +137,45 @@ test("real transport streaming byte cap, early content checks, chunked body and 
     else await expect(work).rejects.toThrow(mode === "stall" ? "aborted" : mode === "type" || mode === "encoding" ? "content_type" : "oversize");
     expect(response.destroyed).toBe(true);
   }
+});
+
+
+test("unresolved DNS retains process-wide slots across repeated deadlines without late caching", async () => {
+  const { requestPublicTelegramPage } = await import("./telegram-preview");
+  type Transport = NonNullable<Parameters<typeof requestPublicTelegramPage>[2]>;
+  let outstanding = 0, peak = 0, sockets = 0;
+  const releases: (() => void)[] = [];
+  const transport: Transport = {
+    lookup: (() => new Promise(resolve => {
+      outstanding++; peak = Math.max(peak, outstanding);
+      releases.push(() => { outstanding--; resolve([{ address: "149.154.167.99", family: 4 }]); });
+    })) as unknown as Transport["lookup"],
+    request: (() => { sockets++; throw new Error("aborted DNS must never open a socket"); }) as Transport["request"],
+  };
+  const caches = [0, 1, 2].map(() => new TelegramPreviewCache({ timeoutMs: 5, request: (url, signal) => requestPublicTelegramPage(url, signal, transport) }));
+  for (let batch = 0; batch < 3; batch++) {
+    const values = await Promise.all([0, 1, 2, 3].map(i => caches[batch]!.enrich(msg("https://t.me/test" + batch + i))));
+    expect(values.every(v => v[0]?.status === "unavailable")).toBe(true);
+    expect(outstanding).toBe(4);
+  }
+  expect(peak).toBe(4); expect(sockets).toBe(0);
+  for (const release of releases) release();
+  await Bun.sleep(1);
+  expect(outstanding).toBe(0); expect(sockets).toBe(0);
+  expect((await caches[0]!.enrich(msg("https://t.me/test00")))[0]?.status).toBe("unavailable");
+  const recovered = new TelegramPreviewCache({ request: async () => page() });
+  expect((await recovered.enrich(msg("https://t.me/recovered")))[0]?.status).toBe("available");
+});
+test("generic boilerplate prefixes do not hide destination-published promotion", async () => {
+  for (const [title, description] of [
+    ["Telegram: Guaranteed Profit", "Join our investment channel for guaranteed returns"],
+    ["Investment Signals", "You can contact our manager for guaranteed daily profits."],
+  ] as const) {
+    const body = '<div class="tgme_page_title">' + title + '</div><div class="tgme_page_description">' + description + '</div>';
+    expect(await extractTelegramPreview(body)).toEqual({ title, description });
+  }
+  for (const [title, description] of [
+    ["Telegram: Contact @someone", "You can contact @someone right away."],
+    ["Join Group", "You are invited to a group chat on Telegram. Click to join"],
+  ]) expect(await extractTelegramPreview('<div class="tgme_page_title">' + title + '</div><div class="tgme_page_description">' + description + '</div>')).toBeUndefined();
 });
