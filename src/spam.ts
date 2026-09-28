@@ -16,7 +16,7 @@ export const SPAM_QUESTIONS = {
       true:
         "It shills a token, investment, gambling product, adult service, paid service, referral, giveaway, airdrop, get-rich scheme, or unrelated commercial link without being invited by the conversation.",
       false:
-        "It is normal conversation, a relevant link, a requested recommendation, a genuine project discussion, or non-promotional content.",
+        "It is normal conversation, a relevant link, a requested recommendation, a genuine project discussion, or non-promotional content. A moderator or user reporting a missed spam post, including a quoted pitch preceded by 'this one wasn't recognized:', is reporting the pitch, not making the offer; judge the reporting frame rather than the quoted words.",
     },
   },
   profile_bait: {
@@ -69,9 +69,9 @@ export const SPAM_QUESTIONS = {
       "Is `message` obvious disruptive Telegram spam that contributes no legitimate value to the group?",
     criteria: {
       true:
-        "It is irrelevant copy-paste outreach, mass mentions, repetitive junk, engagement bait, unsolicited recruitment, or another recognizable spam pattern.",
+        "It is irrelevant copy-paste outreach, mass mentions, repetitive junk, engagement bait, unsolicited recruitment, or another recognizable spam pattern. Judge the speaker's intent, not quoted words inside a moderation report.",
       false:
-        "It is a plausible human contribution, question, joke, greeting, disagreement, on-topic message, safety warning, or moderator report quoting an example of spam (even when the quoted caption and invite would be spam if posted alone).",
+        "It is a plausible human contribution, question, joke, greeting, disagreement, or on-topic message, even if short or informal; a safety warning; or a moderator report quoting an example of spam (even when the quoted caption and invite would be spam if posted alone). A user reporting that a spam message was not recognized and pasting that message for moderators is reporting a problem, not copy-paste outreach.",
     },
   },
   bot_promotion: {
@@ -225,6 +225,17 @@ export const SPAM_QUESTIONS = {
         "It answers an explicit request for a recommendation, shares a requested contact, discusses a provider without soliciting customers, coordinates with a provider already involved, or gives a neutral review without a private-contact funnel.",
     },
   },
+  unsolicited_crypto_recovery_pitch: {
+    type: "noul",
+    instructions:
+      "Is the speaker unsolicitedly offering or referring a helper who can recover money lost to crypto fraud, rather than reporting someone else's pitch?",
+    criteria: {
+      true:
+        "The speaker addresses people who lost crypto or money to a scam and advertises that a person, team, or service can get those losses back. Count a vague unnamed helper or first-person success story promoting such help, even before any name, link, DM instruction, fee, or request for wallet credentials appears. The speaker is reaching out to potential customers, not reporting a missed spam post.",
+      false:
+        "A victim asks how to report or recover losses; someone gives official fraud-reporting or exchange-support advice; the conversation explicitly requested help or a recommendation; or the speaker introduces a pasted pitch with a reporting wrapper such as 'this one wasn't recognized:' to say the filter missed it. A moderation report is false even if the quoted pitch itself sounds like an offer; the speaker is not endorsing the helper. Merely mentioning recovery is not an offer.",
+    },
+  },
   explicit_content_promotion: {
     type: "noul",
     instructions:
@@ -264,7 +275,7 @@ export const SPAM_QUESTIONS = {
       "Do `recentMessages` followed by `message` form one coordinated spam pitch split across multiple Telegram messages?",
     criteria: {
       true:
-        "Together they form an unsolicited promotion, commercial offer, paid-work recruitment, gambling or bonus pitch, easy-money lure, or profile/private-message funnel even when each fragment is weak alone. A service, sale, rental, contract-transfer, job offer, or price claim followed by a short 'write in DM' call is spam. Repeated copies of the same unsolicited paid-work offer are one spam campaign. Explicitly count denials such as 'this is not advertising' when they introduce an offer, including 'I will transfer my Vancouver apartment-rental contract' followed by 'DM me', or 'first consultation is free, later ones cost 5000' followed by 'write in DM'. Other examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link.",
+        "Together they form an unsolicited promotion, commercial offer, paid-work recruitment, gambling or bonus pitch, easy-money lure, or profile/private-message funnel even when each fragment is weak alone. Include a crypto-fraud loss hook followed by an offer of a helper who can recover the losses, even without a link or DM call. A service, sale, rental, contract-transfer, job offer, or price claim followed by a short 'write in DM' call is spam. Repeated copies of the same unsolicited paid-work offer are one spam campaign. Explicitly count denials such as 'this is not advertising' when they introduce an offer, including 'I will transfer my Vancouver apartment-rental contract' followed by 'DM me', or 'first consultation is free, later ones cost 5000' followed by 'write in DM'. Other examples include 'free spins' followed by 'get free spins' and then 'details in DM', or a promotional claim followed by its link.",
       false:
         "They are independent conversation, requested help or contact, an already ongoing rental or transaction, ordinary housing discussion, ordinary short replies, a legitimate multi-message explanation, or the recent messages do not materially turn the current message into spam.",
     },
@@ -333,7 +344,7 @@ export class JevSpamClassifier {
         instructions: `Is \`recentMessages[${index}]\` part of the same spam pitch or campaign as \`message\`?`,
         criteria: {
           true:
-            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an unsolicited sale, service, rental, contract-transfer, paid-work recruitment, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising. Link repeated copies of the same unsolicited offer.",
+            "It is a fragment, setup, repeated line, call to action, link, or continuation of the spam pitch expressed by the current message and its context. Link an earlier crypto-fraud loss hook to a later offer of a helper who can recover the losses, even without a link or DM call. Link an unsolicited sale, service, rental, contract-transfer, paid-work recruitment, price, bonus, or earnings claim to its later short profile/private-message call, even when the earlier fragment denies being advertising. Link repeated copies of the same unsolicited offer.",
           false:
             "It is unrelated legitimate conversation, requested help or contact, an already ongoing transaction, incidental context, or does not belong to the spam pitch containing the current message.",
         },
