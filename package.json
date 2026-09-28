@@ -10,6 +10,7 @@
     "check": "bun run typecheck && bun test"
   },
   "dependencies": {
+    "entities": "^8.1.0",
     "grammy": "^1.46.0",
     "pg": "^8.23.0"
   },
