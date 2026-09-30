@@ -38,6 +38,21 @@ const channelChat = (id: number): ChatFullInfo => ({
   },
 });
 
+test("title-only metadata does not borrow photo identifiers or pinned post text", async () => {
+  const cache = new SenderProfileCache();
+  const user = { ...privateChat(7, -1007), bio: undefined,
+    photo: { small_file_id: "avatar-text-is-not-a-file-id", small_file_unique_id: "small", big_file_id: "big", big_file_unique_id: "unique" } };
+  const channel = { ...channelChat(-1007), title: "Private Secret", description: undefined,
+    pinned_message: { message_id: 88, date: 1, chat: { id: -1007, type: "channel", title: "Private Secret" }, text: "Synthetic pinned promotion; not the personal-channel post preview" } } as ChatFullInfo;
+  const outcomes: string[] = [];
+  const calls: number[] = [];
+  const lookup = async (id: number) => { calls.push(id); return id === 7 ? user : channel; };
+  expect(await cache.get(7, lookup, Date.now(), (source, outcome) => outcomes.push(source + ":" + outcome)))
+    .toEqual({ personalChannel: { title: "Private Secret" } });
+  expect(outcomes).toEqual(["user:present", "channel:present"]);
+  expect(calls).toEqual([7, -1007]);
+});
+
 test("loads and caches private bio plus personal-channel text", async () => {
   const calls: number[] = [];
   const cache = new SenderProfileCache();

@@ -18,6 +18,7 @@ import {
   type SpamAssessment,
 } from "./spam";
 import { AsyncStatsBuffer, type StatsBatch } from "./stats";
+import { heartFixtures, heartTitle, heartSource } from "./fixtures/heart-profile";
 import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
 
 const botInfo: UserFromGetMe = {
@@ -1136,3 +1137,78 @@ test("no public lookup before mandatory identity/admin gates; no source/history 
   await h.send({ text: "ordinary discussion", reply_to_message: { message_id: 900, date: 1, chat: group, from: { ...user, id: 13 }, text: "https://t.me/source" } });
   expect(calls).toBe(1); expect(h.classifications[1]?.message.destinationPreviews).toBeUndefined(); await h.stats.stop();
 });
+
+// GEN-KANEO-43: synthetic input-boundary proof, not screenshot reconstruction.
+for (const customEmoji of [false, true]) {
+  for (const edited of [false, true]) {
+    for (const fixture of heartFixtures.filter(f => !f.message.mediaOnly)) {
+      test("heart profile boundary: " + fixture.id + " custom=" + customEmoji + " edited=" + edited, async () => {
+        const requests: { state: { message: CurrentModerationMessage; recentMessages: ModerationMessage[] }; questions: Record<string, unknown> }[] = [];
+        const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+          fetch: async (_url, init) => {
+            const request = JSON.parse(String(init?.body)); requests.push(request);
+            const isCurrent = request.state.message.text === fixture.message.text;
+            return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, {
+              type: "noul", noul: isCurrent && key === "adult_profile_bait" && fixture.shouldDelete ? 0.9 : 0.01,
+            }])) });
+          },
+        });
+        const h = harness((message, recent) => classifier.classify(message, recent));
+        h.setMetadata({ ...group, linked_chat_id: channel.id });
+        // The official source is exempt; that exemption must NOT transfer to its human replier.
+        await h.send({ message_id: 800, from: synthetic, sender_chat: channel, text: heartSource });
+        expect(h.classifications).toHaveLength(0);
+        await h.send({ message_id: 801, text: "Earlier unrelated troubleshooting conversation" });
+        const profile = fixture.message.senderProfile;
+        h.setProfileMetadata({ id: user.id, type: "private", bio: profile?.bio, personal_chat: profile?.personalChannel ? personalChannel : undefined });
+        h.setPersonalChannelMetadata({ ...personalChannel, ...profile?.personalChannel });
+        // Use a separate actor: no cached empty profile from the unrelated-history author.
+        // Seed this actor's history with a long contribution, which does not trigger enrichment.
+        const actor = { ...user, id: 17 };
+        await h.send({ message_id: 802, from: actor, text: "Useful technical detail. ".repeat(15) });
+        const source = fixture.message.preview?.[0];
+        const sourceMessage = source ? {
+          message_id: 800, date: 1, chat: group, text: source.text,
+          ...(source.sourceKind === "user" ? { from: { ...user, id: 44 } }
+            : source.sourceAuthor === "unknown" ? { forward_origin: { type: "channel", chat: channel, message_id: 99, date: 1 } } : { sender_chat: channel, from: synthetic }),
+        } : undefined;
+        await h.send({ message_id: 803, from: actor, text: fixture.message.text,
+          entities: customEmoji && fixture.message.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic-emoji" }] : undefined,
+          reply_to_message: sourceMessage,
+        }, edited);
+        const request = requests.at(-1)!;
+        expect(request.state.message).toEqual(fixture.message);
+        expect(request.state.recentMessages).toHaveLength(1);
+        expect(request.state.recentMessages[0]!.text).toBe("Useful technical detail. ".repeat(15));
+        expect(Object.keys(request.questions).filter(k => k.startsWith("context_message_"))).toEqual(["context_message_0"]);
+        expect(h.deletes()).toEqual(fixture.shouldDelete ? [803] : []);
+        expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)?.contextProbabilities).toEqual([0.01]);
+        expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === actor.id)).toHaveLength(1);
+        for (const secret of [heartTitle, heartSource, profile?.bio, profile?.personalChannel?.description].filter(Boolean)) expect(JSON.stringify(h.logs)).not.toContain(secret!);
+        await h.stats.stop();
+      });
+    }
+  }
+}
+
+for (const branch of ["title-only", "bio-only", "partial", "empty", "failure"] as const) {
+  test("heart edit fresh/cache lookup boundary: " + branch, async () => {
+    const h = harness();
+    if (branch === "failure") h.setProfileError();
+    h.setProfileMetadata({ id: user.id, type: "private", bio: branch === "bio-only" || branch === "partial" ? "Synthetic profile bio" : undefined,
+      personal_chat: branch === "title-only" || branch === "partial" ? personalChannel : undefined });
+    h.setPersonalChannelMetadata(branch === "partial" ? { ...personalChannel, id: -999 } : { ...personalChannel, title: heartTitle });
+    await h.send({ message_id: 900, text: "🤎" });
+    await h.send({ message_id: 900, text: "🤎" }, true);
+    const expected = branch === "title-only" ? { personalChannel: { title: heartTitle } }
+      : branch === "partial" || branch === "bio-only" ? { bio: "Synthetic profile bio" } : undefined;
+    expect(h.classifications).toHaveLength(2);
+    for (const c of h.classifications) expect(c.message.senderProfile).toEqual(expected);
+    expect(h.classifications[1]!.recent).toHaveLength(0);
+    expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === user.id)).toHaveLength(1);
+    expect(h.logs.filter(l => l.event === "profile_lookup").at(-1)?.outcome).toBe(
+      branch === "failure" || branch === "partial" ? "cached_unavailable" : branch === "empty" ? "cached_empty" : "cached_present");
+    expect(h.deletes()).toEqual([]);
+    await h.stats.stop();
+  });
+}
