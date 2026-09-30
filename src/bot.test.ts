@@ -1153,7 +1153,16 @@ for (const customEmoji of [false, true]) {
             }])) });
           },
         });
-        const h = harness((message, recent) => classifier.classify(message, recent));
+        const fixturePosts = fixture.message.senderProfile?.personalChannel?.posts;
+        const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+        const h = harness((message, recent) => classifier.classify(message, recent), async target => ({
+          status: target === "https://t.me/s/synthetic_channel" || fixturePosts?.some(p => p.destinationPreviews?.some(d => d.url === target && d.status === "available")) ? 200 : 404,
+          headers: { "content-type": "text/html" },
+          body: target !== "https://t.me/s/synthetic_channel" ? (() => {
+            const destination = fixturePosts?.flatMap(p => p.destinationPreviews ?? []).find(d => d.url === target);
+            return destination ? '<div class="tgme_page_title">' + escape(destination.title ?? '') + '</div><div class="tgme_page_description">' + escape(destination.description ?? '') + '</div>' : '';
+          })() : (fixturePosts ?? []).map(post => '<div class="tgme_widget_message" data-post="synthetic_channel/' + post.url.split("/").at(-1) + '"><div class="tgme_widget_message_text">' + escape(post.text) + post.embeddedLinks.map(url => '<a href="' + escape(url) + '"></a>').join("") + '</div></div>').join(""),
+        }));
         h.setMetadata({ ...group, linked_chat_id: channel.id });
         // The official source is exempt; that exemption must NOT transfer to its human replier.
         await h.send({ message_id: 800, from: synthetic, sender_chat: channel, text: heartSource });
@@ -1161,7 +1170,7 @@ for (const customEmoji of [false, true]) {
         await h.send({ message_id: 801, text: "Earlier unrelated troubleshooting conversation" });
         const profile = fixture.message.senderProfile;
         h.setProfileMetadata({ id: user.id, type: "private", bio: profile?.bio, personal_chat: profile?.personalChannel ? personalChannel : undefined });
-        h.setPersonalChannelMetadata({ ...personalChannel, ...profile?.personalChannel });
+        h.setPersonalChannelMetadata({ ...personalChannel, ...profile?.personalChannel, ...(fixturePosts ? { username: "synthetic_channel" } : {}) });
         // Use a separate actor: no cached empty profile from the unrelated-history author.
         // Seed this actor's history with a long contribution, which does not trigger enrichment.
         const actor = { ...user, id: 17 };
@@ -1173,17 +1182,20 @@ for (const customEmoji of [false, true]) {
             : source.sourceAuthor === "unknown" ? { forward_origin: { type: "channel", chat: channel, message_id: 99, date: 1 } } : { sender_chat: channel, from: synthetic }),
         } : undefined;
         await h.send({ message_id: 803, from: actor, text: fixture.message.text,
-          entities: customEmoji && fixture.message.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic-emoji" }] : undefined,
+          entities: customEmoji && fixture.message.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic-emoji" }] : fixture.message.embeddedLinks.map(url => ({ type: "text_link", offset: 0, length: 1, url })),
           reply_to_message: sourceMessage,
         }, edited);
         const request = requests.at(-1)!;
-        expect(request.state.message).toEqual(fixture.message);
+        const expected = structuredClone(fixture.message);
+        if (expected.senderProfile?.personalChannel?.posts?.length === 0) delete expected.senderProfile.personalChannel.posts;
+        if (expected.text.includes("https://t.me/synthetic_channel")) expected.destinationPreviews = [{ url: "https://t.me/synthetic_channel", status: "unavailable" }];
+        expect(request.state.message).toEqual(expected);
         expect(request.state.recentMessages).toHaveLength(1);
         expect(request.state.recentMessages[0]!.text).toBe("Useful technical detail. ".repeat(15));
         expect(Object.keys(request.questions).filter(k => k.startsWith("context_message_"))).toEqual(["context_message_0"]);
         expect(h.deletes()).toEqual(fixture.shouldDelete ? [803] : []);
         expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)?.contextProbabilities).toEqual([0.01]);
-        expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === actor.id)).toHaveLength(1);
+        expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === actor.id)).toHaveLength(fixturePosts ? 2 : 1);
         for (const secret of [heartTitle, heartSource, profile?.bio, profile?.personalChannel?.description].filter(Boolean)) expect(JSON.stringify(h.logs)).not.toContain(secret!);
         await h.stats.stop();
       });
@@ -1212,3 +1224,37 @@ for (const branch of ["title-only", "bio-only", "partial", "empty", "failure"] a
     await h.stats.stop();
   });
 }
+
+for (const changed of ["user-channel", "channel-id", "channel-handle", "failure"] as const) {
+  test("public post ownership rechecked after cached profile: " + changed, async () => {
+    let web = 0;
+    const h = harness(undefined, async () => { web++; return { status: 200, headers: { "content-type": "text/html" }, body: '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">Registration <a href="https://external.invalid">here</a></div></div>' }; });
+    h.setProfileMetadata({ id: user.id, type: "private", bio: "safe bio", personal_chat: personalChannel });
+    h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+    await h.send({ text: "🤎" });
+    expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts).toHaveLength(1);
+    if (changed === "user-channel") h.setProfileMetadata({ id: user.id, type: "private", personal_chat: { ...personalChannel, id: -9090 } });
+    if (changed === "channel-id") h.setPersonalChannelMetadata({ ...personalChannel, id: -9999, username: "owner_channel" });
+    if (changed === "channel-handle") h.setPersonalChannelMetadata({ ...personalChannel, username: "new_owner" });
+    if (changed === "failure") h.setProfileError();
+    await h.send({ text: "🤎" }, true);
+    expect(h.classifications[1]?.message.senderProfile?.personalChannel?.posts).toBeUndefined();
+    expect(web).toBe(1);
+    expect(h.classifications[1]?.message.senderProfile?.bio).toBe("safe bio");
+    expect(JSON.stringify(h.logs)).not.toContain("Registration"); expect(JSON.stringify(h.logs)).not.toContain("owner_channel");
+    expect(h.deletes()).toEqual([]); await h.stats.stop();
+  });
+}
+
+test("sticker public-post context stays separate from uninspected media and reply source", async () => {
+  const seen: string[] = [];
+  const h = harness(undefined, async target => { seen.push(target); return { status: 200, headers: { "content-type": "text/html" }, body: target.includes("/s/") ? '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">Register <a href="https://t.me/post_destination">here</a></div></div>' : '<div class="tgme_page_title">Archive</div>' }; });
+  h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+  await h.send({ text: undefined, sticker, reply_to_message: { message_id: 555, date: 1, chat: group, from: { ...user, id: 15 }, text: "Please send your heart sticker https://t.me/not_the_sender" } });
+  expect(seen).toEqual(["https://t.me/s/owner_channel", "https://t.me/post_destination"]);
+  expect(h.classifications[0]?.message.mediaOnly).toBe(true);
+  expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts?.[0]?.destinationPreviews?.[0]?.title).toBe("Archive");
+  expect(h.classifications[0]?.message.preview?.[0]?.sourceAuthor).toBe("other_author");
+  expect(h.deletes()).toEqual([]); await h.stats.stop();
+});
