@@ -2,7 +2,7 @@
 
 ## What is known
 
-The Sep 30 report in Telegram topic 4041081, message 21746 shows a brown
+The Sep 30 report in Telegram topic 4041081, messages 21745/21746, shows a brown
 heart replying to an unrelated channel post. Its second screenshot shows a
 personal-channel title, a promotional **channel-post preview**, and branding
 in an avatar. It does not show a user bio or establish channel description
@@ -20,7 +20,7 @@ query the reported username as a user ID, or capture raw production content.
 
 ## Retrieval versus model boundary
 
-The production profile cache validates numeric user/private-chat identity,
+The production profile cache at the report baseline validates numeric user/private-chat identity,
 then validates the personal channel ID/type. It projects only optional bio,
 channel title, and optional description. A title alone produces both
 user:present and channel:present. Those outcomes cannot prove that the
@@ -57,7 +57,7 @@ application container, using its credential without exporting it or modifying
 /app, service configuration, persistent state, or the running bot. The
 staging directory was removed. Only synthetic Jev requests were sent.
 
-Model jev-1.13.0, threshold .90, production builder/parser unchanged. Two
+Model jev-1.13.0, threshold .90, baseline production builder/parser unchanged. Two
 bounded baseline runs returned the following adult_profile_bait scores:
 
 | Synthetic input | Run 1 | Run 2 | Parsed result |
@@ -73,9 +73,9 @@ bounded baseline runs returned the following adult_profile_bait scores:
 | Explicitly requested heart, same explicit profile | .90 | .90 | DELETE — existing false positive |
 | Requested sticker, same explicit profile | .92 | .92 | KEEP via media gate .17/.19 |
 
-The requested-heart control remains expected KEEP and the opt-in test
-correctly fails it (9 pass/1 fail each run). We did not weaken its expectation,
-lower a threshold, add a title/domain blacklist, or adopt a stronger prompt.
+In that baseline, the requested-heart control was expected KEEP and the opt-in test
+correctly failed it (9 pass/1 fail each run). We did not weaken its expectation,
+lower a threshold, add a title/domain blacklist, or adopt a stronger prompt then.
 This safety finding argues against blindly making profile detection more
 aggressive. It is not a successful fix for the original screenshot.
 
@@ -99,32 +99,110 @@ and deletion selection. Artificial scores prove routing, not model recall.
 - Title-only projection cannot silently borrow pinned-post text or photo IDs.
 - Existing real-handler sticker/media, failure, request, linked-suffix and
   malformed-response regressions remain unchanged in the full suite.
-- All production files, model, threshold, exemptions and telemetry unchanged.
+- At the baseline checkpoint, production files, model, threshold, exemptions and telemetry were unchanged. The public-context implementation described below supersedes that tests-only checkpoint.
 
 Commands: bun run check; optional authorized
 RUN_LIVE_JEV=1 HEART_EVIDENCE_DIR=<task-owned-directory> bun test src/heart-profile.live.test.ts.
-The latter is intentionally red on the measured requested-heart false
-positive. No UI deletion, exact historical replay, or deployment is claimed.
+At the baseline checkpoint the latter was red on the measured requested-heart
+false positive. Candidate results below are separate from that baseline.
+No UI deletion or exact historical replay is claimed.
 
-## Product decision required, not a completed moderation fix
+## Authorized public-context follow-up (#21749)
 
-A) Accept the current text-only evidence boundary for this report; preserve
-ambiguous hearts and retain these regressions/diagnosis. Address the measured
-requested-heart false positive as a focused safety fix, not as evidence that
-this reported sender was identified or fixed. Recommended immediate choice:
-no expanded collection or speculative punishment.
+The subsequent request #21749 explicitly authorizes bounded accessible
+sender-owned personal-channel posts and their links. This supersedes the
+earlier text-only-versus-OCR decision proposal: no further collection
+permission is required for this narrow public-post scope. Avatar OCR,
+appearance analysis and external advertised-site fetching remain excluded.
 
-B) Separately authorize a bounded feasibility/design investigation for
-bot-authenticated **avatar text only** (not people/appearance), with strict
-identity, byte/time/cache/privacy limits and a reviewable acceptance proposal
-before any moderation use. File retrieval is documented, but support for this
-specific account and safe OCR/provider behavior still need demonstration.
-This would not supply arbitrary private-channel latest posts and is not a
-guarantee of catching this report.
+A benign capability check of the official public https://t.me/s/telegram
+channel on Sep 30 returned HTTP 200, 127,692 HTML bytes and 20 structurally
+identified posts with visible text/link containers. The implementation parser
+accepted the latest two complete posts (IDs 460/459; text lengths 205/142;
+four links each) without retaining or publishing their text. This establishes a
+public-web capability, not accessibility of the reported sender’s channel.
+The original numeric sender ID, exact update/profile fields and personal
+channel handle remain unknown; no exact historical replay is claimed.
+
+The implementation validates a fresh numeric private user → personal_chat
+channel association and channel ID → public username before requesting any
+public-web page. It admits only the canonical HTTPS Telegram /s/<username>
+page with pinned public IPv4 TLS, no redirects, no private joins and no
+external advertised-site fetch. At most two complete, owner-matched,
+nonforwarded recent posts (each ≤1,200 characters) and at most four links
+per post reach the classifier. The two-message recent sample does not
+guarantee the screenshot-highlighted post is among them. POST content is a
+separate typed field, not channel description.
+
+The finite per-update public-web envelope is four distinct URLs, six requests
+and ≤576 KiB reserved bytes over 4.5 seconds, with global concurrency four.
+Post pages may use up to 256 KiB; destination pages remain capped at 64 KiB.
+Telegram links in a post have one nonrecursive preview level; external links
+are string evidence only. Timeouts, 429s, private/unavailable or generic
+pages fail open without invented content. Profiles retain the original
+ten-minute cache, while public post pages use bounded positive/negative
+cache TTLs; fresh numeric ownership is revalidated before each public-web
+lookup even when the profile entry was cached.
+
+Public-post input must remain separate from bio/description, attributed only
+through the validated actual sender’s personal channel, with bounded shared
+fetch budgets. Private/unavailable pages and generic landings yield no invented
+content. A public recent-post sample cannot promise the exact profile-highlighted
+post when Telegram supplies no locator. A green tests-only baseline is not a
+completed enrichment implementation.
 
 Do not join channels, open advertised domains, add a personal-user login,
 expand MTProto credentials, crawl history, or substitute channel-post text
-into description. A future exact authorized update/field-presence reproduction
-could narrow uncertainty without authorizing any of those expansions.
-The canonical ticket stays unresolved pending the explicit product choice;
-a green test/docs PR is not resolution of the missing-source behavior.
+into description. Any later exact authorized update reproduction narrows
+uncertainty without authorizing those expansions.
+
+## Bounded calibration result (Sep 30 continuation)
+
+The public-context candidate adds an explicit requested-heart safety clause to
+adult_profile_bait and source labels for public posts. With that clause, the
+predecessor 20-case run was 18 pass / 2 fail: supplied public-post heart .86,
+post plus Telegram destination .81 (both KEEP), standalone post .92 DELETE,
+and requested description/post hearts .52/.52 KEEP. These are synthetic
+inputs, not the reported sender's recovered metadata.
+
+Two further wording variants were tried, without changing model, .90 gate,
+fixtures, parser, or history linkage contract:
+
+| Candidate | Public-post reply | Post + destination | Standalone post | Requested hearts (description/post) | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| A: rewrite question and explicit source attribution | .88 KEEP | .82 KEEP | .93 DELETE | .46/.57 KEEP | 15 pass / 5 fail |
+| B: retain question, add post-evidence equivalence | .86 KEEP | .83 KEEP | .93 DELETE | .55/.54 KEEP | 18 pass / 2 fail |
+
+A additionally lost three explicit-bio/description positives (.86–.88).
+Neither candidate fixed the two targeted reply misses, so **both wording
+variants were rejected** and the predecessor criterion retained. No third
+wording sweep, forced-positive rule, lower threshold or weakened fixture was
+introduced. The requested-heart safety clause remains; the original
+production false positive is not restored.
+
+All 40 responses passed the real production parser and included every
+requested question answer. The public-post-heart case included the actual
+context_message_0 request/answer and parsed unrelated-history linkage .06
+in each run, below the separate .75 linkage gate. No other-author source or
+post is a deletion candidate. The full synthetic input, complete questions,
+responses and parsed results are retained under workspace
+artifacts/gen43/candidate-18eb-a/ and candidate-18eb-b/ (exchanges, summary.json,
+live.log and exact staged source.tar). Candidate-source runs used container
+763ee2eef4af in task-owned temporary directories, removed after completion;
+they did not deploy code or modify /app, the service, or stored credentials.
+
+**Residual product boundary:** bounded public retrieval supplies the missing
+source type, but the pinned model still does not confidently delete the
+supplied rich-post reply cases. This is measured recall failure, not a missing
+live-test credential or mere absence of UI proof. Exact historical retrieval
+and deletion remain unproved because the real sender/update is unavailable.
+The enrichment must not be described as resolving that original miss.
+Recommendation: preserve conservative KEEP and the authorized enriched input;
+record this specific model/provider decision for the canonical owner rather
+than repeating prompt sweeps or creating an evaluation-only clone. Any change
+to the pinned model or moderation policy requires separate approval. No new
+collection permission is needed for the already-authorized public-post scope.
+
+The opt-in fixtures retain their intended positive/negative expectations;
+known model misses remain visible, never silently reclassified as legitimate.
+General review/CI is a separate gate from these optional model diagnostics.
