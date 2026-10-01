@@ -159,7 +159,7 @@ export function registerBotHandlers(bot: Bot, {
           const channel = await ctx.api.getChat(locator.id, AbortSignal.any([enrichmentBudget.signal, AbortSignal.timeout(1500)]) as Parameters<typeof ctx.api.getChat>[1]);
           if (channel.type === "channel" && channel.id === locator.id && channel.username
             && publicChannelUrl(channel.username) === locator.url) {
-            const posts = await destinations.personalPosts(locator.url, enrichmentBudget);
+            const posts = await destinations.personalPosts(locator, enrichmentBudget);
             if (posts.length) senderProfile = { ...senderProfile, personalChannel: { ...senderProfile.personalChannel, posts } };
           }
         } catch { /* Optional public context fails open without raw error telemetry. */ }

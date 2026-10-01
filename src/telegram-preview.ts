@@ -192,9 +192,11 @@ export class TelegramPreviewCache {
     const urls = [...new Set(links.map(telegramPreviewUrl).filter((url): url is string => Boolean(url)))].slice(0, PREVIEW_LIMITS.urls);
     return Promise.all(urls.map(url => this.get(url, outcome, budget)));
   }
-  async personalPosts(url: string, budget: EnrichmentBudget): Promise<PersonalChannelPost[]> {
-    if (!publicChannelPageUrl(url)) return [];
-    const preview = await this.get(url, undefined, budget);
+  async personalPosts({ id, url }: { id: number; url: string }, budget: EnrichmentBudget): Promise<PersonalChannelPost[]> {
+    if (!Number.isSafeInteger(id) || id >= 0 || !publicChannelPageUrl(url)) return [];
+    // Handles can move between channels while a cached or in-flight page exists.
+    // Retain the freshly verified numeric owner in both cache namespaces.
+    const preview = await this.get(url, undefined, budget, `channel:${id}:${url}`);
     // Never mutate cached post arrays with per-update destination evidence.
     const posts = structuredClone(preview.posts ?? []);
     for (const post of posts) {
@@ -204,13 +206,13 @@ export class TelegramPreviewCache {
     return posts;
   }
 
-  private async get(url: string, outcome: Outcome | undefined, budget: EnrichmentBudget): Promise<CachedPreview> {
+  private async get(url: string, outcome: Outcome | undefined, budget: EnrichmentBudget, cacheKey = url): Promise<CachedPreview> {
     if (!budget.admit(url)) return { url, status: "unavailable" };
     const started = performance.now();
-    const cached = this.entries.get(url);
+    const cached = this.entries.get(cacheKey);
     if (cached && cached.expires > this.now()) { outcome?.(cached.result, "cache", Math.round(performance.now() - started)); return cached.preview; }
-    if (cached) this.remove(url);
-    let pending = this.active.get(url);
+    if (cached) this.remove(cacheKey);
+    let pending = this.active.get(cacheKey);
     let source: "in_flight" | "network" = "in_flight";
     if (!pending) {
       source = "network";
@@ -221,11 +223,11 @@ export class TelegramPreviewCache {
       pending = this.load(url, budget).then((result) => {
         const ttl = result.result === "available" ? this.options.ttlMs ?? PREVIEW_LIMITS.ttlMs : this.options.negativeTtlMs ?? PREVIEW_LIMITS.negativeTtlMs;
         while (this.entries.size >= (this.options.maxEntries ?? PREVIEW_LIMITS.entries)) this.remove(this.entries.keys().next().value!);
-        const timer = setTimeout(() => this.remove(url), ttl); timer.unref();
-        this.entries.set(url, { ...result, expires: this.now() + ttl, timer });
+        const timer = setTimeout(() => this.remove(cacheKey), ttl); timer.unref();
+        this.entries.set(cacheKey, { ...result, expires: this.now() + ttl, timer });
         return result;
-      }).finally(() => this.active.delete(url));
-      this.active.set(url, pending);
+      }).finally(() => this.active.delete(cacheKey));
+      this.active.set(cacheKey, pending);
     }
     let onAbort: () => void = () => {};
     const result = await Promise.race([pending, new Promise<{ preview: CachedPreview; result: Category }>(resolve => {
@@ -274,6 +276,7 @@ export class TelegramPreviewCache {
         // Only absolute canonical Telegram links or root-relative chat paths.
         const next = telegramPreviewUrl(raw.startsWith("/") && !raw.startsWith("//") ? `https://t.me${raw}` : raw);
         if (!next || redirects === PREVIEW_LIMITS.redirects) throw new PreviewError("unsafe");
+        if (!budget.admit(next)) throw new PreviewError("overload");
         url = next; continue;
       }
       if (page.status !== 200) return;

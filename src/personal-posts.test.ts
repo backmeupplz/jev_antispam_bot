@@ -40,24 +40,24 @@ test("shared cache, dedup and one finite destination level never crawl external/
   const cache = new TelegramPreviewCache({ request: async target => { seen.push(target); return target === url ? page(post(1, '<a href="https://t.me/study_group">hidden</a> <a href="https://external.invalid">register</a>')) : landing; } });
   const budget = new EnrichmentBudget();
   await cache.enrich({ text: "https://t.me/study_group" } as Message, undefined, budget);
-  const posts = await cache.personalPosts(url, budget);
+  const posts = await cache.personalPosts({ id: -2013, url }, budget);
   expect(posts[0]?.destinationPreviews?.[0]?.title).toBe("Study");
   expect(seen).toEqual(["https://t.me/study_group", url]);
-  await cache.personalPosts(url, new EnrichmentBudget()); expect(seen).toHaveLength(2);
+  await cache.personalPosts({ id: -2013, url }, new EnrichmentBudget()); expect(seen).toHaveLength(2);
 });
 test("aggregate URL and redirect request/byte budgets cover current links and post links", async () => {
   let calls = 0;
   const cache = new TelegramPreviewCache({ request: async target => { calls++; return target === url ? page(post(1, 'https://t.me/post_one https://t.me/post_two')) : landing; } });
   const budget = new EnrichmentBudget();
   await cache.enrich({ text: "https://t.me/current_one https://t.me/current_two" } as Message, undefined, budget);
-  const posts = await cache.personalPosts(url, budget);
+  const posts = await cache.personalPosts({ id: -2013, url }, budget);
   expect(calls).toBe(ENRICHMENT_LIMITS.urls);
   expect(posts[0]?.destinationPreviews?.map(p => p.status)).toEqual(["available", "unavailable"]);
   let redirects = 0;
   const redirecting = new TelegramPreviewCache({ request: async () => { redirects++; return { status: 302, headers: { location: "/same_target" }, body: "" }; } });
   const shared = new EnrichmentBudget();
   await redirecting.enrich({ text: "https://t.me/first_one https://t.me/first_two" } as Message, undefined, shared);
-  await redirecting.personalPosts(url, shared);
+  await redirecting.personalPosts({ id: -2013, url }, shared);
   expect(redirects).toBe(ENRICHMENT_LIMITS.requests);
   expect(ENRICHMENT_LIMITS.bytes).toBe(POST_LIMITS.pageBytes + 5 * 65_536);
 });
@@ -65,24 +65,24 @@ test("post redirects reject even Telegram ownership changes, no generic landing 
   for (const location of ["https://evil.invalid", "https://t.me/s/other_owner", "/s/owner_channel", "https://t.me/owner_channel"]) {
     let calls = 0;
     const c = new TelegramPreviewCache({ request: async () => { calls++; return { status: 302, headers: { location }, body: "" }; } });
-    expect(await c.personalPosts(url, new EnrichmentBudget())).toEqual([]); expect(calls).toBe(1);
+    expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toEqual([]); expect(calls).toBe(1);
   }
 });
 test("post positive and negative TTL expiry and 429 cooldown share destination cache", async () => {
   let now = 0, calls = 0, status = 404;
   const c = new TelegramPreviewCache({ now: () => now, ttlMs: 100, negativeTtlMs: 10, request: async () => { calls++; return { ...page(post(1, "hello")), status, headers: { "content-type": "text/html", "retry-after": "2" } }; } });
-  expect(await c.personalPosts(url, new EnrichmentBudget())).toEqual([]);
-  status = 200; await c.personalPosts(url, new EnrichmentBudget()); expect(calls).toBe(1);
-  now = 11; expect(await c.personalPosts(url, new EnrichmentBudget())).toHaveLength(1); expect(calls).toBe(2);
-  now = 112; status = 429; expect(await c.personalPosts(url, new EnrichmentBudget())).toEqual([]);
-  now = 123; status = 200; expect(await c.personalPosts(url, new EnrichmentBudget())).toEqual([]); expect(calls).toBe(3);
-  now = 2200; expect(await c.personalPosts(url, new EnrichmentBudget())).toHaveLength(1);
+  expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toEqual([]);
+  status = 200; await c.personalPosts({ id: -2013, url }, new EnrichmentBudget()); expect(calls).toBe(1);
+  now = 11; expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toHaveLength(1); expect(calls).toBe(2);
+  now = 112; status = 429; expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toEqual([]);
+  now = 123; status = 200; expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toEqual([]); expect(calls).toBe(3);
+  now = 2200; expect(await c.personalPosts({ id: -2013, url }, new EnrichmentBudget())).toHaveLength(1);
 });
 test("shared deadline prevents late post requests and deadline fails open", async () => {
   let calls = 0;
   const c = new TelegramPreviewCache({ timeoutMs: 20, request: async (_target, signal) => { calls++; return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })); } });
   const budget = new EnrichmentBudget(5);
-  expect(await c.personalPosts(url, budget)).toEqual([]);
+  expect(await c.personalPosts({ id: -2013, url }, budget)).toEqual([]);
   await c.enrich({ text: "https://t.me/study_group" } as Message, undefined, budget);
   expect(calls).toBe(1);
 });
@@ -108,4 +108,44 @@ test("real pinned TLS transport applies distinct bounded post-page body budget",
     else await expect(result).rejects.toThrow("oversize");
     expect(host).toBe("t.me");
   }
+});
+
+test("post cache and in-flight dedup retain numeric ownership across handle transfers", async () => {
+  let calls = 0;
+  const firstResponse = Promise.withResolvers<PreviewPage>();
+  const cache = new TelegramPreviewCache({ request: async () => {
+    calls++;
+    return calls === 1 ? firstResponse.promise : page(post(1, "Owner B family notes"));
+  } });
+  const ownerA = { id: -2013, url }, ownerB = { id: -2014, url };
+  const first = cache.personalPosts(ownerA, new EnrichmentBudget());
+  const sameOwner = cache.personalPosts(ownerA, new EnrichmentBudget());
+  const nextOwner = cache.personalPosts(ownerB, new EnrichmentBudget());
+  expect(calls).toBe(2); // Same owner deduplicates; a transferred handle does not.
+  firstResponse.resolve(page(post(1, "Owner A promotion")));
+  const [a, duplicate, b] = await Promise.all([first, sameOwner, nextOwner]);
+  expect(a[0]?.text).toBe("Owner A promotion");
+  expect(duplicate).toEqual(a);
+  expect(b[0]?.text).toBe("Owner B family notes");
+  expect(await cache.personalPosts(ownerA, new EnrichmentBudget())).toEqual(a);
+  expect(await cache.personalPosts(ownerB, new EnrichmentBudget())).toEqual(b);
+  expect(calls).toBe(2);
+});
+
+test("distinct redirect targets share the total URL budget with post pages", async () => {
+  const seen: string[] = [];
+  const cache = new TelegramPreviewCache({ request: async target => {
+    seen.push(target);
+    const step = Number(target.at(-1));
+    return step < 3 ? { status: 302, headers: { location: target.slice(0, -1) + (step + 1) }, body: "" } : landing;
+  } });
+  const budget = new EnrichmentBudget();
+  const previews = await cache.enrich({ text: "https://t.me/alpha1 https://t.me/bravo1" } as Message, undefined, budget);
+  expect(new Set(seen).size).toBe(ENRICHMENT_LIMITS.urls);
+  expect(seen).toHaveLength(ENRICHMENT_LIMITS.urls);
+  expect(seen).not.toContain("https://t.me/alpha3");
+  expect(seen).not.toContain("https://t.me/bravo3");
+  expect(previews.map(p => p.status)).toEqual(["unavailable", "unavailable"]);
+  expect(await cache.personalPosts({ id: -2013, url }, budget)).toEqual([]);
+  expect(seen).toHaveLength(ENRICHMENT_LIMITS.urls);
 });

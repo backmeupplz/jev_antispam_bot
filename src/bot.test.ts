@@ -85,7 +85,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     }
     if (method === "getChat") {
       if (isReceivingGroup) return { ok: true, result: metadata } as never;
-      if (chatId === personalChannel.id) return { ok: true, result: personalChannelMetadata } as never;
+      if (chatId === personalChannel.id || chatId === personalChannelMetadata.id) return { ok: true, result: personalChannelMetadata } as never;
       return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
     }
     if (method === "getChatMember") return { ok: true, result: { status: memberStatus, user } } as never;
@@ -1245,6 +1245,32 @@ for (const changed of ["user-channel", "channel-id", "channel-handle", "failure"
     expect(h.deletes()).toEqual([]); await h.stats.stop();
   });
 }
+
+test("a public handle transferred between senders never reuses the prior channel's posts", async () => {
+  let text = "Old owner's explicit promotion", web = 0;
+  const h = harness(undefined, async () => {
+    web++;
+    return { status: 200, headers: { "content-type": "text/html" }, body: '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">' + text + '</div></div>' };
+  });
+  h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+  await h.send({ text: "🤎" });
+  expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts?.[0]?.text).toBe(text);
+
+  const newChannel = { ...personalChannel, id: -2014 };
+  const newSender = { ...user, id: 18 };
+  text = "New owner's family notes";
+  h.setProfileMetadata({ id: newSender.id, type: "private", personal_chat: newChannel });
+  h.setPersonalChannelMetadata({ ...newChannel, username: "owner_channel" });
+  await h.send({ from: newSender, text: "🤎" });
+  await h.send({ from: newSender, text: "🤎" }, true);
+  expect(h.classifications.slice(1).map(c => c.message.senderProfile?.personalChannel?.posts?.[0]?.text)).toEqual([text, text]);
+  expect(web).toBe(2);
+  expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === newChannel.id)).toHaveLength(3);
+  expect(h.deletes()).toEqual([]);
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
 
 test("sticker public-post context stays separate from uninspected media and reply source", async () => {
   const seen: string[] = [];
