@@ -197,12 +197,91 @@ supplied rich-post reply cases. This is measured recall failure, not a missing
 live-test credential or mere absence of UI proof. Exact historical retrieval
 and deletion remain unproved because the real sender/update is unavailable.
 The enrichment must not be described as resolving that original miss.
-Recommendation: preserve conservative KEEP and the authorized enriched input;
-record this specific model/provider decision for the canonical owner rather
-than repeating prompt sweeps or creating an evaluation-only clone. Any change
-to the pinned model or moderation policy requires separate approval. No new
-collection permission is needed for the already-authorized public-post scope.
+This was the Sep 30 decision boundary, not current release permission.
+On Oct 1, Nikita answered the choice (Telegram #21941): pursue stronger
+detection of the combined emoji + sender-owned profile + attached promotional
+channel post. Enrichment-only release accepting the known miss is rejected.
+The same PR must demonstrate the actual combined positive outcomes and close
+negative controls with a scoped, independently reviewed detection strategy.
+The .90 gate, fail-open behavior, source attribution and existing public-access
+bounds remain unchanged; no forced-score/blanket-emoji rule is authorized.
+The stronger policy work is already authorized: do not ask that same question
+again or create an evaluation-only clone. A model change must be explicit and
+reviewed, not a silent provider/version substitution. No new collection
+permission is needed for the already-authorized public-post scope.
 
 The opt-in fixtures retain their intended positive/negative expectations;
 known model misses remain visible, never silently reclassified as legitimate.
 General review/CI is a separate gate from these optional model diagnostics.
+
+
+## Oct 1 stronger-policy investigation (rejected candidates)
+
+The follow-up kept the 20 original synthetic fixtures and intended labels,
+`jev-1.13.0`, .90 deletion gate and complete original response/linkage parser.
+No historical update/profile was recovered. Two bounded policy rewrites were
+followed by a distinct focused-adjudication strategy, not repeated retries
+until a score happened to cross:
+
+| Candidate | Change | Public-post reply | Post + destination | Standalone post |
+| --- | --- | ---: | ---: | ---: |
+| A | Whole attributed funnel, no separate profile CTA required | .89 KEEP | .87 KEEP | .92 DELETE |
+| B | Observable conjunction instead of inferred hidden motive | .89 KEEP | .88 KEEP | .87 KEEP |
+| C | B's profile question in a separate same-model request, full state retained | .90 DELETE | .88 KEEP | .86 KEEP |
+| D | Original profile criterion in focused request with profile-specific attribution instructions | .85 KEEP | .87 KEEP | .94 DELETE |
+
+All four preserve the existing negative controls, but lose additional intended
+bio/description positives. C's isolated crossing is not acceptance: it still
+misses the destination and standalone cases. All four were rejected. The
+focused two-call runtime and rewritten prompts were reverted; this follow-up
+ships **no runtime modification** to the enrichment candidate.
+
+A final diagnostic E asked three atomic model questions alongside the complete
+original classifier questions: explicit sender-owned offer, low-information
+reaction, and uninvited/non-conversational context. The original production
+parser still parsed all original signals/linkage; additional component values
+were separately validated. The experimental derived policy score
+`max(0, offer + reaction + uninvited - 2)` was diagnostic only, not inserted
+into a model answer, used to delete, or represented as a calibrated spam
+probability. It requires no independence assumption, but model numbers alone
+do not prove mathematical probability calibration.
+
+- Public-post reply components: .94 / .95 / .86; derived score .75.
+- Post + destination components: .95 / .95 / .81; derived score .71.
+- Requested description/post hearts: context component .05/.06, derived 0.
+- All 20 diagnostic derived scores remain below .90, including every intended
+  positive. A successful probe process means complete evidence collection,
+  **not successful detection**. This candidate was also rejected.
+
+The bottleneck is not recognizing the explicit offer or emoji, but interpreting
+its conversational purpose. Independent strategy review identified a material
+boundary: the fixture source about being tired of maintaining tools can
+plausibly receive a sympathetic heart. Absence of an explicit request is not
+proof of promotional outreach. Future acceptance must include spontaneous
+sympathy, congratulations, thanks, grief support, acknowledgement and joking
+with the SAME promotional profile and no explicit emoji request. Do not erase
+that ambiguity by removing the contextual question, relaxing its semantics,
+rounding scores upward, or selecting the maximum across retries. The existing
+intended positives remain visible; they were not silently relabeled.
+
+Provider documentation checked Oct 1 lists only `jev-1.13.0` as the current
+model; `jev-latest` and `jev-preview` resolve to it. There is no documented
+newer Jev version to substitute. Its jaggedness guidance recommends atomic
+questions but also warns about indirection and contextual calibration:
+https://docs.typesafe.ai/models and
+https://docs.typesafe.ai/model-jaggedness/jev-1.13.
+
+Full synthetic requests, response answers, source archives and logs remain in
+workspace `artifacts/gen43-fix-b07/candidate-{a,b,c,d,e}/`, with a compact
+`summary.json` one level above. All probes used isolated task-owned temporary
+staging in container 763ee2eef4af and removed it afterward; no service, /app,
+credential, production-content logging, or advertised external-site change.
+
+**Release remains blocked on the detection target**, not optional UI testing.
+The Oct 1 authorization is not withdrawn or awaiting the old decision. A new
+boundary is whether to evaluate a second-stage reasoning classifier outside
+the current Jev service (additional provider exposure, latency and API cost),
+or remain Jev-only with this known unresolved behavior. No such provider or
+credential change has been made. Any new strategy must retain the same bounded
+source attribution, false-positive controls, parser/handler proofs and
+independent review before release.
