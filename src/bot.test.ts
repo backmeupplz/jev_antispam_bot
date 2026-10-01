@@ -1284,3 +1284,26 @@ test("sticker public-post context stays separate from uninspected media and repl
   expect(h.classifications[0]?.message.preview?.[0]?.sourceAuthor).toBe("other_author");
   expect(h.deletes()).toEqual([]); await h.stats.stop();
 });
+
+// Captured synthetic Jev response: regression evidence, not a desired deletion label.
+for (const threshold of [0.9, 0.81]) for (const edited of [false, true]) {
+  test("captured celebration false positive through handler gate=" + threshold + " edited=" + edited, async () => {
+    const evidence = await Bun.file(new URL("./fixtures/threshold-celebration-response.json", import.meta.url)).json();
+    const classifier = new JevSpamClassifier("synthetic-replay", { model: "jev-1.13.0", threshold, timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        expect(JSON.parse(String(init?.body))).toEqual(evidence.request);
+        return Response.json(evidence.response);
+      },
+    });
+    const h = harness((message, recent) => classifier.classify(message, recent), async () => ({ status: 200, headers: { "content-type": "text/html" },
+      body: '<div class="tgme_widget_message" data-post="synthetic_channel/101"><div class="tgme_widget_message_text">Private adult videos — register now for my closed archive.<a href="https://example.invalid/register"></a></div></div>',
+    }));
+    h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+    h.setPersonalChannelMetadata({ ...personalChannel, title: "😘 Private Secret", username: "synthetic_channel" });
+    await h.send({ text: "🤎", entities: [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic" }], reply_to_message: { message_id: 800, date: 1, chat: group, from: { ...user, id: 44 }, text: "My daughter graduated today! I am so proud of her." } }, edited);
+    expect(h.deletes()).toEqual(threshold === 0.81 ? [1] : []);
+    expect(h.deletes()).not.toContain(800);
+    expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)).toMatchObject({ status: "completed", confidence: 0.83 });
+    await h.stats.stop();
+  });
+}

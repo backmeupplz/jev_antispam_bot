@@ -286,3 +286,77 @@ or remain Jev-only with this known unresolved behavior. No such provider or
 credential change has been made. Any new strategy must retain the same bounded
 source attribution, false-positive controls, parser/handler proofs and
 independent review before release.
+
+## Oct 1 requested 0.81 gate: measured regression, release hold
+
+Nikita's Telegram #21951 explicitly authorizes evaluating/implementing a global
+0.81 deletion gate and supersedes both the old unchanged-.90 restriction and
+the second-provider question. No new provider is authorized. This is a score
+threshold across **all** moderation categories, not calibrated 81% correctness.
+The separate history-linkage threshold is 0.75 and must not change.
+
+Call-site audit: loadConfig reads SPAM_THRESHOLD (default .90, allowed .5–1);
+index.ts passes spamThreshold to JevSpamClassifier. parseAssessment compares the
+maximum non-media signal inclusively with that threshold. Media-only input uses
+only media_profile_funnel at the same gate. bot.ts consumes shouldDelete and
+selects a contiguous history suffix using CONTEXT_LINK_THRESHOLD (.75); media
+never selects earlier messages. No hidden category override was found.
+
+An offline paired replay of all 20 retained candidate-9a71 exchanges first
+verified **exact full request equality** against the current request builder,
+then replayed original answers through JevSpamClassifier/parser at .90/.81.
+The target heart changed KEEP→DELETE (.86); destination changed KEEP→DELETE
+(.81); existing negative labels stayed KEEP. Rejected criterion variants are
+not source-equivalent and are not pooled as current-source calibration.
+
+A fresh 30-case synthetic-only candidate-source run at pinned jev-1.13.0 used
+one real request per fixture, replaying that same response at the old gate.
+Labels were fixed before calls; all required signal/linkage answers were
+present. Result: **28 passed, 2 failed** at .81:
+
+| Case | Score | .90 | .81 | Intended |
+| --- | ---: | --- | --- | --- |
+| Public-post heart reply | .85 | KEEP | DELETE | DELETE |
+| Public-post destination | .79 | KEEP | KEEP | DELETE |
+| Spontaneous congratulations, same promotional post/profile | .83 | KEEP | DELETE | KEEP |
+| Spontaneous grief support, same promotional post/profile | .69 | KEEP | KEEP | KEEP |
+| Spontaneous grief support, explicit promotional description | .72 | KEEP | KEEP | KEEP |
+| Requested post-heart / description-heart | .49 / .52 | KEEP | KEEP | KEEP |
+| Requested recruitment / link / media | .51 / .34 / .28 | KEEP | KEEP | KEEP |
+| Unsolicited recruitment / mixed-history invite | .92 / .95 | DELETE | DELETE | DELETE |
+
+The false-positive control is a brown-heart reply to “My daughter graduated
+today! I am so proud of her.” by an ordinary participant who owns the SAME
+synthetic promotional profile/post as the target. No explicit emoji request
+is necessary for this ordinary congratulatory response to be legitimate.
+Do not relabel it spam merely to satisfy the target or select maximum scores
+across retries. It newly crosses .81 on adult_profile_bait. The post+destination
+positive's .79 also demonstrates that .81 is not a reliable fix by itself.
+No claim about population error rates follows from this small synthetic set.
+
+The captured synthetic full request/response is committed as
+src/fixtures/threshold-celebration-response.json. Four real bot.handleUpdate
+replays (new/edit at each gate, custom emoji, actual profile/public-post
+normalization, exact classifier request equality) prove .90 keeps and .81
+would delete only the current reply, not its source. The deterministic test
+asserts the **observed regression**, not that deletion is desired. The opt-in
+live test retains KEEP as its expected label. Boundary tests cover below/at/
+above .81 for every text signal and media, complete-parser failure behavior,
+and the independent .75 contiguous suffix. The config test proves an explicit
+SPAM_THRESHOLD=.81 reaches loadConfig while default remains .90 on hold.
+
+Artifacts: workspace artifacts/gen43-3bbb/evaluation/{source.tar,live.log,
+exchanges/}, retained-comparison.json. All are synthetic; no real profile or
+message captured, no advertised site visited. Candidate staging ran in current
+container 763ee2eef4af and was removed; /app, service configuration and worker
+were unchanged. These are candidate-source model and handler results, not
+deployment or UI proof. Original sender/update and exact profile remain unknown;
+the observed historical .63 score would not cross .81 without enrichment.
+
+**Deployment is blocked on this concrete legitimate-message regression**, as
+required by the latest decision—not because lowering .90 was unauthorized.
+The default/environment and runtime policy have deliberately NOT been changed.
+Do not merge this as a detection fix or deploy enrichment-only. Report the
+regression for a scoped decision; do not silently pick a different threshold,
+provider, forced score or alternate criterion. Prior investigation tables above
+are retained historical evidence, not current release authorization.
