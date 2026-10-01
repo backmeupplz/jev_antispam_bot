@@ -1,6 +1,9 @@
 import type { CurrentModerationMessage, SenderProfile } from "../spam";
 
 // Synthetic boundary comparisons, NOT recovered Telegram updates or profile fields.
+// Nikita #21968 (2026-10-01): all emoji-only forms with explicit sender-owned
+// promotion are DELETE, including requested hearts. Historical labels/scores are
+// retained in docs and captured evidence; this is a policy change, not accuracy.
 export const heartTitle = "😘 Private Secret";
 export const explicitHeartProfile: SenderProfile = {
   personalChannel: { title: heartTitle, description: "My adult videos: register for paid private access." },
@@ -20,7 +23,7 @@ export const heartFixtures: { id: string; message: CurrentModerationMessage; sho
   { id: "explicit-description-unknown-source", message: { ...heart, senderProfile: explicitHeartProfile, preview: [{ ...reply[0]!, sourceAuthor: "unknown", isForwarded: true }] }, shouldDelete: true },
   { id: "explicit-bio-reply", message: { ...heart, senderProfile: { bio: explicitHeartProfile.personalChannel!.description }, preview: reply }, shouldDelete: true },
   { id: "substantive-owner", message: { ...heart, text: "The 429 response is rate limiting; exponential backoff fixes the retry loop.", senderProfile: explicitHeartProfile, preview: reply }, shouldDelete: false },
-  { id: "requested-heart", message: { ...heart, senderProfile: explicitHeartProfile, preview: [{ ...reply[0]!, sourceKind: "user", text: "Please reply with a brown heart to confirm that you received this." }] }, shouldDelete: false },
+  { id: "requested-heart", message: { ...heart, senderProfile: explicitHeartProfile, preview: [{ ...reply[0]!, sourceKind: "user", text: "Please reply with a brown heart to confirm that you received this." }] }, shouldDelete: true },
   { id: "requested-sticker", message: { ...heart, text: "", mediaOnly: true, senderProfile: explicitHeartProfile, preview: [{ ...reply[0]!, sourceKind: "user", text: "Please send the heart sticker from your pack." }] }, shouldDelete: false },
 ];
 
@@ -35,7 +38,7 @@ export const publicPostProfile: SenderProfile = {
 heartFixtures.push(
   { id: "public-post-heart", message: { ...heart, senderProfile: publicPostProfile, preview: reply }, shouldDelete: true },
   { id: "public-post-standalone", message: { ...heart, senderProfile: publicPostProfile }, shouldDelete: true },
-  { id: "public-post-requested-heart", message: { ...heart, senderProfile: publicPostProfile, preview: [{ ...reply[0]!, sourceKind: "user", text: "Please reply with a brown heart to confirm that you received this." }] }, shouldDelete: false },
+  { id: "public-post-requested-heart", message: { ...heart, senderProfile: publicPostProfile, preview: [{ ...reply[0]!, sourceKind: "user", text: "Please reply with a brown heart to confirm that you received this." }] }, shouldDelete: true },
   { id: "public-post-substantive", message: { ...heart, senderProfile: publicPostProfile, text: "The 429 response is rate limiting; exponential backoff fixes the retry loop.", preview: reply }, shouldDelete: false },
   { id: "public-post-warning", message: { ...heart, senderProfile: publicPostProfile, text: "Do not register through that archive link: it is a scam. I am reporting it to moderators.", preview: reply }, shouldDelete: false },
   { id: "public-post-benign", message: { ...heart, senderProfile: { personalChannel: { title: "Private family notes", posts: [{ url: "https://t.me/synthetic_channel/102", text: "Thank you to everyone who came to our family picnic.", embeddedLinks: [] }] } }, preview: reply }, shouldDelete: false },

@@ -8,7 +8,7 @@ for (const fixture of heartFixtures) {
   liveTest("synthetic heart boundary: " + fixture.id, async () => {
     const exchanges: { request: { state: { message: unknown }; questions: Record<string, unknown> }; response: { answers: Record<string, unknown> } }[] = [];
     const classifier = new JevSpamClassifier(key!, {
-      model: "jev-1.13.0", threshold: 0.9, timeoutMs: 10_000,
+      model: "jev-1.13.0", threshold: 0.81, timeoutMs: 10_000,
       fetch: async (url, init) => {
         const request = JSON.parse(String(init?.body));
         const response = await fetch(url, init);

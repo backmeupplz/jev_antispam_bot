@@ -1285,13 +1285,14 @@ test("sticker public-post context stays separate from uninspected media and repl
   expect(h.deletes()).toEqual([]); await h.stats.stop();
 });
 
-// Captured synthetic Jev response: regression evidence, not a desired deletion label.
+// Historical pre-#21968 response: retained scores, NOT current-policy model evidence.
 for (const threshold of [0.9, 0.81]) for (const edited of [false, true]) {
-  test("captured celebration false positive through handler gate=" + threshold + " edited=" + edited, async () => {
+  test("historical celebration response through handler gate=" + threshold + " edited=" + edited, async () => {
     const evidence = await Bun.file(new URL("./fixtures/threshold-celebration-response.json", import.meta.url)).json();
     const classifier = new JevSpamClassifier("synthetic-replay", { model: "jev-1.13.0", threshold, timeoutMs: 1000,
       fetch: async (_url, init) => {
-        expect(JSON.parse(String(init?.body))).toEqual(evidence.request);
+        // Old answers prove only historical score routing, not current-prompt acceptance.
+        expect(JSON.parse(String(init?.body)).state).toEqual(evidence.request.state);
         return Response.json(evidence.response);
       },
     });
@@ -1306,4 +1307,40 @@ for (const threshold of [0.9, 0.81]) for (const edited of [false, true]) {
     expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)).toMatchObject({ status: "completed", confidence: 0.83 });
     await h.stats.stop();
   });
+}
+
+// Exact current-policy captured requests/answers; no invented model scores.
+for (const id of ["spontaneous-celebration-post", "spontaneous-sympathy-post", "public-post-destination", "requested-heart", "public-post-benign", "public-post-substantive", "public-post-warning"]) {
+  for (const edited of [false, true]) for (const custom of [false, true]) {
+    test("#21968 captured policy handler " + id + " edited=" + edited + " custom=" + custom, async () => {
+      const evidence = await Bun.file(new URL("./fixtures/policy-21968/" + id + ".json", import.meta.url)).json();
+      const input = evidence.request.state.message as CurrentModerationMessage;
+      const requests: unknown[] = [];
+      const classifier = new JevSpamClassifier("synthetic-replay", { model: "jev-1.13.0", threshold: 0.81, timeoutMs: 1000,
+        fetch: async (_url, init) => { requests.push(JSON.parse(String(init?.body))); return Response.json(evidence.response); },
+      });
+      const posts = input.senderProfile?.personalChannel?.posts ?? [];
+      const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+      const h = harness((message, recent) => classifier.classify(message, recent), async target => {
+        const destination = posts.flatMap(p => p.destinationPreviews ?? []).find(d => d.url === target);
+        return { status: 200, headers: { "content-type": "text/html" }, body: destination
+          ? '<div class="tgme_page_title">' + escape(destination.title ?? '') + '</div><div class="tgme_page_description">' + escape(destination.description ?? '') + '</div>'
+          : posts.map(p => '<div class="tgme_widget_message" data-post="synthetic_channel/' + p.url.split('/').at(-1) + '"><div class="tgme_widget_message_text">' + escape(p.text) + p.embeddedLinks.map(url => '<a href="' + escape(url) + '"></a>').join('') + '</div></div>').join('') };
+      });
+      h.setProfileMetadata({ id: user.id, type: "private", bio: input.senderProfile?.bio, personal_chat: personalChannel });
+      h.setPersonalChannelMetadata({ ...personalChannel, ...input.senderProfile?.personalChannel, ...(posts.length ? { username: "synthetic_channel" } : {}) });
+      const source = input.preview![0]!;
+      await h.send({ text: input.text,
+        entities: custom && input.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic" }] : [],
+        reply_to_message: { message_id: 800, date: 1, chat: group, text: source.text,
+          ...(source.sourceKind === "channel" ? { sender_chat: channel, from: synthetic } : { from: { ...user, id: 44 } }) },
+      }, edited);
+      // Assertions outside the fail-open handler prevent swallowed test failures.
+      expect(requests).toEqual([evidence.request]);
+      expect(h.deletes()).toEqual(evidence.expectedDelete ? [1] : []);
+      expect(h.deletes()).not.toContain(800);
+      expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)).toMatchObject({ status: "completed", confidence: evidence.result.probability });
+      await h.stats.stop();
+    });
+  }
 }

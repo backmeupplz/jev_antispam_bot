@@ -156,7 +156,10 @@ expand MTProto credentials, crawl history, or substitute channel-post text
 into description. Any later exact authorized update reproduction narrows
 uncertainty without authorizing those expansions.
 
-## Bounded calibration result (Sep 30 continuation)
+## Historical bounded calibration result (Sep 30 continuation)
+
+The KEEP policy in this section was superseded by #21968; inputs and scores
+are retained unchanged as historical evidence, not current release guidance.
 
 The public-context candidate adds an explicit requested-heart safety clause to
 adult_profile_bait and source labels for public posts. With that clause, the
@@ -287,7 +290,13 @@ credential change has been made. Any new strategy must retain the same bounded
 source attribution, false-positive controls, parser/handler proofs and
 independent review before release.
 
-## Oct 1 requested 0.81 gate: measured regression, release hold
+## Historical Oct 1 requested 0.81 gate: assumed-KEEP results
+
+**Superseded by Nikita #21968.** The following original interpretation and
+labels are retained for audit only. These synthetic reactions were assumed
+KEEP, not verified real legitimate messages; the later explicit policy makes
+the emoji-only promotional-profile forms DELETE, including requested emoji.
+References below to a current release hold or required decision are historical.
 
 Nikita's Telegram #21951 explicitly authorizes evaluating/implementing a global
 0.81 deletion gate and supersedes both the old unchanged-.90 restriction and
@@ -360,3 +369,58 @@ Do not merge this as a detection fix or deploy enrichment-only. Report the
 regression for a scoped decision; do not silently pick a different threshold,
 provider, forced score or alternate criterion. Prior investigation tables above
 are retained historical evidence, not current release authorization.
+
+## Current policy: Oct 1 #21968 (supersedes earlier holds)
+
+Nikita explicitly chose DELETE for emoji-only messages with actual sender-owned
+explicit adult/private-content registration or paid-content promotion, including
+celebration, bereavement, requested emoji acknowledgements and prior benign
+participation. The old spontaneous-reaction KEEP labels were assumptions in
+synthetic fixtures, not verified legitimate production messages. Inputs and old
+scores/labels above and in threshold-celebration-response.json remain intact;
+changing these expected labels is a declared policy change, not improved accuracy.
+
+The adult_profile_bait question now asks about this observable combination,
+including separately attributed public posts and their Telegram destination
+metadata, rather than requiring the model to infer the sender's hidden intent.
+Benign/missing/title-only profiles, substantive text, requested textual links,
+warnings/reports and unknown media retain their protections. No hardcoded
+handle/domain, score override, provider change, avatar analysis or new retrieval
+permission was added. Other-author source posts and public profile posts are
+never deletion candidates. The separate .75 linked-suffix gate is unchanged.
+
+One fresh bounded 30-case pinned jev-1.13.0 comparison passed all 30 at the
+previously authorized .81 global gate, with complete request/answer/parser and
+linkage checks. Same responses at .90 retain misses; .81 is therefore the new
+source default and .env.example value. This changes ALL categories, not just
+profile bait, and is not an 81% correctness guarantee.
+
+| Synthetic case | Candidate score | .90 | .81 / new policy |
+| --- | ---: | --- | --- |
+| Public-post heart with benign prior participation | .91 | DELETE | DELETE |
+| Public-post destination (previous .79 miss) | .87 | KEEP | DELETE |
+| Celebration / sympathy public-post replies | .91 / .90 | DELETE | DELETE |
+| Sympathy with explicit description | .85 | KEEP | DELETE |
+| Requested heart description / post | .81 / .85 | KEEP | DELETE |
+| Benign / unavailable / title-only profile | .14 / .09 / .09 | KEEP | KEEP |
+| Substantive text description / post | .68 / .46 | KEEP | KEEP |
+| Requested textual channel link / warning | .72 / .29 | KEEP | KEEP |
+| Requested recruitment / link / media | .52 / .32 / .30 | KEEP | KEEP |
+| Unsolicited recruitment / mixed-history invite | .92 / .95 | DELETE | DELETE |
+
+These are one-run measurements, not guaranteed future model scores or population
+false-positive estimates. The requested-description heart lies exactly on .81;
+no score rounding/boosting or retry maximum was used. Thirty full synthetic
+exchanges and staged source are in workspace artifacts/gen43-d060/evaluation.
+Seven exact full request/response captures are committed under
+src/fixtures/policy-21968 and replayed through the real grammY handler for
+new/edited plain/custom emoji forms, including keep controls. The historical .83
+capture is replayed only as old-score routing, not current-prompt acceptance.
+
+Release gate: independent exact-head review, green CI, current-main merge and
+managed Easypanel deployment. Inspect the existing service env and merge only
+SPAM_THRESHOLD=.81 if explicitly set; never assume the source default overrides
+production env. Verify actual deployed commit, source and effective model/gate,
+healthy startup and fail-open tests. This implementation stage is not deployment
+or real-account UI proof. Exact historical sender/update/profile remains unknown;
+the original incident is not claimed replayed or retrospectively deleted.

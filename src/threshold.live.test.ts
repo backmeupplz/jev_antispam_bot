@@ -7,16 +7,17 @@ import { inviteCampaigns, requestedInviteReplies, inviteControls } from "./fixtu
 import { toModerationMessage } from "./message";
 import { deletionMessageIds } from "./history";
 
-// Synthetic only: labels fixed before calls. No production profile/message capture.
+// Synthetic only: emoji/profile labels revised by Nikita #21968 before calls.
+// Historical assumed-KEEP labels/scores retained; this is a policy revision.
 const message = (text: string): CurrentModerationMessage => ({ text, embeddedLinks: [], isForwarded: false });
 const sympathy = (profile = publicPostProfile, text = "My dog died today. I miss her so much."): CurrentModerationMessage => ({
   ...message("🤎"), senderProfile: profile, preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user", sourceAuthor: "other_author", isForwarded: false, text, embeddedLinks: [] }],
 });
 const cases: { id: string; message: CurrentModerationMessage; shouldDelete: boolean; recent?: ModerationMessage[]; suffix?: number[] }[] = [
   ...heartFixtures.map(f => ({ ...f, ...(f.id === "public-post-heart" ? { recent: [message("The retry configuration worked, thank you.")], suffix: [100] } : {}) })),
-  { id: "spontaneous-sympathy-post", message: sympathy(), shouldDelete: false },
-  { id: "spontaneous-sympathy-description", message: sympathy(explicitHeartProfile), shouldDelete: false },
-  { id: "spontaneous-celebration-post", message: sympathy(publicPostProfile, "My daughter graduated today! I am so proud of her."), shouldDelete: false },
+  { id: "spontaneous-sympathy-post", message: sympathy(), shouldDelete: true },
+  { id: "spontaneous-sympathy-description", message: sympathy(explicitHeartProfile), shouldDelete: true },
+  { id: "spontaneous-celebration-post", message: sympathy(publicPostProfile, "My daughter graduated today! I am so proud of her."), shouldDelete: true },
   { id: "ordinary-reaction", message: { ...sympathy(), senderProfile: undefined }, shouldDelete: false },
   { id: "requested-recruitment", message: normalizedRecruitment(reportedRecruitment.paidCompletion, hiringRequest), shouldDelete: false },
   { id: "unsolicited-recruitment", message: normalizedRecruitment(reportedRecruitment.paidCompletion, unrelatedReply), shouldDelete: true },
