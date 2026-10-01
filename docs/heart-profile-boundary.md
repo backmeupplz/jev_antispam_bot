@@ -212,7 +212,7 @@ permission is needed for the already-authorized public-post scope.
 
 The opt-in fixtures retain their intended positive/negative expectations;
 known model misses remain visible, never silently reclassified as legitimate.
-General review/CI is a separate gate from these optional model diagnostics.
+General review/CI is separate from opt-in model-test execution; a confirmed detection miss on the acceptance target remains release-blocking.
 
 
 ## Oct 1 stronger-policy investigation (rejected candidates)
@@ -253,8 +253,9 @@ do not prove mathematical probability calibration.
   positive. A successful probe process means complete evidence collection,
   **not successful detection**. This candidate was also rejected.
 
-The bottleneck is not recognizing the explicit offer or emoji, but interpreting
-its conversational purpose. Independent strategy review identified a material
+These probes suggest that interpreting the reaction's conversational purpose,
+rather than recognizing the explicit offer or emoji, is a limiting factor.
+Independent strategy review identified a material
 boundary: the fixture source about being tired of maintaining tools can
 plausibly receive a sympathetic heart. Absence of an explicit request is not
 proof of promotional outreach. Future acceptance must include spontaneous
