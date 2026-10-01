@@ -18,6 +18,7 @@ import {
   type SpamAssessment,
 } from "./spam";
 import { AsyncStatsBuffer, type StatsBatch } from "./stats";
+import { heartFixtures, heartTitle, heartSource } from "./fixtures/heart-profile";
 import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
 
 const botInfo: UserFromGetMe = {
@@ -84,7 +85,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     }
     if (method === "getChat") {
       if (isReceivingGroup) return { ok: true, result: metadata } as never;
-      if (chatId === personalChannel.id) return { ok: true, result: personalChannelMetadata } as never;
+      if (chatId === personalChannel.id || chatId === personalChannelMetadata.id) return { ok: true, result: personalChannelMetadata } as never;
       return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
     }
     if (method === "getChatMember") return { ok: true, result: { status: memberStatus, user } } as never;
@@ -1136,3 +1137,210 @@ test("no public lookup before mandatory identity/admin gates; no source/history 
   await h.send({ text: "ordinary discussion", reply_to_message: { message_id: 900, date: 1, chat: group, from: { ...user, id: 13 }, text: "https://t.me/source" } });
   expect(calls).toBe(1); expect(h.classifications[1]?.message.destinationPreviews).toBeUndefined(); await h.stats.stop();
 });
+
+// GEN-KANEO-43: synthetic input-boundary proof, not screenshot reconstruction.
+for (const customEmoji of [false, true]) {
+  for (const edited of [false, true]) {
+    for (const fixture of heartFixtures.filter(f => !f.message.mediaOnly)) {
+      test("heart profile boundary: " + fixture.id + " custom=" + customEmoji + " edited=" + edited, async () => {
+        const requests: { state: { message: CurrentModerationMessage; recentMessages: ModerationMessage[] }; questions: Record<string, unknown> }[] = [];
+        const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 1000,
+          fetch: async (_url, init) => {
+            const request = JSON.parse(String(init?.body)); requests.push(request);
+            const isCurrent = request.state.message.text === fixture.message.text;
+            return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, {
+              type: "noul", noul: isCurrent && key === "adult_profile_bait" && fixture.shouldDelete ? 0.9 : 0.01,
+            }])) });
+          },
+        });
+        const fixturePosts = fixture.message.senderProfile?.personalChannel?.posts;
+        const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+        const h = harness((message, recent) => classifier.classify(message, recent), async target => ({
+          status: target === "https://t.me/s/synthetic_channel" || fixturePosts?.some(p => p.destinationPreviews?.some(d => d.url === target && d.status === "available")) ? 200 : 404,
+          headers: { "content-type": "text/html" },
+          body: target !== "https://t.me/s/synthetic_channel" ? (() => {
+            const destination = fixturePosts?.flatMap(p => p.destinationPreviews ?? []).find(d => d.url === target);
+            return destination ? '<div class="tgme_page_title">' + escape(destination.title ?? '') + '</div><div class="tgme_page_description">' + escape(destination.description ?? '') + '</div>' : '';
+          })() : (fixturePosts ?? []).map(post => '<div class="tgme_widget_message" data-post="synthetic_channel/' + post.url.split("/").at(-1) + '"><div class="tgme_widget_message_text">' + escape(post.text) + post.embeddedLinks.map(url => '<a href="' + escape(url) + '"></a>').join("") + '</div></div>').join(""),
+        }));
+        h.setMetadata({ ...group, linked_chat_id: channel.id });
+        // The official source is exempt; that exemption must NOT transfer to its human replier.
+        await h.send({ message_id: 800, from: synthetic, sender_chat: channel, text: heartSource });
+        expect(h.classifications).toHaveLength(0);
+        await h.send({ message_id: 801, text: "Earlier unrelated troubleshooting conversation" });
+        const profile = fixture.message.senderProfile;
+        h.setProfileMetadata({ id: user.id, type: "private", bio: profile?.bio, personal_chat: profile?.personalChannel ? personalChannel : undefined });
+        h.setPersonalChannelMetadata({ ...personalChannel, ...profile?.personalChannel, ...(fixturePosts ? { username: "synthetic_channel" } : {}) });
+        // Use a separate actor: no cached empty profile from the unrelated-history author.
+        // Seed this actor's history with a long contribution, which does not trigger enrichment.
+        const actor = { ...user, id: 17 };
+        await h.send({ message_id: 802, from: actor, text: "Useful technical detail. ".repeat(15) });
+        const source = fixture.message.preview?.[0];
+        const sourceMessage = source ? {
+          message_id: 800, date: 1, chat: group, text: source.text,
+          ...(source.sourceKind === "user" ? { from: { ...user, id: 44 } }
+            : source.sourceAuthor === "unknown" ? { forward_origin: { type: "channel", chat: channel, message_id: 99, date: 1 } } : { sender_chat: channel, from: synthetic }),
+        } : undefined;
+        await h.send({ message_id: 803, from: actor, text: fixture.message.text,
+          entities: customEmoji && fixture.message.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic-emoji" }] : fixture.message.embeddedLinks.map(url => ({ type: "text_link", offset: 0, length: 1, url })),
+          reply_to_message: sourceMessage,
+        }, edited);
+        const request = requests.at(-1)!;
+        const expected = structuredClone(fixture.message);
+        if (expected.senderProfile?.personalChannel?.posts?.length === 0) delete expected.senderProfile.personalChannel.posts;
+        if (expected.text.includes("https://t.me/synthetic_channel")) expected.destinationPreviews = [{ url: "https://t.me/synthetic_channel", status: "unavailable" }];
+        expect(request.state.message).toEqual(expected);
+        expect(request.state.recentMessages).toHaveLength(1);
+        expect(request.state.recentMessages[0]!.text).toBe("Useful technical detail. ".repeat(15));
+        expect(Object.keys(request.questions).filter(k => k.startsWith("context_message_"))).toEqual(["context_message_0"]);
+        expect(h.deletes()).toEqual(fixture.shouldDelete ? [803] : []);
+        expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)?.contextProbabilities).toEqual([0.01]);
+        expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === actor.id)).toHaveLength(fixturePosts ? 2 : 1);
+        for (const secret of [heartTitle, heartSource, profile?.bio, profile?.personalChannel?.description].filter(Boolean)) expect(JSON.stringify(h.logs)).not.toContain(secret!);
+        await h.stats.stop();
+      });
+    }
+  }
+}
+
+for (const branch of ["title-only", "bio-only", "partial", "empty", "failure"] as const) {
+  test("heart edit fresh/cache lookup boundary: " + branch, async () => {
+    const h = harness();
+    if (branch === "failure") h.setProfileError();
+    h.setProfileMetadata({ id: user.id, type: "private", bio: branch === "bio-only" || branch === "partial" ? "Synthetic profile bio" : undefined,
+      personal_chat: branch === "title-only" || branch === "partial" ? personalChannel : undefined });
+    h.setPersonalChannelMetadata(branch === "partial" ? { ...personalChannel, id: -999 } : { ...personalChannel, title: heartTitle });
+    await h.send({ message_id: 900, text: "🤎" });
+    await h.send({ message_id: 900, text: "🤎" }, true);
+    const expected = branch === "title-only" ? { personalChannel: { title: heartTitle } }
+      : branch === "partial" || branch === "bio-only" ? { bio: "Synthetic profile bio" } : undefined;
+    expect(h.classifications).toHaveLength(2);
+    for (const c of h.classifications) expect(c.message.senderProfile).toEqual(expected);
+    expect(h.classifications[1]!.recent).toHaveLength(0);
+    expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === user.id)).toHaveLength(1);
+    expect(h.logs.filter(l => l.event === "profile_lookup").at(-1)?.outcome).toBe(
+      branch === "failure" || branch === "partial" ? "cached_unavailable" : branch === "empty" ? "cached_empty" : "cached_present");
+    expect(h.deletes()).toEqual([]);
+    await h.stats.stop();
+  });
+}
+
+for (const changed of ["user-channel", "channel-id", "channel-handle", "failure"] as const) {
+  test("public post ownership rechecked after cached profile: " + changed, async () => {
+    let web = 0;
+    const h = harness(undefined, async () => { web++; return { status: 200, headers: { "content-type": "text/html" }, body: '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">Registration <a href="https://external.invalid">here</a></div></div>' }; });
+    h.setProfileMetadata({ id: user.id, type: "private", bio: "safe bio", personal_chat: personalChannel });
+    h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+    await h.send({ text: "🤎" });
+    expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts).toHaveLength(1);
+    if (changed === "user-channel") h.setProfileMetadata({ id: user.id, type: "private", personal_chat: { ...personalChannel, id: -9090 } });
+    if (changed === "channel-id") h.setPersonalChannelMetadata({ ...personalChannel, id: -9999, username: "owner_channel" });
+    if (changed === "channel-handle") h.setPersonalChannelMetadata({ ...personalChannel, username: "new_owner" });
+    if (changed === "failure") h.setProfileError();
+    await h.send({ text: "🤎" }, true);
+    expect(h.classifications[1]?.message.senderProfile?.personalChannel?.posts).toBeUndefined();
+    expect(web).toBe(1);
+    expect(h.classifications[1]?.message.senderProfile?.bio).toBe("safe bio");
+    expect(JSON.stringify(h.logs)).not.toContain("Registration"); expect(JSON.stringify(h.logs)).not.toContain("owner_channel");
+    expect(h.deletes()).toEqual([]); await h.stats.stop();
+  });
+}
+
+test("a public handle transferred between senders never reuses the prior channel's posts", async () => {
+  let text = "Old owner's explicit promotion", web = 0;
+  const h = harness(undefined, async () => {
+    web++;
+    return { status: 200, headers: { "content-type": "text/html" }, body: '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">' + text + '</div></div>' };
+  });
+  h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+  await h.send({ text: "🤎" });
+  expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts?.[0]?.text).toBe(text);
+
+  const newChannel = { ...personalChannel, id: -2014 };
+  const newSender = { ...user, id: 18 };
+  text = "New owner's family notes";
+  h.setProfileMetadata({ id: newSender.id, type: "private", personal_chat: newChannel });
+  h.setPersonalChannelMetadata({ ...newChannel, username: "owner_channel" });
+  await h.send({ from: newSender, text: "🤎" });
+  await h.send({ from: newSender, text: "🤎" }, true);
+  expect(h.classifications.slice(1).map(c => c.message.senderProfile?.personalChannel?.posts?.[0]?.text)).toEqual([text, text]);
+  expect(web).toBe(2);
+  expect(h.calls.filter(c => c.method === "getChat" && c.payload.chat_id === newChannel.id)).toHaveLength(3);
+  expect(h.deletes()).toEqual([]);
+  expect(JSON.stringify(h.logs)).not.toContain(text);
+  await h.stats.stop();
+});
+
+test("sticker public-post context stays separate from uninspected media and reply source", async () => {
+  const seen: string[] = [];
+  const h = harness(undefined, async target => { seen.push(target); return { status: 200, headers: { "content-type": "text/html" }, body: target.includes("/s/") ? '<div class="tgme_widget_message" data-post="owner_channel/1"><div class="tgme_widget_message_text">Register <a href="https://t.me/post_destination">here</a></div></div>' : '<div class="tgme_page_title">Archive</div>' }; });
+  h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, username: "owner_channel" });
+  await h.send({ text: undefined, sticker, reply_to_message: { message_id: 555, date: 1, chat: group, from: { ...user, id: 15 }, text: "Please send your heart sticker https://t.me/not_the_sender" } });
+  expect(seen).toEqual(["https://t.me/s/owner_channel", "https://t.me/post_destination"]);
+  expect(h.classifications[0]?.message.mediaOnly).toBe(true);
+  expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts?.[0]?.destinationPreviews?.[0]?.title).toBe("Archive");
+  expect(h.classifications[0]?.message.preview?.[0]?.sourceAuthor).toBe("other_author");
+  expect(h.deletes()).toEqual([]); await h.stats.stop();
+});
+
+// Historical pre-#21968 response: retained scores, NOT current-policy model evidence.
+for (const threshold of [0.9, 0.81]) for (const edited of [false, true]) {
+  test("historical celebration response through handler gate=" + threshold + " edited=" + edited, async () => {
+    const evidence = await Bun.file(new URL("./fixtures/threshold-celebration-response.json", import.meta.url)).json();
+    const classifier = new JevSpamClassifier("synthetic-replay", { model: "jev-1.13.0", threshold, timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        // Old answers prove only historical score routing, not current-prompt acceptance.
+        expect(JSON.parse(String(init?.body)).state).toEqual(evidence.request.state);
+        return Response.json(evidence.response);
+      },
+    });
+    const h = harness((message, recent) => classifier.classify(message, recent), async () => ({ status: 200, headers: { "content-type": "text/html" },
+      body: '<div class="tgme_widget_message" data-post="synthetic_channel/101"><div class="tgme_widget_message_text">Private adult videos — register now for my closed archive.<a href="https://example.invalid/register"></a></div></div>',
+    }));
+    h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+    h.setPersonalChannelMetadata({ ...personalChannel, title: "😘 Private Secret", username: "synthetic_channel" });
+    await h.send({ text: "🤎", entities: [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic" }], reply_to_message: { message_id: 800, date: 1, chat: group, from: { ...user, id: 44 }, text: "My daughter graduated today! I am so proud of her." } }, edited);
+    expect(h.deletes()).toEqual(threshold === 0.81 ? [1] : []);
+    expect(h.deletes()).not.toContain(800);
+    expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)).toMatchObject({ status: "completed", confidence: 0.83 });
+    await h.stats.stop();
+  });
+}
+
+// Exact current-policy captured requests/answers; no invented model scores.
+for (const id of ["spontaneous-celebration-post", "spontaneous-sympathy-post", "public-post-destination", "requested-heart", "public-post-benign", "public-post-substantive", "public-post-warning"]) {
+  for (const edited of [false, true]) for (const custom of [false, true]) {
+    test("#21968 captured policy handler " + id + " edited=" + edited + " custom=" + custom, async () => {
+      const evidence = await Bun.file(new URL("./fixtures/policy-21968/" + id + ".json", import.meta.url)).json();
+      const input = evidence.request.state.message as CurrentModerationMessage;
+      const requests: unknown[] = [];
+      const classifier = new JevSpamClassifier("synthetic-replay", { model: "jev-1.13.0", threshold: 0.81, timeoutMs: 1000,
+        fetch: async (_url, init) => { requests.push(JSON.parse(String(init?.body))); return Response.json(evidence.response); },
+      });
+      const posts = input.senderProfile?.personalChannel?.posts ?? [];
+      const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+      const h = harness((message, recent) => classifier.classify(message, recent), async target => {
+        const destination = posts.flatMap(p => p.destinationPreviews ?? []).find(d => d.url === target);
+        return { status: 200, headers: { "content-type": "text/html" }, body: destination
+          ? '<div class="tgme_page_title">' + escape(destination.title ?? '') + '</div><div class="tgme_page_description">' + escape(destination.description ?? '') + '</div>'
+          : posts.map(p => '<div class="tgme_widget_message" data-post="synthetic_channel/' + p.url.split('/').at(-1) + '"><div class="tgme_widget_message_text">' + escape(p.text) + p.embeddedLinks.map(url => '<a href="' + escape(url) + '"></a>').join('') + '</div></div>').join('') };
+      });
+      h.setProfileMetadata({ id: user.id, type: "private", bio: input.senderProfile?.bio, personal_chat: personalChannel });
+      h.setPersonalChannelMetadata({ ...personalChannel, ...input.senderProfile?.personalChannel, ...(posts.length ? { username: "synthetic_channel" } : {}) });
+      const source = input.preview![0]!;
+      await h.send({ text: input.text,
+        entities: custom && input.text === "🤎" ? [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "synthetic" }] : [],
+        reply_to_message: { message_id: 800, date: 1, chat: group, text: source.text,
+          ...(source.sourceKind === "channel" ? { sender_chat: channel, from: synthetic } : { from: { ...user, id: 44 } }) },
+      }, edited);
+      // Assertions outside the fail-open handler prevent swallowed test failures.
+      expect(requests).toEqual([evidence.request]);
+      expect(h.deletes()).toEqual(evidence.expectedDelete ? [1] : []);
+      expect(h.deletes()).not.toContain(800);
+      expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)).toMatchObject({ status: "completed", confidence: evidence.result.probability });
+      await h.stats.stop();
+    });
+  }
+}

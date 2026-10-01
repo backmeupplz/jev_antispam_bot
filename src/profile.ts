@@ -1,5 +1,10 @@
 import type { ChatFullInfo } from "grammy/types";
 import type { SenderProfile } from "./spam";
+import { publicChannelUrl } from "./personal-posts";
+
+// Retrieval locators are internal capabilities, never classifier profile fields.
+const publicChannels = new WeakMap<SenderProfile, { id: number; url: string }>();
+export const personalChannelLocator = (profile: SenderProfile) => publicChannels.get(profile);
 
 type GetChat = (chatId: number, signal: AbortSignal) => Promise<ChatFullInfo>;
 type Outcome = (source: "user" | "channel" | "cache", outcome: "present" | "empty" | "unavailable" | "invalid" | "cached_present" | "cached_empty" | "cached_unavailable") => void;
@@ -87,6 +92,7 @@ export class SenderProfileCache {
     onOutcome?.("user", bio || user.personal_chat ? "present" : "empty");
     let personalChannel: SenderProfile["personalChannel"];
     let failed = false;
+    let locator: { id: number; url: string } | undefined;
     if (user.personal_chat?.type === "channel") {
       try {
         const channel = await getChat(user.personal_chat.id, AbortSignal.timeout(this.timeoutMs));
@@ -95,6 +101,8 @@ export class SenderProfileCache {
           onOutcome?.("channel", "invalid");
         } else {
           personalChannel = { title: channel.title.trim(), description: clean(channel.description) };
+          const url = channel.username && publicChannelUrl(channel.username);
+          if (url) locator = { id: channel.id, url };
           onOutcome?.("channel", personalChannel.title || personalChannel.description ? "present" : "empty");
         }
       } catch {
@@ -104,7 +112,9 @@ export class SenderProfileCache {
       }
     }
 
-    return { profile: bio || personalChannel ? { bio, personalChannel } : undefined, failed };
+    const profile = bio || personalChannel ? { bio, personalChannel } : undefined;
+    if (profile && locator) publicChannels.set(profile, locator);
+    return { profile, failed };
   }
 }
 

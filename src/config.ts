@@ -22,7 +22,7 @@ function numberFromEnv(name: string, fallback: number): number {
 }
 
 export function loadConfig(): Config {
-  const spamThreshold = numberFromEnv("SPAM_THRESHOLD", 0.9);
+  const spamThreshold = numberFromEnv("SPAM_THRESHOLD", 0.81);
   if (spamThreshold < 0.5 || spamThreshold > 1) {
     throw new Error("SPAM_THRESHOLD must be between 0.5 and 1");
   }

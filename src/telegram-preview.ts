@@ -1,3 +1,4 @@
+import { extractPersonalPosts, publicChannelPageUrl, POST_LIMITS, type PersonalChannelPost } from "./personal-posts";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
@@ -8,19 +9,8 @@ export const PREVIEW_LIMITS = { urls: 2, concurrent: 4, timeoutMs: 1_500, bytes:
 export type DestinationPreview = { url: string; status: "available" | "unavailable"; title?: string; description?: string };
 type Category = "available" | "unavailable" | "timeout" | "network" | "unsafe" | "oversize" | "content_type" | "rate_limit" | "overload";
 type Outcome = (result: Category, source: "network" | "cache" | "in_flight", durationMs: number) => void;
-const reserved = new Set(["addstickers", "addemoji", "addtheme", "addlist", "addlanguage", "setlanguage", "share", "proxy", "socks", "login", "confirmphone", "iv", "s", "c", "joinchat", "boost", "giftcode", "invoice", "bg", "contact", "m", "nft", "apps"]);
-
-// Accept only chat landing-page grammar, not arbitrary t.me routes or URL-parser repairs.
-export function telegramPreviewUrl(raw: string): string | undefined {
-  if (raw.length > 512 || /[\\\s%]/u.test(raw)) return;
-  const match = /^(?:https:\/\/)?t\.me\/(\+[A-Za-z0-9_-]{1,128}|joinchat\/[A-Za-z0-9_-]{1,128}|[A-Za-z][A-Za-z0-9_]{3,31})\/?(?:\?[^#]*)?(?:#.*)?$/i.exec(raw);
-  if (!match) return;
-  const path = match[1]!;
-  if (path.startsWith("+")) return `https://t.me/${path}`;
-  if (path.toLowerCase().startsWith("joinchat/")) return `https://t.me/+${path.slice(9)}`;
-  if (reserved.has(path.toLowerCase())) return;
-  return `https://t.me/${path.toLowerCase()}`;
-}
+import { telegramPreviewUrl } from "./telegram-url";
+export { telegramPreviewUrl } from "./telegram-url";
 
 export function currentTelegramLinks(message: Message): string[] {
   const text = "text" in message ? message.text ?? "" : "caption" in message ? message.caption ?? "" : "";
@@ -59,7 +49,8 @@ export type PreviewPage = { status: number; headers: Record<string, string | und
 export type PageRequest = (url: string, signal: AbortSignal) => Promise<PreviewPage>;
 
 export async function requestPublicTelegramPage(url: string, signal: AbortSignal, transport = { lookup, request }): Promise<PreviewPage> {
-  if (telegramPreviewUrl(url) !== url) throw new PreviewError("unsafe");
+  if (telegramPreviewUrl(url) !== url && !publicChannelPageUrl(url)) throw new PreviewError("unsafe");
+  const maxBytes = publicChannelPageUrl(url) ? POST_LIMITS.pageBytes : PREVIEW_LIMITS.bytes;
   const addresses = await transport.lookup("t.me", { family: 4, all: true });
   signal.throwIfAborted();
   if (!addresses.length || addresses.some(({ address }) => !publicIPv4(address))) throw new PreviewError("unsafe");
@@ -81,12 +72,12 @@ export async function requestPublicTelegramPage(url: string, signal: AbortSignal
       if (!/^text\/html(?:;|$)/i.test(headers["content-type"] ?? "") || (headers["content-encoding"] && headers["content-encoding"] !== "identity")) {
         res.destroy(); reject(new PreviewError("content_type")); return;
       }
-      if (Number(headers["content-length"]) > PREVIEW_LIMITS.bytes) { res.destroy(); reject(new PreviewError("oversize")); return; }
+      if (Number(headers["content-length"]) > maxBytes) { res.destroy(); reject(new PreviewError("oversize")); return; }
       let size = 0;
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > PREVIEW_LIMITS.bytes) { res.destroy(new PreviewError("oversize")); return; }
+        if (size > maxBytes) { res.destroy(new PreviewError("oversize")); return; }
         chunks.push(chunk);
       });
       res.on("error", reject);
@@ -159,28 +150,69 @@ export async function extractTelegramPreview(html: string): Promise<{ title: str
   return { title, ...(description ? { description } : {}) };
 }
 
+// One finite budget for current-message destinations, sender posts and one-level
+// post destinations. Reserve worst-case body bytes before opening any socket.
+export const ENRICHMENT_LIMITS = { urls: 4, requests: 6, bytes: POST_LIMITS.pageBytes + 5 * PREVIEW_LIMITS.bytes, timeoutMs: 4_500 } as const;
+export class EnrichmentBudget {
+  readonly signal: AbortSignal;
+  private readonly urls = new Set<string>();
+  private requests = 0;
+  private bytes = 0;
+  constructor(timeoutMs: number = ENRICHMENT_LIMITS.timeoutMs) { this.signal = AbortSignal.timeout(timeoutMs); }
+  admit(url: string): boolean {
+    if (this.signal.aborted) return false;
+    if (this.urls.has(url)) return true;
+    if (this.urls.size >= ENRICHMENT_LIMITS.urls) return false;
+    this.urls.add(url); return true;
+  }
+  reserve(postPage = false): void {
+    this.signal.throwIfAborted();
+    this.bytes += postPage ? POST_LIMITS.pageBytes : PREVIEW_LIMITS.bytes;
+    if (++this.requests > ENRICHMENT_LIMITS.requests || this.bytes > ENRICHMENT_LIMITS.bytes) throw new PreviewError("overload");
+  }
+}
+type CachedPreview = DestinationPreview & { posts?: PersonalChannelPost[] };
+
 // Count underlying work, not callers waiting for a deadline. DNS lookup is not
 // abortable, so a timed-out lookup must keep its slot until it actually settles.
 // The process-wide counter retains no message, URL or invite-token keys.
 let networkActive = 0;
 
 export class TelegramPreviewCache {
-  private readonly entries = new Map<string, { preview: DestinationPreview; result: Category; expires: number; timer: ReturnType<typeof setTimeout> }>();
-  private readonly active = new Map<string, Promise<{ preview: DestinationPreview; result: Category }>>();
+  private readonly entries = new Map<string, { preview: CachedPreview; result: Category; expires: number; timer: ReturnType<typeof setTimeout> }>();
+  private readonly active = new Map<string, Promise<{ preview: CachedPreview; result: Category }>>();
   private retryAt = 0;
   constructor(private readonly options: { request?: PageRequest; now?: () => number; timeoutMs?: number; ttlMs?: number; negativeTtlMs?: number; maxEntries?: number } = {}) {}
   private now() { return (this.options.now ?? Date.now)(); }
 
-  async enrich(message: Message, outcome?: Outcome): Promise<DestinationPreview[]> {
-    return Promise.all(currentTelegramLinks(message).map((url) => this.get(url, outcome)));
+  async enrich(message: Message, outcome?: Outcome, budget = new EnrichmentBudget()): Promise<DestinationPreview[]> {
+    return this.enrichLinks(currentTelegramLinks(message), budget, outcome);
+  }
+  async enrichLinks(links: string[], budget: EnrichmentBudget, outcome?: Outcome): Promise<DestinationPreview[]> {
+    const urls = [...new Set(links.map(telegramPreviewUrl).filter((url): url is string => Boolean(url)))].slice(0, PREVIEW_LIMITS.urls);
+    return Promise.all(urls.map(url => this.get(url, outcome, budget)));
+  }
+  async personalPosts({ id, url }: { id: number; url: string }, budget: EnrichmentBudget): Promise<PersonalChannelPost[]> {
+    if (!Number.isSafeInteger(id) || id >= 0 || !publicChannelPageUrl(url)) return [];
+    // Handles can move between channels while a cached or in-flight page exists.
+    // Retain the freshly verified numeric owner in both cache namespaces.
+    const preview = await this.get(url, undefined, budget, `channel:${id}:${url}`);
+    // Never mutate cached post arrays with per-update destination evidence.
+    const posts = structuredClone(preview.posts ?? []);
+    for (const post of posts) {
+      const destinations = await this.enrichLinks(post.embeddedLinks, budget);
+      if (destinations.length) post.destinationPreviews = destinations;
+    }
+    return posts;
   }
 
-  private async get(url: string, outcome?: Outcome): Promise<DestinationPreview> {
+  private async get(url: string, outcome: Outcome | undefined, budget: EnrichmentBudget, cacheKey = url): Promise<CachedPreview> {
+    if (!budget.admit(url)) return { url, status: "unavailable" };
     const started = performance.now();
-    const cached = this.entries.get(url);
+    const cached = this.entries.get(cacheKey);
     if (cached && cached.expires > this.now()) { outcome?.(cached.result, "cache", Math.round(performance.now() - started)); return cached.preview; }
-    if (cached) this.remove(url);
-    let pending = this.active.get(url);
+    if (cached) this.remove(cacheKey);
+    let pending = this.active.get(cacheKey);
     let source: "in_flight" | "network" = "in_flight";
     if (!pending) {
       source = "network";
@@ -188,22 +220,27 @@ export class TelegramPreviewCache {
         outcome?.(this.retryAt > this.now() ? "rate_limit" : "overload", source, 0);
         return { url, status: "unavailable" };
       }
-      pending = this.load(url).then((result) => {
+      pending = this.load(url, budget).then((result) => {
         const ttl = result.result === "available" ? this.options.ttlMs ?? PREVIEW_LIMITS.ttlMs : this.options.negativeTtlMs ?? PREVIEW_LIMITS.negativeTtlMs;
         while (this.entries.size >= (this.options.maxEntries ?? PREVIEW_LIMITS.entries)) this.remove(this.entries.keys().next().value!);
-        const timer = setTimeout(() => this.remove(url), ttl); timer.unref();
-        this.entries.set(url, { ...result, expires: this.now() + ttl, timer });
+        const timer = setTimeout(() => this.remove(cacheKey), ttl); timer.unref();
+        this.entries.set(cacheKey, { ...result, expires: this.now() + ttl, timer });
         return result;
-      }).finally(() => this.active.delete(url));
-      this.active.set(url, pending);
+      }).finally(() => this.active.delete(cacheKey));
+      this.active.set(cacheKey, pending);
     }
-    const result = await pending;
+    let onAbort: () => void = () => {};
+    const result = await Promise.race([pending, new Promise<{ preview: CachedPreview; result: Category }>(resolve => {
+      onAbort = () => resolve({ preview: { url, status: "unavailable" }, result: "timeout" });
+      if (budget.signal.aborted) onAbort();
+      else budget.signal.addEventListener("abort", onAbort, { once: true });
+    })]).finally(() => budget.signal.removeEventListener("abort", onAbort));
     outcome?.(result.result, source, Math.round(performance.now() - started));
     return result.preview;
   }
   private remove(url: string) { const entry = this.entries.get(url); if (entry) clearTimeout(entry.timer); this.entries.delete(url); }
 
-  private async load(url: string): Promise<{ preview: DestinationPreview; result: Category }> {
+  private async load(url: string, budget: EnrichmentBudget): Promise<{ preview: CachedPreview; result: Category }> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -211,16 +248,18 @@ export class TelegramPreviewCache {
     });
     try {
       networkActive++;
-      const work = this.fetch(url, controller.signal).finally(() => { networkActive--; });
+      const work = this.fetch(url, AbortSignal.any([controller.signal, budget.signal]), budget).finally(() => { networkActive--; });
       const metadata = await Promise.race([work, deadline]);
       return { preview: { url, status: metadata ? "available" : "unavailable", ...metadata }, result: metadata ? "available" : "unavailable" };
     } catch (error) {
       return { preview: { url, status: "unavailable" }, result: controller.signal.aborted ? "timeout" : error instanceof PreviewError ? error.category : "network" };
     } finally { clearTimeout(timer!); }
   }
-  private async fetch(url: string, signal: AbortSignal) {
+  private async fetch(url: string, signal: AbortSignal, budget: EnrichmentBudget): Promise<{ title?: string; description?: string; posts?: PersonalChannelPost[] } | undefined> {
+    const postPage = publicChannelPageUrl(url);
     for (let redirects = 0; redirects <= PREVIEW_LIMITS.redirects; redirects++) {
       signal.throwIfAborted();
+      budget.reserve(postPage);
       const page = await (this.options.request ?? requestPublicTelegramPage)(url, signal);
       signal.throwIfAborted();
       if (page.status === 429) {
@@ -230,15 +269,23 @@ export class TelegramPreviewCache {
         throw new PreviewError("rate_limit");
       }
       if ([301, 302, 303, 307, 308].includes(page.status)) {
+        // Public channel redirects never change ownership/path, even to another
+        // Telegram username. Unavailable is safer than following a renamed page.
+        if (postPage) throw new PreviewError("unsafe");
         const raw = page.headers.location ?? "";
         // Only absolute canonical Telegram links or root-relative chat paths.
         const next = telegramPreviewUrl(raw.startsWith("/") && !raw.startsWith("//") ? `https://t.me${raw}` : raw);
         if (!next || redirects === PREVIEW_LIMITS.redirects) throw new PreviewError("unsafe");
+        if (!budget.admit(next)) throw new PreviewError("overload");
         url = next; continue;
       }
       if (page.status !== 200) return;
       if (!/^text\/html(?:;|$)/i.test(page.headers["content-type"] ?? "")) throw new PreviewError("content_type");
-      if (Buffer.byteLength(page.body) > PREVIEW_LIMITS.bytes) throw new PreviewError("oversize");
+      if (Buffer.byteLength(page.body) > (postPage ? POST_LIMITS.pageBytes : PREVIEW_LIMITS.bytes)) throw new PreviewError("oversize");
+      if (postPage) {
+        const posts = await extractPersonalPosts(page.body, url);
+        return posts.length ? { posts } : undefined;
+      }
       return extractTelegramPreview(page.body);
     }
   }

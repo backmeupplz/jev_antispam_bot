@@ -3,8 +3,9 @@ import { AdminCache } from "./admin-cache";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
-import { TelegramPreviewCache, type PageRequest } from "./telegram-preview";
-import { SenderProfileCache } from "./profile";
+import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
+import { SenderProfileCache, personalChannelLocator } from "./profile";
+import { publicChannelUrl } from "./personal-posts";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import type { StatsRecorder } from "./stats";
 
@@ -138,13 +139,30 @@ export function registerBotHandlers(bot: Bot, {
         await skip("media_profile_unavailable");
         return;
       }
+      const enrichmentBudget = new EnrichmentBudget();
       try {
         const destinationPreviews = await destinations.enrich(ctx.msg, (result, source, durationMs) =>
-          logger.info(JSON.stringify({ event: "telegram_preview_lookup", result, source, durationMs })));
+          logger.info(JSON.stringify({ event: "telegram_preview_lookup", result, source, durationMs })), enrichmentBudget);
         if (destinationPreviews.length) message.destinationPreviews = destinationPreviews;
       } catch {
         // Optional enrichment must never bypass otherwise eligible moderation.
         logger.info(JSON.stringify({ event: "telegram_preview_lookup", result: "unavailable" }));
+      }
+      // Cached profile ownership is not enough for a public-web username lookup.
+      // Revalidate the numeric channel and current username before using its page.
+      const locator = senderProfile && personalChannelLocator(senderProfile);
+      if (senderProfile?.personalChannel && locator) {
+        try {
+          const currentUser = await ctx.api.getChat(profileUserId!, AbortSignal.any([enrichmentBudget.signal, AbortSignal.timeout(1500)]) as Parameters<typeof ctx.api.getChat>[1]);
+          if (currentUser.type !== "private" || currentUser.id !== profileUserId
+            || currentUser.personal_chat?.type !== "channel" || currentUser.personal_chat.id !== locator.id) throw new Error("Profile relationship unavailable");
+          const channel = await ctx.api.getChat(locator.id, AbortSignal.any([enrichmentBudget.signal, AbortSignal.timeout(1500)]) as Parameters<typeof ctx.api.getChat>[1]);
+          if (channel.type === "channel" && channel.id === locator.id && channel.username
+            && publicChannelUrl(channel.username) === locator.url) {
+            const posts = await destinations.personalPosts(locator, enrichmentBudget);
+            if (posts.length) senderProfile = { ...senderProfile, personalChannel: { ...senderProfile.personalChannel, posts } };
+          }
+        } catch { /* Optional public context fails open without raw error telemetry. */ }
       }
       const moderationMessage = message;
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
