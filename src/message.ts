@@ -1,5 +1,6 @@
 import type { Message, MessageEntity } from "grammy/types";
 import type { ModerationMessage } from "./spam";
+import { inlineUrlButtons } from "./inline-buttons";
 
 const MAX_CURRENT_CHARS = 4_096;
 const MAX_SOURCE_CHARS = 1_200;
@@ -37,6 +38,7 @@ function kind(origin: { type: string } | undefined): "user" | "chat" | "channel"
 
 export function toModerationMessage(message: Message): ModerationMessage | null {
   const current = sourceText(message, MAX_CURRENT_CHARS);
+  const inlineButtons = inlineUrlButtons(message);
   const mediaOnly = !current.text?.trim() && ("sticker" in message || "photo" in message || "video" in message || "animation" in message);
   if (!current.text?.trim() && !mediaOnly) return null;
 
@@ -46,6 +48,7 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
   const quote = "quote" in message ? message.quote : undefined;
 
   if (reply) {
+    const sourceButtons = inlineUrlButtons(reply);
     preview.push({
       kind: "reply",
       origin: reply.chat.id === message.chat.id ? "same_chat" : "external",
@@ -54,6 +57,7 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
       sourceAuthor: author(message, reply),
       isForwarded: "forward_origin" in reply && Boolean(reply.forward_origin),
       ...sourceText(reply),
+      ...(sourceButtons.length ? { inlineButtons: sourceButtons } : {}),
     });
   }
   if (external) {
@@ -87,6 +91,7 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
     text: current.text ?? "",
     ...(mediaOnly ? { mediaOnly: true } : {}),
     embeddedLinks: current.embeddedLinks,
+    ...(inlineButtons.length ? { inlineButtons } : {}),
     isForwarded: "forward_origin" in message && Boolean(message.forward_origin),
     ...(preview.length ? { preview } : {}),
   };

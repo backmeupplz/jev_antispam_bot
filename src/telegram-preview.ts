@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
 import type { Message, MessageEntity } from "grammy/types";
+import { inlineUrlButtons } from "./inline-buttons";
 
 export const PREVIEW_LIMITS = { urls: 2, concurrent: 4, timeoutMs: 1_500, bytes: 65_536,
   redirects: 2, entries: 500, ttlMs: 300_000, negativeTtlMs: 30_000 } as const;
@@ -27,6 +28,7 @@ export function currentTelegramLinks(message: Message): string[] {
   for (const match of text.slice(0, 4096).matchAll(/(?:^|[\s(<])((?:https:\/\/)?t\.me\/[^\s<>]+)/gi)) {
     candidates.push(match[1]!.replace(/[.,!;:)\]}]+$/, ""));
   }
+  candidates.push(...inlineUrlButtons(message).map(button => button.url));
   return [...new Set(candidates.map(telegramPreviewUrl).filter((url): url is string => Boolean(url)))].slice(0, PREVIEW_LIMITS.urls);
 }
 

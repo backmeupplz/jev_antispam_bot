@@ -1344,3 +1344,82 @@ for (const id of ["spontaneous-celebration-post", "spontaneous-sympathy-post", "
     });
   }
 }
+
+import { buttonCases, buttonMessage, adKeyboard, buttonAd, unknownButtonUrl } from "./fixtures/inline-buttons";
+
+for (const fixture of buttonCases) for (const edited of [false, true]) {
+  test("inline buttons through real handler: " + fixture.id + ", edited=" + edited, async () => {
+    const requests: string[] = [];
+    const h = harness(undefined, async url => { requests.push(url); throw new Error("unexpected network"); });
+    // Mock scores prove routing/deletion boundaries ONLY, not live accuracy.
+    h.setAnswer(assessment(fixture.delete));
+    const raw = buttonMessage(fixture);
+    const id = await h.send({ ...raw, ...(fixture.caption ? { text: undefined } : {}) }, edited);
+    expect(h.classifications).toEqual([{ message: {
+      text: fixture.text, embeddedLinks: [], isForwarded: true,
+      inlineButtons: [{ kind: "url", text: fixture.label ?? "👉 CLICK HERE 👈", url: fixture.url ?? unknownButtonUrl }],
+    }, recent: [] }]);
+    expect(h.deletes()).toEqual(fixture.delete ? [id] : []);
+    expect(requests).toEqual([]);
+    expect(h.calls.every(c => ["getChatMember", "getChat", "deleteMessage"].includes(c.method))).toBe(true);
+    const telemetry = JSON.stringify(h.logs);
+    for (const privateValue of [fixture.text, fixture.url ?? unknownButtonUrl, fixture.label ?? "CLICK HERE", "Original source"]) expect(telemetry).not.toContain(privateValue);
+    expect(h.logs.filter(log => log.event === "message_analyzed")).toHaveLength(1);
+    await h.stats.stop();
+  });
+}
+
+test("external sender_chat button ad stays eligible; source keyboard is context, never fetched or deleted", async () => {
+  const requests: string[] = [];
+  const h = harness(undefined, async url => { requests.push(url); return { status: 404, headers: {}, body: "" }; });
+  h.setAnswer(assessment(true));
+  await h.send({ text: buttonAd, from: synthetic, sender_chat: channel, forward_origin: forwarded, reply_markup: adKeyboard,
+    reply_to_message: { message_id: 800, date: 1, chat: group, from: { ...user, id: 13 }, text: "Unrelated source",
+      reply_markup: { inline_keyboard: [[{ text: "Source button", url: "https://t.me/source_context" }]] } },
+    quote: { text: "Unrelated", position: 0 },
+  });
+  expect(h.classifications).toEqual([{ message: { text: buttonAd, embeddedLinks: [], isForwarded: true,
+    inlineButtons: [{ kind: "url", text: "👉 CLICK HERE 👈", url: unknownButtonUrl }],
+    preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user", sourceAuthor: "other_author", isForwarded: false,
+      text: "Unrelated source", embeddedLinks: [], inlineButtons: [{ kind: "url", text: "Source button", url: "https://t.me/source_context" }] },
+    { kind: "quote", origin: "same_chat", sourceKind: "user", sourceAuthor: "other_author", isForwarded: false, text: "Unrelated", embeddedLinks: [] }],
+  }, recent: [] }]);
+  expect(requests).toEqual([]);
+  expect(h.deletes()).toEqual([1]);
+  await h.stats.stop();
+});
+
+test("button evidence survives same-actor history and edits without leaking into other actors", async () => {
+  const h = harness();
+  await h.send({ text: "First", reply_markup: adKeyboard });
+  await h.send({ message_id: 1, text: "Edited", reply_markup: { inline_keyboard: [[{ text: "Docs", url: "https://example.invalid/docs" }]] } }, true);
+  await h.send({ text: "Next" });
+  expect(h.classifications[2]?.recent).toEqual([{ text: "Edited", embeddedLinks: [], isForwarded: false,
+    inlineButtons: [{ kind: "url", text: "Docs", url: "https://example.invalid/docs" }] }]);
+  await h.send({ text: "Other", from: { ...user, id: 13 } });
+  expect(h.classifications[3]?.recent).toEqual([]);
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+test("requested reply uses only current safe button destinations, deduped with hidden links", async () => {
+  const requests: string[] = [];
+  const h = harness(undefined, async url => { requests.push(url); return { status: 404, headers: {}, body: "" }; });
+  await h.send({ text: "Here are the docs", entities: [{ type: "text_link", offset: 13, length: 4, url: "https://t.me/documentation" }],
+    reply_markup: { inline_keyboard: [[{ text: "Docs", url: "https://t.me/documentation" },
+      { text: "Support", login_url: { url: "https://t.me/support_group" } },
+      { text: "Too many", url: "https://t.me/third_group" },
+      { text: "Not fetched", url: "http://127.0.0.1/private" }]] },
+    reply_to_message: { message_id: 800, date: 1, chat: group, from: { ...user, id: 13 }, text: "Please share the docs and support links" },
+  });
+  expect(requests).toEqual(["https://t.me/documentation", "https://t.me/support_group"]);
+  expect(h.classifications).toEqual([{ message: { text: "Here are the docs", embeddedLinks: ["https://t.me/documentation"], isForwarded: false,
+    inlineButtons: [{ kind: "url", text: "Docs", url: "https://t.me/documentation" }, { kind: "login_url", text: "Support", url: "https://t.me/support_group" },
+      { kind: "url", text: "Too many", url: "https://t.me/third_group" }, { kind: "url", text: "Not fetched", url: "http://127.0.0.1/private" }],
+    destinationPreviews: [{ url: "https://t.me/documentation", status: "unavailable" }, { url: "https://t.me/support_group", status: "unavailable" }],
+    preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user", sourceAuthor: "other_author", isForwarded: false, text: "Please share the docs and support links", embeddedLinks: [] }],
+  }, recent: [] }]);
+  expect(h.deletes()).toEqual([]);
+  expect(JSON.stringify(h.logs)).not.toMatch(/t\.me|127\.0\.0\.1|Here are|Please share/);
+  await h.stats.stop();
+});
