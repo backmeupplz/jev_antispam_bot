@@ -192,8 +192,9 @@ export function registerBotHandlers(bot: Bot, {
         });
         assessment = await classifier.classify(
           senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
-          recentMessages.map(({ text, embeddedLinks, isForwarded, preview, destinationPreviews }) => ({
+          recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
             text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+            ...(inlineButtons ? { inlineButtons } : {}),
             ...(destinationPreviews ? { destinationPreviews } : {}),
           })),
         );
