@@ -34,14 +34,22 @@ export class SenderProfileCache {
     if (cached) this.delete(userId);
 
     const active = this.inFlight.get(userId);
-    if (active) return active;
+    if (active) {
+      const profile = await active;
+      const entry = this.entries.get(userId);
+      onOutcome?.("cache", !entry || entry.failed ? "cached_unavailable" : profile ? "cached_present" : "cached_empty");
+      return profile;
+    }
 
     while (this.entries.size + this.inFlight.size >= this.maxEntries && this.entries.size) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
       this.delete(oldest);
     }
-    if (this.entries.size + this.inFlight.size >= this.maxEntries) return undefined;
+    if (this.entries.size + this.inFlight.size >= this.maxEntries) {
+      onOutcome?.("cache", "cached_unavailable");
+      return undefined;
+    }
 
     const request = this.load(userId, getChat, onOutcome)
       .then(({ profile, failed }) => {
@@ -68,6 +76,8 @@ export class SenderProfileCache {
     timer.unref?.();
     this.entries.set(userId, { expiresAt, profile, failed, timer });
   }
+
+  invalidate(userId: number): void { this.delete(userId); }
 
   private delete(userId: number): void {
     const entry = this.entries.get(userId);

@@ -32,3 +32,7 @@ CREATE TABLE IF NOT EXISTS classification_attempt_dedup (
 
 CREATE INDEX IF NOT EXISTS classification_attempt_dedup_attempted_at_idx
   ON classification_attempt_dedup (attempted_at);
+
+-- Additive: old producers continue reporting Jev deletions by default.
+ALTER TABLE known_chats ADD COLUMN IF NOT EXISTS cache_deletions BIGINT NOT NULL DEFAULT 0 CHECK (cache_deletions >= 0);
+ALTER TABLE deletion_dedup ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'jev' CHECK (source IN ('jev', 'cache'));

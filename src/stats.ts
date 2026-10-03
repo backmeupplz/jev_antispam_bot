@@ -18,6 +18,7 @@ export type DeletionObservation = {
   chatId: ChatId;
   messageId: number | bigint | string;
   deletedAt?: Date;
+  source?: "jev" | "cache";
 };
 
 export type ClassificationAttemptObservation = {
@@ -39,6 +40,7 @@ type PendingDeletion = {
   chatId: string;
   messageId: string;
   deletedAt: string;
+  source?: "jev" | "cache";
 };
 
 type PendingClassificationAttempt = {
@@ -109,11 +111,12 @@ WITH supplied_chats AS (
   )
 ),
 deletion_rows AS (
-  SELECT "chatId"::BIGINT AS chat_id, "messageId"::BIGINT AS message_id, "deletedAt" AS deleted_at
+  SELECT "chatId"::BIGINT AS chat_id, "messageId"::BIGINT AS message_id, "deletedAt" AS deleted_at, COALESCE(source, 'jev') AS source
   FROM jsonb_to_recordset($2::jsonb) AS x(
     "chatId" TEXT,
     "messageId" TEXT,
-    "deletedAt" TIMESTAMPTZ
+    "deletedAt" TIMESTAMPTZ,
+    source TEXT
   )
 ),
 attempt_rows AS (
@@ -145,14 +148,14 @@ event_chats AS (
   GROUP BY chat_id
 ),
 inserted_deletions AS (
-  INSERT INTO deletion_dedup (chat_id, message_id, deleted_at)
-  SELECT deletion_rows.chat_id, deletion_rows.message_id, deletion_rows.deleted_at
+  INSERT INTO deletion_dedup (chat_id, message_id, deleted_at, source)
+  SELECT deletion_rows.chat_id, deletion_rows.message_id, deletion_rows.deleted_at, deletion_rows.source
   FROM deletion_rows
   ON CONFLICT (chat_id, message_id) DO NOTHING
-  RETURNING chat_id
+  RETURNING chat_id, source
 ),
 deletion_counts AS (
-  SELECT chat_id, COUNT(*)::BIGINT AS increment
+  SELECT chat_id, COUNT(*)::BIGINT AS increment, COUNT(*) FILTER (WHERE source = 'cache')::BIGINT AS cache_increment
   FROM inserted_deletions
   GROUP BY chat_id
 ),
@@ -176,6 +179,7 @@ upserted_chats AS (
     chat_type,
     membership_active,
     successful_deletions,
+    cache_deletions,
     processed_messages
   )
   SELECT
@@ -185,6 +189,7 @@ upserted_chats AS (
     chats.chat_type,
     chats.membership_active,
     COALESCE(deletion_counts.increment, 0),
+    COALESCE(deletion_counts.cache_increment, 0),
     COALESCE(attempt_counts.increment, 0)
   FROM (
     SELECT * FROM supplied_chats
@@ -199,6 +204,7 @@ upserted_chats AS (
     chat_type = COALESCE(EXCLUDED.chat_type, known_chats.chat_type),
     membership_active = COALESCE(EXCLUDED.membership_active, known_chats.membership_active),
     successful_deletions = known_chats.successful_deletions + EXCLUDED.successful_deletions,
+    cache_deletions = known_chats.cache_deletions + EXCLUDED.cache_deletions,
     processed_messages = known_chats.processed_messages + EXCLUDED.processed_messages,
     updated_at = NOW()
   RETURNING chat_id
@@ -343,7 +349,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
     this.schedule(this.flushIntervalMs);
   }
 
-  recordDeletion({ chatId, messageId, deletedAt = new Date() }: DeletionObservation): void {
+  recordDeletion({ chatId, messageId, deletedAt = new Date(), source }: DeletionObservation): void {
     if (this.lifecycle !== "running") return;
     const normalizedChatId = normalizeId(chatId);
     const normalizedMessageId = normalizeId(messageId);
@@ -358,6 +364,7 @@ export class AsyncStatsBuffer implements StatsRecorder {
       chatId: normalizedChatId,
       messageId: normalizedMessageId,
       deletedAt: deletedAt.toISOString(),
+      ...(source ? { source } : {}),
     });
     this.schedule(this.flushIntervalMs);
   }
