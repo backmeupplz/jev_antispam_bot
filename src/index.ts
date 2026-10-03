@@ -1,3 +1,4 @@
+import { PostgresSpamCache } from "./spam-cache";
 import { Bot } from "grammy";
 import { registerBotHandlers } from "./bot";
 import { loadConfig } from "./config";
@@ -7,13 +8,15 @@ import { createStatsRecorder } from "./stats";
 const config = loadConfig();
 const bot = new Bot(config.telegramBotToken);
 const stats = createStatsRecorder(config.databaseUrl);
+const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
+  ? new PostgresSpamCache(config.databaseUrl) : undefined;
 const classifier = new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
 });
 
-registerBotHandlers(bot, { classifier, model: config.jevModel, stats });
+registerBotHandlers(bot, { classifier, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
 
 let shutdownPromise: Promise<void> | undefined;
 function shutdown(signal: string): Promise<void> {
@@ -21,6 +24,7 @@ function shutdown(signal: string): Promise<void> {
     shutdownPromise = (async () => {
       console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
       await bot.stop();
+      await spamCache?.close();
       const health = await stats.stop();
       console.info(JSON.stringify({ event: "bot_stopped", ...health }));
     })();
@@ -36,6 +40,7 @@ console.info(JSON.stringify({
   model: config.jevModel,
   threshold: config.spamThreshold,
   statsEnabled: Boolean(config.databaseUrl),
+  spamCacheEnabled: Boolean(spamCache),
 }));
 try {
   await bot.start({
@@ -44,5 +49,5 @@ try {
   });
 } finally {
   if (shutdownPromise) await shutdownPromise;
-  else await stats.stop();
+  else { await spamCache?.close(); await stats.stop(); }
 }
