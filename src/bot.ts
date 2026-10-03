@@ -100,8 +100,8 @@ export function registerBotHandlers(bot: Bot, {
           await skip("missing_sender");
           return;
         }
-        if (ctx.from.id === bot.botInfo.id || ctx.from.is_bot) {
-          await skip(ctx.from.id === bot.botInfo.id ? "bot_itself" : "bot_sender");
+        if (ctx.from.id === bot.botInfo.id) {
+          await skip("bot_itself");
           return;
         }
         let isAdmin;
@@ -117,7 +117,9 @@ export function registerBotHandlers(bot: Bot, {
           return;
         }
         senderId = `user:${ctx.from.id}`;
-        profileUserId = ctx.from.id;
+        // Delivered third-party bots use normal admin checks and actor history,
+        // but never human-profile enrichment (including media-only eligibility).
+        if (!ctx.from.is_bot) profileUserId = ctx.from.id;
       }
 
       const analysisStartedAt = performance.now();
