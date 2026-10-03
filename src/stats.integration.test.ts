@@ -3,8 +3,8 @@ import pg from "pg";
 import { AsyncStatsBuffer, PostgresStatsStore, type StatsBatch, type StatsStore } from "./stats";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
-if (databaseUrl && new URL(databaseUrl).pathname !== "/jev_stats_test") {
-  throw new Error("TEST_DATABASE_URL must target jev_stats_test");
+if (databaseUrl && !["/jev_stats_test", "/jev_ticket5_test"].includes(new URL(databaseUrl).pathname)) {
+  throw new Error("TEST_DATABASE_URL must target jev_stats_test or jev_ticket5_test");
 }
 const integrationTest = databaseUrl ? test : test.skip;
 

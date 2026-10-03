@@ -7,6 +7,7 @@ import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./tele
 import { SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
+import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import type { StatsRecorder } from "./stats";
 
 export function registerBotHandlers(bot: Bot, {
@@ -15,12 +16,16 @@ export function registerBotHandlers(bot: Bot, {
   stats,
   logger = console,
   previewRequest,
+  spamCache,
+  spamThreshold = 0.81,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   model: string;
   stats: StatsRecorder;
   logger?: Pick<Console, "info" | "error">;
   previewRequest?: PageRequest;
+  spamCache?: SpamCache;
+  spamThreshold?: number;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
@@ -117,6 +122,8 @@ export function registerBotHandlers(bot: Bot, {
 
       const analysisStartedAt = performance.now();
       let senderProfile;
+      let enrichmentComplete = true;
+      if (spamCache && cacheEligible(ctx.msg) && profileUserId !== undefined) profiles.invalidate(profileUserId);
       if (profileUserId !== undefined && message.text.length <= 280) {
         try {
           senderProfile = await profiles.get(
@@ -126,11 +133,13 @@ export function registerBotHandlers(bot: Bot, {
               signal as Parameters<typeof ctx.api.getChat>[1],
             ),
             Date.now(),
-            (source, outcome) => logger.info(JSON.stringify({
-              event: "profile_lookup", chatId: ctx.chat.id, messageId: ctx.msgId, source, outcome,
-            })),
+            (source, outcome) => {
+              if (["unavailable", "invalid", "cached_unavailable"].includes(outcome)) enrichmentComplete = false;
+              logger.info(JSON.stringify({ event: "profile_lookup", chatId: ctx.chat.id, messageId: ctx.msgId, source, outcome }));
+            },
           );
         } catch (error) {
+          enrichmentComplete = false;
           logFailure("profile_metadata_failed", error, ctx.chat.id, ctx.msgId);
         }
       }
@@ -145,6 +154,7 @@ export function registerBotHandlers(bot: Bot, {
           logger.info(JSON.stringify({ event: "telegram_preview_lookup", result, source, durationMs })), enrichmentBudget);
         if (destinationPreviews.length) message.destinationPreviews = destinationPreviews;
       } catch {
+        enrichmentComplete = false;
         // Optional enrichment must never bypass otherwise eligible moderation.
         logger.info(JSON.stringify({ event: "telegram_preview_lookup", result: "unavailable" }));
       }
@@ -183,21 +193,22 @@ export function registerBotHandlers(bot: Bot, {
         senderProfilePresent: Boolean(senderProfile),
       }));
 
-      let assessment;
+      const classifierInput = senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage;
+      const fingerprint = spamCache ? cacheFingerprint(ctx.msg, senderId, classifierInput,
+        recentMessages.length, model, spamThreshold, enrichmentComplete) : undefined;
+      const cacheHit = fingerprint ? await spamCache!.lookup(fingerprint) : false;
+      let assessment: SpamAssessment | undefined;
       try {
-        stats.recordClassificationAttempt({
-          chatId: ctx.chat.id,
-          messageId: ctx.msgId,
-          updateId: ctx.update.update_id,
-        });
-        assessment = await classifier.classify(
-          senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage,
-          recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
-            text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
-            ...(inlineButtons ? { inlineButtons } : {}),
-            ...(destinationPreviews ? { destinationPreviews } : {}),
-          })),
-        );
+        if (!cacheHit) {
+          stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
+          assessment = await classifier.classify(classifierInput,
+            recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
+              text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+              ...(inlineButtons ? { inlineButtons } : {}),
+              ...(destinationPreviews ? { destinationPreviews } : {}),
+            })));
+          if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
+        }
       } catch (error) {
         if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
@@ -206,19 +217,19 @@ export function registerBotHandlers(bot: Bot, {
         return;
       }
 
-      logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
+      if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
 
-      if (!assessment.shouldDelete) {
+      if (!cacheHit && !assessment?.shouldDelete) {
         if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         await next();
         return;
       }
 
       // Profile-only evidence cannot prove earlier text was part of the ad.
-      const messageIds = mediaOnly ? [ctx.msgId] : deletionMessageIds(
+      const messageIds = cacheHit || mediaOnly ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
-        assessment.contextProbabilities,
+        assessment!.contextProbabilities,
         CONTEXT_LINK_THRESHOLD,
       );
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
@@ -227,7 +238,7 @@ export function registerBotHandlers(bot: Bot, {
         ctx.chat.id,
         messageIds,
         (chatId, messageId) => ctx.api.deleteMessage(chatId, messageId),
-        (chatId, messageId) => stats.recordDeletion({ chatId, messageId }),
+        (chatId, messageId) => stats.recordDeletion({ chatId, messageId, source: cacheHit ? "cache" : "jev" }),
         (error, messageId) => logFailure("delete_failed", error, ctx.chat.id, messageId),
       );
 
@@ -238,9 +249,10 @@ export function registerBotHandlers(bot: Bot, {
           messageId: ctx.msgId,
           deletedMessageCount,
           attemptedMessageCount: messageIds.length,
-          signal: assessment.strongestSignal,
-          probability: assessment.probability,
-          model: assessment.model,
+          source: cacheHit ? "cache" : "jev",
+          signal: assessment?.strongestSignal,
+          probability: assessment?.probability,
+          model: assessment?.model ?? model,
         }));
       }
     },

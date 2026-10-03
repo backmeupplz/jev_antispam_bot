@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
+import type { SpamCache } from "./spam-cache";
 import { registerBotHandlers } from "./bot";
 import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
@@ -45,7 +46,7 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
   };
 }
 
-function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" })) {
+function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -95,7 +96,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     return { ok: true, result: true } as never;
   });
   registerBotHandlers(bot, {
-    model: "jev-1.13.0", stats, logger, previewRequest,
+    model: "jev-1.13.0", stats, logger, previewRequest, spamCache,
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
       if (classifyError) throw new Error("private model failure including message content");
@@ -1508,3 +1509,119 @@ for (const edited of [false, true]) {
     await h.stats.stop();
   });
 }
+
+function memorySpamCache() {
+  const keys = new Set<string>();
+  let lookups = 0;
+  return { keys, get lookups() { return lookups; },
+    lookup: async (key: string) => { lookups++; return keys.has(key); },
+    seed: async (key: string) => { keys.add(key); },
+  };
+}
+
+test("cache: equivalent ad repeat and edit skip Jev and only delete current IDs", async () => {
+  const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
+  h.setAnswer(assessment(true));
+  await h.send({ text: "Synthetic sale: buy this test widget today!" });
+  await h.send({ text: "Synthetic sale: buy this test widget today!" });
+  await h.send({ text: "Synthetic sale: buy this test widget today!" }, true);
+  expect(h.classifications).toHaveLength(1); expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(cache.keys.size).toBe(1);
+  await h.stats.flush();
+  expect(h.batches.flatMap(b => b.classificationAttempts)).toHaveLength(1);
+  expect(h.batches.flatMap(b => b.deletions).map(d => d.source)).toEqual(["jev", "cache", "cache"]);
+  await h.stats.stop();
+});
+
+test("cache: real parser must complete and KEEP/errors never seed", async () => {
+  for (const mode of ["keep", "error", "partial"] as const) {
+    const cache = memorySpamCache();
+    const classifier = new JevSpamClassifier("test", { model: "jev-1.13.0", threshold: .81, timeoutMs: 1000,
+      fetch: async () => {
+        if (mode === "error") throw new Error("offline");
+        return Response.json({ model: "jev-1.13.0", answers: mode === "partial" ? {} : Object.fromEntries(Object.keys(SPAM_QUESTIONS).map(k => [k, { type: "noul", noul: .1 }])) });
+      } });
+    const h = harness((message, recent) => classifier.classify(message, recent), undefined, cache);
+    await h.send(); expect(cache.keys.size).toBe(0); expect(h.deletes()).toEqual([]); await h.stats.stop();
+  }
+});
+
+test("cache: admin, self, bot and linked-channel exemptions precede lookup", async () => {
+  const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
+  h.setMemberStatus("administrator"); await h.send();
+  await h.send({ from: botInfo });
+  await h.send({ from: { ...user, is_bot: true } });
+  h.setMetadata({ ...group, linked_chat_id: channel.id }); await h.send({ sender_chat: channel });
+  expect(cache.lookups).toBe(0); expect(h.deletes()).toEqual([]); await h.stats.stop();
+});
+
+test("cache: identity/context changes miss; history cannot seed or replay", async () => {
+  const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
+  h.setAnswer(assessment(true));
+  const text = "Synthetic widget advertising offer";
+  await h.send({ text }); await h.send({ text });
+  expect(h.classifications).toHaveLength(1);
+  await h.send({ text, from: { ...user, id: 13 } });
+  await h.send({ text, entities: [{ type: "text_link", offset: 0, length: 9, url: "https://example.com/a" }] });
+  await h.send({ text, entities: [{ type: "text_link", offset: 0, length: 9, url: "https://example.com/b" }] });
+  await h.send({ text, reply_to_message: { message_id: 700, date: 1, chat: group, from: { ...user, id: 14 }, text: "Please send your widget offer" } });
+  h.setProfileMetadata({ id: user.id, type: "private", first_name: "test", bio: "changed profile" });
+  await h.send({ text });
+  expect(h.classifications).toHaveLength(6);
+  h.setAnswer(assessment()); await h.send({ text: "ordinary unrelated discussion" });
+  const seeds = cache.keys.size; h.setAnswer(assessment(true, [.1])); await h.send({ text });
+  expect(cache.keys.size).toBe(seeds); expect(h.deletes()).not.toContain(8);
+  await h.stats.stop();
+});
+
+test("cache: profile failures, emoji, short text and stickers never fast-path", async () => {
+  const cache = memorySpamCache(); const h = harness(undefined, undefined, cache); h.setAnswer(assessment(true));
+  for (const text of ["abcdefghij", "😀".repeat(12), "e\u0301".repeat(10)]) {
+    await h.send({ text }); await h.send({ text });
+  }
+  await h.send({ text: undefined, sticker: { file_id: "test", file_unique_id: "test", type: "regular", width: 10, height: 10, is_animated: false, is_video: false } });
+  expect(cache.keys.size).toBe(0); expect(cache.lookups).toBe(0);
+  h.setProfileError(); await h.send({ text: "Synthetic widget sale advertising" });
+  expect(cache.keys.size).toBe(0); await h.stats.stop();
+});
+
+test("cache: concurrent repeats and deletion failures preserve attribution and dedupe", async () => {
+  const cache = memorySpamCache(); const h = harness(undefined, undefined, cache); h.setAnswer(assessment(true));
+  await h.send(); h.failedDeletes.add(3);
+  await Promise.all([h.send(), h.send(), h.send()]);
+  await h.send({ message_id: 2 }, true);
+  await h.stats.flush();
+  expect(h.classifications).toHaveLength(1);
+  expect(h.batches.flatMap(b => b.deletions).map(d => d.messageId).sort()).toEqual(["1", "2", "4"]);
+  expect(h.batches.flatMap(b => b.classificationAttempts)).toHaveLength(1);
+  await h.stats.stop();
+});
+
+test("cache: PostgreSQL outage falls back to ordinary classifier with fail-open errors", async () => {
+  const { PostgresSpamCache } = await import("./spam-cache");
+  const cache = new PostgresSpamCache("postgresql://test@127.0.0.1:1/jev_stats_test", { timeoutMs: 30, logger: { info: () => {} } });
+  const h = harness(undefined, undefined, cache); h.setAnswer(assessment(true)); await h.send();
+  expect(h.classifications).toHaveLength(1); expect(h.deletes()).toEqual([1]);
+  h.setClassifyError(); await h.send();
+  expect(h.classifications).toHaveLength(2); expect(h.deletes()).toEqual([1]);
+  await h.stats.stop(); await cache.close();
+});
+
+(process.env.TEST_DATABASE_URL ? test : test.skip)("cache: real grammY + parsed Jev + PostgreSQL restart retains useful ad hit", async () => {
+  const { PostgresSpamCache } = await import("./spam-cache");
+  const url = process.env.TEST_DATABASE_URL!;
+  if (!["/jev_stats_test", "/jev_ticket5_test"].includes(new URL(url).pathname)) throw new Error("Dedicated test database required");
+  let calls = 0;
+  const classifier = new JevSpamClassifier("test", { model: "jev-1.13.0", threshold: .81, timeoutMs: 1000,
+    fetch: async () => { calls++; return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(SPAM_QUESTIONS).map(k => [k, { type: "noul", noul: .97 }])) }); } });
+  const text = "Synthetic advertising fixture " + crypto.randomUUID();
+  const cache = new PostgresSpamCache(url, { timeoutMs: 1000, logger: { info: () => {} } });
+  const first = harness((m, r) => classifier.classify(m, r), undefined, cache);
+  await first.send({ text }); expect(calls).toBe(1); await cache.close(); await first.stats.stop();
+  const restart = new PostgresSpamCache(url, { timeoutMs: 1000, logger: { info: () => {} } });
+  const next = harness((m, r) => classifier.classify(m, r), undefined, restart);
+  await next.send({ text, message_id: 900 }); await next.send({ text, message_id: 901 }, true);
+  expect(calls).toBe(1); expect(next.deletes()).toEqual([900, 901]);
+  expect(next.stats.health().pendingClassificationAttempts).toBe(0);
+  await next.stats.stop(); await restart.close();
+});
