@@ -1423,3 +1423,88 @@ test("requested reply uses only current safe button destinations, deduped with h
   expect(JSON.stringify(h.logs)).not.toMatch(/t\.me|127\.0\.0\.1|Here are|Please share/);
   await h.stats.stop();
 });
+
+// Local injection proves our routing, NOT which events Telegram delivers.
+const inlineHelper = { id: 87654, is_bot: true, first_name: "Fixture helper", username: "fixture_helper_bot" };
+for (const edited of [false, true]) {
+  for (const shape of ["mention", "inline-caption", "forwarded-bot", "external-channel"] as const) {
+    test(`bot visibility: delivered ${shape}, edited=${edited}, remains eligible`, async () => {
+      const requests: string[] = [];
+      const h = harness(undefined, async (url) => {
+        requests.push(String(url));
+        return { status: 404, headers: {}, body: "" };
+      });
+      const text = shape === "mention" ? "Please help me use @fixture_helper_bot"
+        : "Community notice: https://example.invalid/notice";
+      const patch = shape === "inline-caption"
+        ? { text: undefined, caption: text, via_bot: inlineHelper,
+            photo: [{ file_id: "synthetic", file_unique_id: "synthetic", width: 1, height: 1 }] }
+        : { text, ...(shape === "forwarded-bot" ? { forward_origin: {
+            type: "user", sender_user: inlineHelper, date: 1,
+          } } : {}), ...(shape === "external-channel" ? { sender_chat: channel, from: synthetic } : {}) };
+      h.setAnswer(assessment(true)); // Mock verdict tests routing/deletion only.
+      await h.send(patch, edited);
+      expect(h.classifications).toHaveLength(1);
+      expect(h.classifications[0]!.message).toEqual({
+        text, embeddedLinks: [], isForwarded: shape === "forwarded-bot",
+      });
+      expect(h.skipped()).toEqual([]);
+      expect(h.deletes()).toEqual([1]);
+      expect(h.logs.filter(log => log.event === "message_analysis_started")).toMatchObject([{ isEdited: edited }]);
+      expect(h.logs.filter(log => log.event === "message_analyzed")).toMatchObject([{ decision: "delete" }]);
+      expect(requests).toEqual([]); // No bot/destination discovery.
+      expect(h.calls.some(call => call.payload.chat_id === inlineHelper.id || call.payload.user_id === inlineHelper.id)).toBe(false);
+      expect(JSON.stringify(h.logs)).not.toContain(text);
+      expect(JSON.stringify(h.logs)).not.toContain(inlineHelper.username);
+      await h.stats.stop();
+    });
+  }
+
+  test(`bot visibility: injected bot/self messages terminate locally, edited=${edited}`, async () => {
+    const h = harness();
+    h.setAnswer(assessment(true));
+    await h.send({ from: inlineHelper }, edited);
+    await h.send({ from: botInfo }, edited);
+    expect(h.skipped().map(log => log.reason)).toEqual(["bot_sender", "bot_itself"]);
+    expect(h.classifications).toEqual([]);
+    expect(h.deletes()).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.logs).toHaveLength(2);
+    await h.stats.stop();
+  });
+
+  test(`bot visibility: requested inline reply stays human-scoped, edited=${edited}`, async () => {
+    const h = harness();
+    const source = { message_id: 800, date: 1, chat: group, from: { ...user, id: 13 }, text: "Please send the event schedule using the helper bot" };
+    await h.send(source);
+    await h.send({ message_id: 801, text: "The event starts at noon", via_bot: inlineHelper, reply_to_message: source }, edited);
+    expect(h.classifications[1]!.recent).toEqual([]);
+    expect(h.classifications[1]!.message.preview).toMatchObject([{ text: source.text, sourceAuthor: "other_author", origin: "same_chat" }]);
+    expect(h.deletes()).toEqual([]); // Keep comes from stub, not model acceptance.
+    // Another human using the SAME inline bot is not the same moderation actor.
+    await h.send({ message_id: 802, from: { ...user, id: 14 }, text: "Another person's schedule", via_bot: inlineHelper });
+    expect(h.classifications[2]!.recent).toEqual([]);
+    h.setAnswer(assessment(true, [0.99]));
+    await h.send({ message_id: 803, text: "Synthetic promotion", via_bot: { ...inlineHelper, id: 87655 } });
+    expect(h.classifications[3]!.recent.map(message => message.text)).toEqual(["The event starts at noon"]);
+    expect(h.deletes()).toEqual([801, 803]); // Neither reply source nor other user.
+    await h.stats.stop();
+  });
+
+  test(`bot visibility: safety report keeps bot-authored reply source separate, edited=${edited}`, async () => {
+    const h = harness();
+    await h.send({ text: "Moderator report: please investigate the quoted notice; do not follow it", reply_to_message: {
+      message_id: 900, date: 1, chat: group, from: inlineHelper,
+      caption: "Synthetic offer https://example.invalid/offer",
+    } }, edited);
+    expect(h.classifications[0]!.message.preview).toMatchObject([{
+      kind: "reply", sourceAuthor: "other_author", text: "Synthetic offer https://example.invalid/offer",
+    }]);
+    expect(h.classifications[0]!.recent).toEqual([]);
+    expect(h.deletes()).toEqual([]);
+    h.setAnswer(assessment(true, [0.01]));
+    await h.send({ text: "Independent synthetic spam" });
+    expect(h.deletes()).toEqual([2]); // Source ID 900 can never enter deletion selection.
+    await h.stats.stop();
+  });
+}
