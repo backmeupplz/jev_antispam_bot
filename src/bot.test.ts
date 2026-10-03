@@ -89,7 +89,8 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
       if (chatId === personalChannel.id || chatId === personalChannelMetadata.id) return { ok: true, result: personalChannelMetadata } as never;
       return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
     }
-    if (method === "getChatMember") return { ok: true, result: { status: memberStatus, user } } as never;
+    if (method === "getChatMember") return { ok: true, result: { status: memberStatus,
+      user: { ...user, id: (payload as { user_id: number }).user_id } } } as never;
     if (method === "deleteMessage" && failedDeletes.has((payload as { message_id: number }).message_id)) {
       return { ok: false, error_code: 400, description: "private delete detail" };
     }
@@ -593,7 +594,6 @@ test.each([
   ["no_text_or_caption", { text: "  \n " }],
   ["missing_sender", { from: undefined }],
   ["bot_itself", { from: botInfo }],
-  ["bot_sender", { from: synthetic }],
   ["unsupported_sender_chat", { sender_chat: { ...group, id: -555 } }],
 ] as const)("pre-classifier branch logs exactly one private-safe %s record", async (reason, patch) => {
   const h = harness();
@@ -1461,16 +1461,15 @@ for (const edited of [false, true]) {
     });
   }
 
-  test(`bot visibility: injected bot/self messages terminate locally, edited=${edited}`, async () => {
+  test(`bot visibility: self messages terminate locally, edited=${edited}`, async () => {
     const h = harness();
     h.setAnswer(assessment(true));
-    await h.send({ from: inlineHelper }, edited);
     await h.send({ from: botInfo }, edited);
-    expect(h.skipped().map(log => log.reason)).toEqual(["bot_sender", "bot_itself"]);
+    expect(h.skipped().map(log => log.reason)).toEqual(["bot_itself"]);
     expect(h.classifications).toEqual([]);
     expect(h.deletes()).toEqual([]);
     expect(h.calls).toEqual([]);
-    expect(h.logs).toHaveLength(2);
+    expect(h.logs).toHaveLength(1);
     await h.stats.stop();
   });
 
@@ -1546,11 +1545,13 @@ test("cache: real parser must complete and KEEP/errors never seed", async () => 
   }
 });
 
-test("cache: admin, self, bot and linked-channel exemptions precede lookup", async () => {
+test("cache: human/bot admin, self and linked-channel exemptions precede lookup", async () => {
   const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
   h.setMemberStatus("administrator"); await h.send();
   await h.send({ from: botInfo });
-  await h.send({ from: { ...user, is_bot: true } });
+  await h.send({ from: inlineHelper });
+  expect(h.calls.filter(call => call.method === "getChatMember").map(call => call.payload.user_id)).toEqual([user.id, inlineHelper.id]);
+  expect(h.skipped().map(log => log.reason)).toEqual(["group_admin", "bot_itself", "group_admin"]);
   h.setMetadata({ ...group, linked_chat_id: channel.id }); await h.send({ sender_chat: channel });
   expect(cache.lookups).toBe(0); expect(h.deletes()).toEqual([]); await h.stats.stop();
 });
@@ -1625,3 +1626,171 @@ test("cache: PostgreSQL outage falls back to ordinary classifier with fail-open 
   expect(next.stats.health().pendingClassificationAttempts).toBe(0);
   await next.stats.stop(); await restart.close();
 });
+
+// Mock HTTP only: prove delivered bot messages use the unchanged parser/model/gate.
+for (const probability of [0.809, 0.81]) {
+  test("bot policy: real parser applies unchanged .81 gate at " + probability, async () => {
+    const requests: { model: string; state: { message: CurrentModerationMessage } }[] = [];
+    const classifier = new JevSpamClassifier("test-only", { model: "jev-1.13.0", threshold: .81, timeoutMs: 1000,
+      fetch: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)));
+        return Response.json({ model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(SPAM_QUESTIONS)
+          .map(key => [key, { type: "noul", noul: probability }])) });
+      },
+    });
+    const cache = memorySpamCache();
+    const h = harness((message, recent) => classifier.classify(message, recent), undefined, cache);
+    await h.send({ from: inlineHelper, text: "Synthetic widget offer for parser boundary" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.model).toBe("jev-1.13.0");
+    expect(requests[0]!.state.message.senderProfile).toBeUndefined();
+    expect(h.deletes()).toEqual(probability >= .81 ? [1] : []);
+    expect(cache.keys.size).toBe(probability >= .81 ? 1 : 0);
+    await h.stats.stop();
+  });
+}
+
+// Approved option A: only delivered non-admin bot text/captions enter moderation.
+for (const edited of [false, true]) {
+  for (const caption of [false, true]) {
+    for (const chatType of ["group", "supergroup"] as const) {
+      for (const deleteIt of [false, true]) {
+        test(`bot policy: ${chatType} caption=${caption} edited=${edited} delete=${deleteIt}`, async () => {
+          const h = harness();
+          h.setAnswer(assessment(deleteIt));
+          const text = "Synthetic widget notice https://example.invalid/widget";
+          const entity = { type: "text_link", offset: 0, length: 9, url: "https://example.invalid/details" };
+          await h.send({ from: inlineHelper, chat: { ...group, type: chatType },
+            ...(caption ? { text: undefined, caption: text, caption_entities: [entity],
+              photo: [{ file_id: "safe-fixture", file_unique_id: "safe-fixture", width: 1, height: 1 }] }
+              : { text, entities: [entity] }),
+          }, edited);
+          expect(h.classifications).toEqual([{ message: { text, embeddedLinks: [entity.url], isForwarded: false }, recent: [] }]);
+          expect(h.skipped()).toEqual([]);
+          expect(h.deletes()).toEqual(deleteIt ? [1] : []);
+          expect(h.calls.filter(call => call.method !== "deleteMessage")).toEqual([
+            { method: "getChatMember", payload: { chat_id: group.id, user_id: inlineHelper.id } },
+          ]); // No bot profile/media fetching or automatic reply.
+          expect(h.logs.filter(log => log.event === "message_analysis_started")).toMatchObject([{ isEdited: edited, senderProfilePresent: false }]);
+          expect(h.logs.filter(log => log.event === "message_analyzed")).toMatchObject([{ decision: deleteIt ? "delete" : "keep", model: "jev-1.13.0" }]);
+          expect(JSON.stringify(h.logs)).not.toContain(text);
+          expect(JSON.stringify(h.logs)).not.toContain(inlineHelper.username);
+          await h.stats.stop();
+        });
+      }
+    }
+  }
+
+  test(`bot policy: administrator and lookup failures skip before cache, edited=${edited}`, async () => {
+    for (const failure of [false, true]) {
+      const cache = memorySpamCache();
+      const h = harness(undefined, undefined, cache);
+      h.setAnswer(assessment(true));
+      if (failure) h.setAdminError(); else h.setMemberStatus("administrator");
+      await h.send({ from: inlineHelper }, edited);
+      expect(h.skipped().map(log => log.reason)).toEqual([failure ? "admin_metadata_failed" : "group_admin"]);
+      expect(h.calls.map(call => call.method)).toEqual(["getChatMember"]);
+      expect(h.classifications).toEqual([]);
+      expect(h.deletes()).toEqual([]);
+      expect(cache.lookups).toBe(0);
+      expect(cache.keys.size).toBe(0);
+      expect(JSON.stringify(h.logs)).not.toMatch(/private API detail|fixture_helper_bot/);
+      await h.stats.stop();
+    }
+  });
+
+  test(`bot policy: classifier failure keeps and remembers, edited=${edited}`, async () => {
+    const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
+    h.setClassifyError();
+    await h.send({ from: inlineHelper, text: "Synthetic notice with unavailable classifier" }, edited);
+    await h.send({ from: inlineHelper, text: "Safe subsequent bot notice" });
+    expect(h.classifications[1]!.recent.map(message => message.text)).toEqual(["Synthetic notice with unavailable classifier"]);
+    expect(h.logs.filter(log => log.event === "message_analyzed")).toMatchObject([
+      { status: "failed", decision: "keep", signals: null }, { status: "failed", decision: "keep", signals: null },
+    ]);
+    expect(h.deletes()).toEqual([]);
+    expect(cache.keys.size).toBe(0);
+    expect(JSON.stringify(h.logs)).not.toMatch(/private model failure|Synthetic notice|fixture_helper_bot/);
+    await h.stats.stop();
+  });
+}
+
+test("bot policy: human trigger, other bot, channel and other group never join bot history", async () => {
+  const h = harness();
+  const source = { message_id: 100, date: 1, chat: group, from: user, text: "Please send the safe event schedule" };
+  await h.send(source);
+  await h.send({ message_id: 101, from: inlineHelper, text: "The event starts at noon", reply_to_message: source });
+  expect(h.classifications[1]!.message.preview).toMatchObject([{ sourceAuthor: "other_author", text: source.text }]);
+  await h.send({ message_id: 102, from: { ...inlineHelper, id: 87655 }, text: "Other bot's notice" });
+  // Same numeric ID, different namespace; synthetic from must never become actor.
+  await h.send({ message_id: 103, from: inlineHelper, sender_chat: { ...channel, id: inlineHelper.id }, text: "Channel notice" });
+  await h.send({ message_id: 104, from: inlineHelper, chat: { ...group, id: -1002 }, text: "Other group notice" });
+  await h.send({ message_id: 101, from: inlineHelper, text: "The event starts at one", reply_to_message: source }, true);
+  expect(h.classifications.map(({ recent }) => recent)).toEqual([[], [], [], [], [], []]);
+  await h.send({ message_id: 105, from: inlineHelper, text: "Synthetic widget offer" });
+  expect(h.classifications[6]!.recent.map(message => message.text)).toEqual(["The event starts at one"]);
+  h.setAnswer(assessment(true, [0.1, 0.99]));
+  await h.send({ message_id: 106, from: inlineHelper, text: "Synthetic offer continuation", reply_to_message: source });
+  expect(h.deletes()).toEqual([105, 106]); // Not human request, unrelated bot output or other actors.
+  expect(h.calls.some(call => call.method === "sendMessage")).toBe(false);
+  await h.stats.stop();
+});
+
+test("bot policy: sender_chat resolution precedes even self/admin-looking from", async () => {
+  const h = harness(); h.setMemberStatus("administrator"); h.setAnswer(assessment(true));
+  await h.send({ sender_chat: channel, from: botInfo });
+  await h.send({ sender_chat: group, from: inlineHelper });
+  h.setMetadata({ ...group, linked_chat_id: channel.id });
+  await h.send({ sender_chat: channel, from: inlineHelper });
+  expect(h.deletes()).toEqual([1]);
+  expect(h.skipped().map(log => log.reason)).toEqual(["anonymous_group_admin", "official_linked_channel"]);
+  expect(h.calls.some(call => call.method === "getChatMember")).toBe(false);
+  await h.stats.stop();
+});
+
+test("bot policy: uncaptioned media stays outside human profile moderation", async () => {
+  const h = harness(); h.setAnswer(assessment(true));
+  await h.send({ from: inlineHelper, text: undefined,
+    photo: [{ file_id: "safe-fixture", file_unique_id: "safe-fixture", width: 1, height: 1 }] });
+  expect(h.skipped().map(log => log.reason)).toEqual(["media_profile_unavailable"]);
+  expect(h.classifications).toEqual([]);
+  expect(h.deletes()).toEqual([]);
+  expect(h.calls.map(call => call.method)).toEqual(["getChatMember"]);
+  await h.stats.stop();
+});
+
+for (const caption of [false, true]) {
+  test(`bot policy: cache repeat/edit identity and promotion protection, caption=${caption}`, async () => {
+    const cache = memorySpamCache(); const h = harness(undefined, undefined, cache);
+    h.setAnswer(assessment(true));
+    const text = "Synthetic widget advertising notice";
+    const body = caption ? { text: undefined, caption: text,
+      photo: [{ file_id: "safe-fixture", file_unique_id: "safe-fixture", width: 1, height: 1 }] } : { text };
+    const patch = { ...body, from: inlineHelper };
+    await h.send(patch); await h.send(patch); await h.send(patch, true);
+    expect(h.classifications).toHaveLength(1);
+    expect(h.deletes()).toEqual([1, 2, 3]);
+    expect(cache.lookups).toBe(3);
+    // A second bot cannot borrow the first bot's confirmed verdict.
+    await h.send({ ...body, from: { ...inlineHelper, id: 87655 } });
+    expect(h.classifications).toHaveLength(2);
+    expect(cache.keys.size).toBe(2);
+    expect(h.calls.some(call => call.method === "getChat")).toBe(false);
+    h.setMemberStatus("administrator");
+    await h.bot.handleUpdate({ update_id: 100, chat_member: { chat: group, from: user, date: 1,
+      old_chat_member: { status: "member", user: inlineHelper },
+      new_chat_member: { status: "administrator", user: inlineHelper, can_be_edited: false,
+        is_anonymous: false, can_manage_chat: true, can_delete_messages: true,
+        can_manage_video_chats: true, can_restrict_members: true, can_promote_members: false,
+        can_change_info: true, can_invite_users: true, can_post_stories: false,
+        can_edit_stories: false, can_delete_stories: false, can_manage_tags: false },
+    } } as Update);
+    await h.send(patch);
+    expect(h.skipped().map(log => log.reason)).toEqual(["group_admin"]);
+    expect(cache.lookups).toBe(4); // Membership refresh must precede the seeded positive.
+    expect(h.deletes()).toEqual([1, 2, 3, 4]);
+    await h.stats.stop();
+    expect(h.batches.flatMap(batch => batch.classificationAttempts)).toHaveLength(2);
+    expect(h.batches.flatMap(batch => batch.deletions).map(deletion => deletion.source)).toEqual(["jev", "cache", "cache", "jev"]);
+  });
+}
