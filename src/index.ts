@@ -14,9 +14,16 @@ const classifier = new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
+  url: config.jevUrl,
+});
+const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.apiKey, {
+  model: config.shadow.model,
+  threshold: config.spamThreshold,
+  timeoutMs: config.shadow.timeoutMs,
+  url: config.shadow.url,
 });
 
-registerBotHandlers(bot, { classifier, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
+registerBotHandlers(bot, { classifier, shadowClassifier, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
 
 let shutdownPromise: Promise<void> | undefined;
 function shutdown(signal: string): Promise<void> {
@@ -41,6 +48,7 @@ console.info(JSON.stringify({
   threshold: config.spamThreshold,
   statsEnabled: Boolean(config.databaseUrl),
   spamCacheEnabled: Boolean(spamCache),
+  shadowModel: config.shadow?.model ?? null,
 }));
 try {
   await bot.start({

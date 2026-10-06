@@ -68,6 +68,20 @@ The suite includes a known Chinese advertisement, synthetic testimonial promotio
 
 Media-profile fixture disposition and attribution boundaries are documented in [Media-profile evidence](docs/media-profile-evidence.md). Run its optional pinned-model suite with `RUN_LIVE_JEV=1 bun test src/media.live.test.ts`; the previously accused media cases are ambiguity controls, not confirmed recall misses. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
 
+## Shadow classifier and self-hosted models
+
+Jev's `/v1/systemone` wire format is also served by open-weight decision models such as Cloudflare's Clef-flash and Laya (`laya-serve`). Set `SHADOW_URL` (plus optional `SHADOW_API_KEY`, `SHADOW_MODEL`, `SHADOW_TIMEOUT_MS`) to send every classified message to a second server in parallel. Its verdict is logged as `shadow_analyzed` next to the primary decision (`delete`, `keep`, `cache_delete` or `failed`) and never deletes anything or delays moderation; a slow or unreachable shadow only logs a failed row. The log has the same privacy limits as `message_analyzed`: IDs, probabilities and timing, never text.
+
+Compare the two from logs:
+
+```sh
+docker service logs <service> 2>&1 | bun scripts/compare-shadow.ts 0.81
+```
+
+It prints agreement, Jev-only and shadow-only spam at several gates, and the disagreeing messages as `t.me/c` links (kept messages are still in the chat).
+
+To switch the primary classifier to a self-hosted server, set `JEV_URL` to its `/v1/systemone` URL, `TYPESAFE_API_KEY` to its bearer key and `JEV_MODEL` to the model name it reports (the spam cache only seeds verdicts from the configured model), then retune `SPAM_THRESHOLD` from the comparison.
+
 ## Docker
 
 ```sh
