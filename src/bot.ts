@@ -9,10 +9,12 @@ import { publicChannelUrl } from "./personal-posts";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import type { StatsRecorder } from "./stats";
+import type { TrainingCapture } from "./training-capture";
 
 export function registerBotHandlers(bot: Bot, {
   classifier,
   shadowClassifier,
+  trainingCapture,
   model,
   stats,
   logger = console,
@@ -22,6 +24,7 @@ export function registerBotHandlers(bot: Bot, {
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
+  trainingCapture?: TrainingCapture;
   model: string;
   stats: StatsRecorder;
   logger?: Pick<Console, "info" | "error">;
@@ -213,7 +216,9 @@ export function registerBotHandlers(bot: Bot, {
       try {
         if (!cacheHit) {
           stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
-          assessment = await classifier.classify(classifierInput, context);
+          const chatId = ctx.chat.id, messageId = ctx.msgId;
+          assessment = await classifier.classify(classifierInput, context, trainingCapture
+            && ((request, answers, result) => trainingCapture.record(chatId, messageId, request, answers, result)));
           if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
         }
       } catch (error) {
