@@ -9,9 +9,12 @@ import { publicChannelUrl } from "./personal-posts";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import type { StatsRecorder } from "./stats";
+import type { TrainingCapture } from "./training-capture";
 
 export function registerBotHandlers(bot: Bot, {
   classifier,
+  shadowClassifier,
+  trainingCapture,
   model,
   stats,
   logger = console,
@@ -20,6 +23,8 @@ export function registerBotHandlers(bot: Bot, {
   spamThreshold = 0.81,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
+  shadowClassifier?: Pick<JevSpamClassifier, "classify">;
+  trainingCapture?: TrainingCapture;
   model: string;
   stats: StatsRecorder;
   logger?: Pick<Console, "info" | "error">;
@@ -199,27 +204,34 @@ export function registerBotHandlers(bot: Bot, {
       const fingerprint = spamCache ? cacheFingerprint(ctx.msg, senderId, classifierInput,
         recentMessages.length, model, spamThreshold, enrichmentComplete) : undefined;
       const cacheHit = fingerprint ? await spamCache!.lookup(fingerprint) : false;
+      const context = recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
+        text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
+        ...(inlineButtons ? { inlineButtons } : {}),
+        ...(destinationPreviews ? { destinationPreviews } : {}),
+      }));
+      const logShadow = shadowClassifier
+        ? startShadow(shadowClassifier.classify(classifierInput, context), ctx.chat.id, ctx.msgId, "edited_message" in ctx.update)
+        : () => {};
       let assessment: SpamAssessment | undefined;
       try {
         if (!cacheHit) {
           stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
-          assessment = await classifier.classify(classifierInput,
-            recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
-              text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
-              ...(inlineButtons ? { inlineButtons } : {}),
-              ...(destinationPreviews ? { destinationPreviews } : {}),
-            })));
+          const chatId = ctx.chat.id, messageId = ctx.msgId;
+          assessment = await classifier.classify(classifierInput, context, trainingCapture
+            && ((request, answers, result) => trainingCapture.record(chatId, messageId, request, answers, result)));
           if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
         }
       } catch (error) {
         if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
+        logShadow("failed");
         await next();
         return;
       }
 
       if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
+      logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
 
       if (!cacheHit && !assessment?.shouldDelete) {
         if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
@@ -311,6 +323,39 @@ export function registerBotHandlers(bot: Bot, {
           ? "error"
           : "unknown";
     logger.error(JSON.stringify({ event, kind, chatId, messageId }));
+  }
+
+  // Shadow verdicts are compared offline (scripts/compare-shadow.ts) and never delete.
+  function startShadow(run: Promise<SpamAssessment>, chatId: number, messageId: number, isEdited: boolean) {
+    const startedAt = performance.now();
+    const settled = run.then(
+      (shadow) => ({ shadow, durationMs: Math.round(performance.now() - startedAt) }),
+      (error: unknown) => ({ error: error instanceof Error && error.name === "TimeoutError" ? "timeout"
+        : error instanceof Error ? error.message.slice(0, 120) : "unknown", durationMs: Math.round(performance.now() - startedAt) }),
+    );
+    return (primary: "delete" | "keep" | "cache_delete" | "failed", primaryAssessment?: SpamAssessment) => void settled.then((result) => {
+      const shadow = "shadow" in result ? result.shadow : undefined;
+      logger.info(JSON.stringify({
+        event: "shadow_analyzed",
+        status: shadow ? "completed" : "failed",
+        chatId,
+        messageId,
+        isEdited,
+        primaryDecision: primary,
+        primaryConfidence: primaryAssessment?.probability ?? null,
+        primarySignals: primaryAssessment?.signals ?? null,
+        decision: shadow ? (shadow.shouldDelete ? "delete" : "keep") : null,
+        confidence: shadow?.probability ?? null,
+        strongestSignal: shadow?.strongestSignal ?? null,
+        signals: shadow?.signals ?? null,
+        contextProbabilities: shadow?.contextProbabilities ?? null,
+        model: shadow?.model ?? null,
+        route: shadow?.route ?? null,
+        truncated: shadow?.truncated ?? null,
+        error: "error" in result ? result.error : null,
+        durationMs: result.durationMs,
+      }));
+    });
   }
 
   function logAnalysisResult(

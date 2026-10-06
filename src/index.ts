@@ -4,19 +4,29 @@ import { registerBotHandlers } from "./bot";
 import { loadConfig } from "./config";
 import { JevSpamClassifier } from "./spam";
 import { createStatsRecorder } from "./stats";
+import { PostgresTrainingCapture } from "./training-capture";
 
 const config = loadConfig();
 const bot = new Bot(config.telegramBotToken);
 const stats = createStatsRecorder(config.databaseUrl);
 const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
   ? new PostgresSpamCache(config.databaseUrl) : undefined;
+const trainingCapture = config.databaseUrl && process.env.TRAINING_CAPTURE === "true"
+  ? new PostgresTrainingCapture(config.databaseUrl, { retentionDays: Number(process.env.TRAINING_CAPTURE_DAYS || 30) }) : undefined;
 const classifier = new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
+  url: config.jevUrl,
+});
+const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.apiKey, {
+  model: config.shadow.model,
+  threshold: config.spamThreshold,
+  timeoutMs: config.shadow.timeoutMs,
+  url: config.shadow.url,
 });
 
-registerBotHandlers(bot, { classifier, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
+registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
 
 let shutdownPromise: Promise<void> | undefined;
 function shutdown(signal: string): Promise<void> {
@@ -25,6 +35,7 @@ function shutdown(signal: string): Promise<void> {
       console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
       await bot.stop();
       await spamCache?.close();
+      await trainingCapture?.close();
       const health = await stats.stop();
       console.info(JSON.stringify({ event: "bot_stopped", ...health }));
     })();
@@ -41,6 +52,8 @@ console.info(JSON.stringify({
   threshold: config.spamThreshold,
   statsEnabled: Boolean(config.databaseUrl),
   spamCacheEnabled: Boolean(spamCache),
+  shadowModel: config.shadow?.model ?? null,
+  trainingCapture: Boolean(trainingCapture),
 }));
 try {
   await bot.start({

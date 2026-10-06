@@ -46,7 +46,8 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
   };
 }
 
-function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache) {
+function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache,
+  shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -98,6 +99,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   });
   registerBotHandlers(bot, {
     model: "jev-1.13.0", stats, logger, previewRequest, spamCache,
+    shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
       if (classifyError) throw new Error("private model failure including message content");
@@ -127,6 +129,30 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     deletes: () => calls.filter((call) => call.method === "deleteMessage").map((call) => call.payload.message_id),
   };
 }
+
+test("shadow verdicts are logged beside the primary decision and never delete", async () => {
+  let fail = false;
+  const h = harness(undefined, undefined, undefined, async () => {
+    if (fail) throw new Error("TypeSafe request failed with HTTP 503");
+    return { ...assessment(true), model: "laya-rl-agent", route: "multilingual", truncated: false };
+  });
+  await h.send({ text: "ordinary discussion" });
+  await Bun.sleep(0);
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.find((log) => log.event === "shadow_analyzed")).toMatchObject({
+    status: "completed", primaryDecision: "keep", primaryConfidence: 0.1, decision: "delete",
+    confidence: 0.97, model: "laya-rl-agent", route: "multilingual", truncated: false, error: null,
+  });
+
+  fail = true;
+  h.setAnswer(assessment(true));
+  const spamId = await h.send({ text: "buy my token" });
+  await Bun.sleep(0);
+  expect(h.deletes()).toEqual([spamId]);
+  expect(h.logs.filter((log) => log.event === "shadow_analyzed").at(-1)).toMatchObject({
+    status: "failed", primaryDecision: "delete", decision: null, error: "TypeSafe request failed with HTTP 503",
+  });
+});
 
 test("a below-gate invite verdict keeps the message and logs a keep decision", async () => {
   const h = harness();

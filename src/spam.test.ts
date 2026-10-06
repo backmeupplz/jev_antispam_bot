@@ -274,3 +274,15 @@ test("button attribution reaches current, source and historical questions withou
   }
   expect(requests[3].questions).toEqual(SPAM_QUESTIONS);
 });
+
+test("onExchange receives exactly the request sent and Jev's answers; URL is configurable", async () => {
+  let sent: { url: string; body: unknown } | undefined;
+  const classifier = new JevSpamClassifier("", { model: "clef-flash", threshold: 0.81, timeoutMs: 1000, url: "http://laya:8000/v1/systemone",
+    fetch: async (url, init) => { sent = { url: String(url), body: JSON.parse(String(init?.body)) }; expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+      return Response.json(response({ easy_money_bait: 0.95 })); } });
+  const exchanges: unknown[][] = [];
+  const result = await classifier.classify({ text: "earn 300$/day", embeddedLinks: [], isForwarded: false }, [], (...args) => exchanges.push(args));
+  expect(sent!.url).toBe("http://laya:8000/v1/systemone");
+  expect(exchanges).toEqual([[sent!.body, response({ easy_money_bait: 0.95 }).answers, result]]);
+  expect(result).toMatchObject({ shouldDelete: true, strongestSignal: "easy_money_bait" });
+});

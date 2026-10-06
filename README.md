@@ -48,7 +48,7 @@ The bot keeps up to ten messages per chat and sender in memory for about ten min
 
 History keys distinguish users from channel identities and isolate receiving groups; synthetic Telegram sender users never combine separate channels. The history is process-local and expires automatically; it is not persisted or logged. The bot does not log message text, sender identity, profile metadata, or personal-channel metadata. Each analyzed message produces structured JSON logs with chat/message IDs, message size and link count, a boolean profile-metadata-presence flag, a media-only flag, all spam-signal probabilities, the strongest signal, the final keep/delete decision, model version, and analysis duration. Failed optional profile lookups for text continue with message-only classification, while uncaptioned media without usable sender-owned profile metadata is kept unclassified; failed classifications emit a terminal fail-open `keep` result with unavailable probabilities, and successful deletions are logged separately.
 
-When `DATABASE_URL` is set, the bot also records each chat ID observed in normal Telegram updates, first/last-seen timestamps, chat type, membership-active state when Telegram supplies it, and a lifetime count of confirmed successful deletions. It never stores message text, user profiles, Jev prompts, or credentials. Statistics are optional and fail open: database startup, migration, latency, or outages never block moderation or Telegram deletion calls.
+When `DATABASE_URL` is set, the bot also records each chat ID observed in normal Telegram updates, first/last-seen timestamps, chat type, membership-active state when Telegram supplies it, and a lifetime count of confirmed successful deletions. It never stores message text, user profiles, Jev prompts, or credentials unless training capture is explicitly enabled (below). Statistics are optional and fail open: database startup, migration, latency, or outages never block moderation or Telegram deletion calls.
 
 Database writes use one connection and one bounded asynchronous flusher. Chat sightings are coalesced, deletion identities are deduplicated by `(chat_id, message_id)`, and each atomic batch increments counters only for newly inserted identities. Dedupe identities expire after 90 days; lifetime counters do not. The defaults cap pending memory at 1,000 chats plus 1,000 deletions, batch up to 100 of each per flush, retry with exponential backoff and jitter, and attempt a five-second shutdown drain without bypassing retry delays. New observations are ignored once shutdown begins, and no timer or database write starts after the store-close boundary. An abrupt process/container crash, shutdown deadline, or queue overflow can lose records that have not reached PostgreSQL; moderation remains available and overflow/failure health is emitted as rate-limited structured logs.
 
@@ -67,6 +67,24 @@ RUN_LIVE_JEV=1 bun test src/spam.live.test.ts
 The suite includes a known Chinese advertisement, synthetic testimonial promotions across destination types, and forwarded/non-forwarded controls for requested recommendations, ordinary experience, warnings, support, citations, moderation quotes and bare links. To check a private reported post without retaining it as a fixture, supply its transcription on stdin with `JEV_PRIVATE_FIXTURE_STDIN=1 RUN_LIVE_JEV=1 bun test src/spam.live.test.ts -t "private screenshot"`; the test asserts probabilities without printing the text. The authorized default gate is 0.81 (a score cutoff, not calibrated correctness); do not treat mocked handler outcomes as model calibration. Optional real-account Telegram checks provide additional evidence but do not block the General review/test/CI release gate.
 
 Media-profile fixture disposition and attribution boundaries are documented in [Media-profile evidence](docs/media-profile-evidence.md). Run its optional pinned-model suite with `RUN_LIVE_JEV=1 bun test src/media.live.test.ts`; the previously accused media cases are ambiguity controls, not confirmed recall misses. PostgreSQL integration tests separately require a disposable test database (`TEST_DATABASE_URL`); never point them at production.
+
+## Shadow classifier and self-hosted models
+
+Jev's `/v1/systemone` wire format is also served by open-weight decision models such as Cloudflare's Clef-flash and Laya (`laya-serve`). Set `SHADOW_URL` (plus optional `SHADOW_API_KEY`, `SHADOW_MODEL`, `SHADOW_TIMEOUT_MS`) to send every classified message to a second server in parallel. Its verdict is logged as `shadow_analyzed` next to the primary decision (`delete`, `keep`, `cache_delete` or `failed`) and never deletes anything or delays moderation; a slow or unreachable shadow only logs a failed row. The log has the same privacy limits as `message_analyzed`: IDs, probabilities and timing, never text.
+
+Compare the two from logs:
+
+```sh
+docker service logs <service> 2>&1 | bun scripts/compare-shadow.ts 0.81
+```
+
+It prints agreement, Jev-only and shadow-only spam at several gates, and the disagreeing messages as `t.me/c` links (kept messages are still in the chat).
+
+### Training capture (opt-in)
+
+`TRAINING_CAPTURE=true` (requires `DATABASE_URL`) stores every successful Jev classification in the `training_samples` table so a self-hosted model can be distilled from Jev: the exact request sent to Jev (current message text, recent same-sender messages, reply previews, and the sender's bio/personal-channel text when it was used), Jev's per-question answers, the verdict, and chat/message IDs. Sender IDs are not stored. This **does** persist message and profile text, so enable it only where that is acceptable. Rows older than `TRAINING_CAPTURE_DAYS` (default 30) and beyond 200,000 rows are pruned hourly; under load writes are dropped rather than queued, and failures never affect moderation. Remove the variable to stop capturing; `DELETE FROM training_samples` erases what was kept.
+
+To switch the primary classifier to a self-hosted server, set `JEV_URL` to its `/v1/systemone` URL, `TYPESAFE_API_KEY` to its bearer key and `JEV_MODEL` to the model name it reports (the spam cache only seeds verdicts from the configured model), then retune `SPAM_THRESHOLD` from the comparison.
 
 ## Docker
 

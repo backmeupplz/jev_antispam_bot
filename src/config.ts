@@ -5,6 +5,8 @@ export type Config = {
   jevModel: string;
   spamThreshold: number;
   jevTimeoutMs: number;
+  jevUrl: string;
+  shadow?: { url: string; apiKey: string; model: string; timeoutMs: number };
 };
 
 function required(name: string): string {
@@ -39,5 +41,14 @@ export function loadConfig(): Config {
     jevModel: process.env.JEV_MODEL?.trim() || "jev-1.13.0",
     spamThreshold,
     jevTimeoutMs,
+    // Any Jev wire-compatible /v1/systemone server, e.g. self-hosted laya-serve.
+    jevUrl: process.env.JEV_URL?.trim() || "https://api.typesafe.ai/v1/systemone",
+    // Shadow classifier: logged next to the primary verdict, never deletes.
+    shadow: process.env.SHADOW_URL?.trim() ? {
+      url: process.env.SHADOW_URL.trim(),
+      apiKey: process.env.SHADOW_API_KEY?.trim() ?? "",
+      model: process.env.SHADOW_MODEL?.trim() || "multilingual",
+      timeoutMs: numberFromEnv("SHADOW_TIMEOUT_MS", 30_000),
+    } : undefined,
   };
 }
