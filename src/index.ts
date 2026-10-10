@@ -1,3 +1,6 @@
+import { PostgresDeletionAudit } from "./audit-outbox";
+import { CACHE_POLICY_REVISION } from "./spam-cache";
+import { APPROVED_MODEL, APPROVED_PROMPT_SHA256, APPROVED_CHECKPOINT_SHA256 } from "./policy";
 import { PostgresSpamCache } from "./spam-cache";
 import { Bot } from "grammy";
 import { registerBotHandlers } from "./bot";
@@ -7,7 +10,17 @@ import { createStatsRecorder } from "./stats";
 import { PostgresTrainingCapture } from "./training-capture";
 
 const config = loadConfig();
+if (!config.databaseUrl) throw new Error("DATABASE_URL is required for private deletion auditing");
+if (config.jevModel === APPROVED_MODEL && config.spamThreshold !== 0.80) throw new Error("Approved policy requires SPAM_THRESHOLD=0.80");
 const bot = new Bot(config.telegramBotToken);
+const deletionAudit = new PostgresDeletionAudit(config.databaseUrl, bot.api);
+await deletionAudit.initialize();
+deletionAudit.start();
+const auditHealthTimer = setInterval(() => {
+  void deletionAudit.summary().then(summary => console.info(JSON.stringify({ event: "deletion_audit_health", ...summary, process: deletionAudit.health() })))
+    .catch(() => console.error(JSON.stringify({ event: "deletion_audit_health", outcome: "unavailable" })));
+}, 60_000);
+auditHealthTimer.unref();
 const stats = createStatsRecorder(config.databaseUrl);
 const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
   ? new PostgresSpamCache(config.databaseUrl) : undefined;
@@ -26,7 +39,7 @@ const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.ap
   url: config.shadow.url,
 });
 
-registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
+registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
 
 let shutdownPromise: Promise<void> | undefined;
 function shutdown(signal: string): Promise<void> {
@@ -34,6 +47,8 @@ function shutdown(signal: string): Promise<void> {
     shutdownPromise = (async () => {
       console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
       await bot.stop();
+      clearInterval(auditHealthTimer);
+      await deletionAudit.close();
       await spamCache?.close();
       await trainingCapture?.close();
       const health = await stats.stop();
@@ -50,6 +65,10 @@ console.info(JSON.stringify({
   event: "bot_starting",
   model: config.jevModel,
   threshold: config.spamThreshold,
+  cachePolicyRevision: CACHE_POLICY_REVISION,
+  approvedPromptSha256: config.jevModel === APPROVED_MODEL ? APPROVED_PROMPT_SHA256 : null,
+  approvedCheckpointSha256: config.jevModel === APPROVED_MODEL ? APPROVED_CHECKPOINT_SHA256 : null,
+  deletionAuditEnabled: true,
   statsEnabled: Boolean(config.databaseUrl),
   spamCacheEnabled: Boolean(spamCache),
   shadowModel: config.shadow?.model ?? null,
@@ -62,5 +81,5 @@ try {
   });
 } finally {
   if (shutdownPromise) await shutdownPromise;
-  else { await spamCache?.close(); await stats.stop(); }
+  else { clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await trainingCapture?.close(); await stats.stop(); }
 }

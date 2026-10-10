@@ -1,4 +1,6 @@
 import { Bot, GrammyError, HttpError } from "grammy";
+import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
+import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache } from "./admin-cache";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
@@ -15,6 +17,7 @@ export function registerBotHandlers(bot: Bot, {
   classifier,
   shadowClassifier,
   trainingCapture,
+  deletionAudit,
   model,
   stats,
   logger = console,
@@ -25,6 +28,7 @@ export function registerBotHandlers(bot: Bot, {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
   trainingCapture?: TrainingCapture;
+  deletionAudit?: DeletionAudit;
   model: string;
   stats: StatsRecorder;
   logger?: Pick<Console, "info" | "error">;
@@ -38,6 +42,8 @@ export function registerBotHandlers(bot: Bot, {
   const destinations = new TelegramPreviewCache({ request: previewRequest });
 
   bot.use(async (ctx, next) => {
+    // Exclude the sink before stats, enrichment, history, capture and commands.
+    if (ctx.chat?.id === AUDIT_CHAT_ID) return;
     if (ctx.chat) stats.observeChat({ chatId: ctx.chat.id, chatType: ctx.chat.type });
     await next();
   });
@@ -201,6 +207,7 @@ export function registerBotHandlers(bot: Bot, {
       }));
 
       const classifierInput = senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage;
+      const snapshot = deletionAudit ? auditSnapshot(ctx.msg, classifierInput, "edited_message" in ctx.update) : undefined;
       const fingerprint = spamCache ? cacheFingerprint(ctx.msg, senderId, classifierInput,
         recentMessages.length, model, spamThreshold, enrichmentComplete) : undefined;
       const cacheHit = fingerprint ? await spamCache!.lookup(fingerprint) : false;
@@ -222,7 +229,7 @@ export function registerBotHandlers(bot: Bot, {
           if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
         }
       } catch (error) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         logShadow("failed");
@@ -234,7 +241,7 @@ export function registerBotHandlers(bot: Bot, {
       logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
 
       if (!cacheHit && !assessment?.shouldDelete) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now() });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
         await next();
         return;
       }
@@ -246,12 +253,41 @@ export function registerBotHandlers(bot: Bot, {
         assessment!.contextProbabilities,
         CONTEXT_LINK_THRESHOLD,
       );
+      // Freeze each message’s own profile/content before clearing history.
+      const snapshots = [...recentMessages.flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : []), ...(snapshot ? [snapshot] : [])];
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
 
       const deletedMessageCount = await deleteMessages(
         ctx.chat.id,
         messageIds,
-        (chatId, messageId) => ctx.api.deleteMessage(chatId, messageId),
+        async (chatId, messageId) => {
+          let intent: string | undefined;
+          if (deletionAudit) {
+            const own = snapshots.find(s => s.messageId === messageId);
+            if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
+            try {
+              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own, {
+                source: cacheHit ? "cache" : "jev", model: assessment?.model ?? model,
+                linked: messageId !== ctx.msgId, history: snapshots,
+              }));
+            } catch { /* Persistence failures never become classifier failures. */ }
+            if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped" })); throw new Error("Audit intent unavailable"); }
+          }
+          try {
+            const deleted = await ctx.api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<typeof ctx.api.deleteMessage>[2]);
+            if (deleted !== true) throw new Error("Unconfirmed deletion");
+          } catch (error) {
+            if (intent) {
+              try { await deletionAudit!.failed(intent, !(error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500)); }
+              catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "failure_state_unavailable" })); }
+            }
+            throw error;
+          }
+          if (intent) {
+            try { await deletionAudit!.confirmed(intent); }
+            catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
+          }
+        },
         (chatId, messageId) => stats.recordDeletion({ chatId, messageId, source: cacheHit ? "cache" : "jev" }),
         (error, messageId) => logFailure("delete_failed", error, ctx.chat.id, messageId),
       );

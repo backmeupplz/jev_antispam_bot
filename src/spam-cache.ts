@@ -6,7 +6,7 @@ import { SPAM_QUESTIONS, type CurrentModerationMessage, type SpamAssessment } fr
 
 // Source digest invalidates on prompt, projection, enrichment or gate changes.
 const policy = createHash("sha256");
-for (const file of ["spam.ts", "message.ts", "bot.ts", "profile.ts", "telegram-preview.ts", "personal-posts.ts", "inline-buttons.ts", "spam-cache.ts"])
+for (const file of ["spam.ts", "message.ts", "bot.ts", "profile.ts", "telegram-preview.ts", "personal-posts.ts", "inline-buttons.ts", "spam-cache.ts", "policy.ts"])
   policy.update(readFileSync(new URL(file, import.meta.url)));
 export const CACHE_POLICY_REVISION = policy.digest("hex");
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
@@ -47,7 +48,7 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
 }
 
 function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache,
-  shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>) {
+  shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -98,7 +99,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     return { ok: true, result: true } as never;
   });
   registerBotHandlers(bot, {
-    model: "jev-1.13.0", stats, logger, previewRequest, spamCache,
+    model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit,
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
@@ -1820,3 +1821,78 @@ for (const caption of [false, true]) {
     expect(h.batches.flatMap(batch => batch.deletions).map(deletion => deletion.source)).toEqual(["jev", "cache", "cache", "jev"]);
   });
 }
+
+
+function auditHarness(cache?: SpamCache) {
+  const prepared = new Map<string, string>(); const confirmed: string[] = []; const failed: string[] = [];
+  let unavailable = false; let confirmationFails = false;
+  const audit: DeletionAudit = {
+    prepare: async (_chat, id, report) => { if (unavailable) return undefined; prepared.set(String(id), report); return String(id); },
+    confirmed: async id => { if (confirmationFails) throw new Error("private DB failure"); confirmed.push(id); },
+    failed: async id => { failed.push(id); },
+  };
+  const h = harness(undefined, undefined, cache, undefined, audit);
+  return { ...h, prepared, confirmed, failed, unavailable: () => { unavailable = true; }, confirmationFails: () => { confirmationFails = true; } };
+}
+
+test("audit covers fresh new/edit and cache deletes with actual actor and own context", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true));
+  await h.send({ text: "private pitch <unsafe>&", reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: "source context" } });
+  await h.send({ text: "changed caption evidence" }, true);
+  expect(h.confirmed).toEqual(["1", "2"]);
+  expect(h.prepared.get("1")).toContain("private pitch &lt;unsafe&gt;&amp;");
+  expect(h.prepared.get("1")).toContain("Actor user:12");
+  expect(h.prepared.get("1")).toContain("https://t.me/private_username");
+  expect(h.prepared.get("1")).toContain("source context");
+  expect(h.prepared.get("2")).toContain("Edited message");
+  const cached = auditHarness({ lookup: async () => true, seed: async () => {} });
+  await cached.send({ text: "cached long spam offer" });
+  expect(cached.classifications).toHaveLength(0);
+  expect(cached.confirmed).toEqual(["1"]);
+  expect(cached.prepared.get("1")).toContain("verdict cache");
+  await h.stats.stop(); await cached.stats.stop();
+});
+
+test("audit snapshots each linked historical message before history clear; partial failures never report deleted", async () => {
+  const h = auditHarness();
+  h.setProfileMetadata({ id: user.id, type: "private", first_name: "private", bio: "earlier own profile" });
+  await h.send({ text: "older own offer" });
+  await h.send({ text: "middle failed deletion" });
+  h.failedDeletes.add(2); h.setAnswer(assessment(true, [.99, .99]));
+  await h.send({ text: "current own call to action" }, true);
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(h.confirmed).toEqual(["1", "3"]); expect(h.failed).toEqual(["2"]);
+  expect(h.prepared.get("1")).toContain("<pre>older own offer</pre>");
+  expect(h.prepared.get("1")).toContain("earlier own profile");
+  expect(h.prepared.get("1")).toContain("linked historical deletion");
+  expect(h.prepared.get("3")).toContain("<pre>current own call to action</pre>");
+  expect(h.prepared.get("3")).toContain("middle failed deletion");
+  expect(h.prepared.get("3")).toContain("not all deleted");
+  await h.stats.stop();
+});
+
+test("audit sender_chat ignores synthetic sender and forward origin; sink never captured or moderated", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true));
+  await h.send({ sender_chat: { ...channel, username: "real_channel" }, from: synthetic, forward_origin: { type: "user", date: 1, sender_user: forwardedUser }, text: "channel advertisement" });
+  const report = h.prepared.get("1")!;
+  expect(report).toContain("Actor chat:-2001"); expect(report).toContain("https://t.me/real_channel");
+  expect(report).not.toContain("tg://user?id=136817688");
+  const beforeCalls = h.calls.length, beforeLogs = h.logs.length;
+  await h.send({ chat: { id: AUDIT_CHAT_ID, type: "group", title: "Audit" }, text: "private report" });
+  await h.send({ chat: { id: AUDIT_CHAT_ID, type: "group", title: "Audit" }, text: "/status" }, true);
+  expect(h.calls.length).toBe(beforeCalls); expect(h.logs.length).toBe(beforeLogs);
+  expect(h.classifications).toHaveLength(1);
+  await h.stats.stop();
+});
+
+test("audit persistence unavailable skips destructive action; confirmation failure is not classification failure", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true)); h.unavailable();
+  await h.send(); expect(h.deletes()).toEqual([]); expect(h.confirmed).toEqual([]);
+  expect(h.logs.some(x => x.outcome === "intent_unavailable_delete_skipped")).toBe(true);
+  const f = auditHarness(); f.setAnswer(assessment(true)); f.confirmationFails(); await f.send();
+  expect(f.deletes()).toEqual([1]);
+  expect(f.logs.some(x => x.event === "spam_deleted")).toBe(true);
+  expect(f.logs.some(x => x.event === "classification_failed")).toBe(false);
+  expect(JSON.stringify(f.logs)).not.toContain("private DB failure");
+  await h.stats.stop(); await f.stats.stop();
+});

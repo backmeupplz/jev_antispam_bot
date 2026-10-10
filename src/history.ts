@@ -1,8 +1,10 @@
+import type { AuditSnapshot } from "./audit-report";
 import type { ModerationMessage } from "./spam";
 
 export type RecentMessage = ModerationMessage & {
   messageId: number;
   receivedAt: number;
+  auditSnapshot?: AuditSnapshot;
 };
 
 export class MessageHistory {
