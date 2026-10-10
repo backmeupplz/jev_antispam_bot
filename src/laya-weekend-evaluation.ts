@@ -31,6 +31,7 @@ export function layaEvaluationConfig(env: Record<string, string | undefined>) {
   if (env.RUN_LAYA_WEEKEND_EVAL !== "1" || !env.LAYA_EVAL_URL || !env.LAYA_EVAL_MODEL || !env.LAYA_EVAL_KEY)
     throw new Error("Explicit Laya evaluation opt-in, URL, model and protected key environment required");
   const url = new URL(env.LAYA_EVAL_URL);
+  url.hostname = url.hostname.replace(/\.$/, "");
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash
     || url.pathname !== "/v1/systemone" || /(^|\.)typesafe\.ai$/i.test(url.hostname)
     || !/^laya[-a-zA-Z0-9_.]+$/.test(env.LAYA_EVAL_MODEL))
@@ -43,6 +44,7 @@ if (import.meta.main) {
     const config = layaEvaluationConfig(process.env);
     const classifier = new JevSpamClassifier(config.key, {
       url: config.url, model: config.model, threshold: LAYA_DIAGNOSTIC_THRESHOLD, timeoutMs: 15_000,
+      fetch: (url, init) => fetch(url, { ...init, redirect: "error" }),
     });
     // Exactly 13 sequential calls maximum, no retries, no Telegram writes or enrichment fetches.
     for (const fixture of [...weekendFixtures, ...weekendHistoryFixtures]) {

@@ -56,7 +56,7 @@ export const weekendFixtures: WeekendFixture[] = [
 
 const byId = (id: string) => weekendFixtures.find(item => item.id === id)!;
 const withId = (id: string, messageId: number) => ({ ...structuredClone(byId(id).raw), message_id: messageId });
-// Additional synthetic history controls: not part of the recorded scalar measurements.
+// Synthetic history controls; full live baseline and linkage scores are recorded in docs/laya-weekend-diagnostics.md.
 export const weekendHistoryFixtures: WeekendFixture[] = [
   { id: "mixed-history", synthetic: true, sourceForm: "synthetic-short", raw: withId("unrelated-short", 103),
     recent: [withId("requested", 100), withId("unrelated-visible", 101), withId("unrelated-short", 102)],

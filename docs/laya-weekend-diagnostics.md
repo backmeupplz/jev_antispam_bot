@@ -17,7 +17,8 @@ candidate message, whose content-free log showed KEEP .6843. Historical correlat
 remains unproven.
 
 The parent's bounded deployed serving probes used the real bot normalization and
-request builder and measured laya-jev-ckpt-v2 at the unchanged .80 gate:
+request builder and measured the full 13-case laya-jev-ckpt-v2 baseline at the
+unchanged .80 gate:
 
 | Synthetic case | Aggregate probability | Observed decision | Label |
 | --- | ---: | --- | --- |
@@ -32,12 +33,19 @@ request builder and measured laya-jev-ckpt-v2 at the unchanged .80 gate:
 | job seeker | .3984 | keep | keep |
 | agreed shift/payment | .1782 | keep | keep |
 | wages discussion | .1092 | keep | keep |
+| mixed-history | .5158 | **keep, false negative** | delete |
+| requested-history | .5723 | keep | keep |
 
-Every measured response reported no model truncation (zero dropped state tokens).
-Fixture ellipsis/cutting and model truncation are different facts. These positives
-do not reproduce the historical false negative. Requested and volunteer controls
-already fail acceptance. All 27 static question answers carried the same aggregate
-score; strongestSignal is not evidence of an independently assessed category.
+All 13 measured responses reported no model truncation (zero dropped state tokens).
+The mixed-history linkage probabilities were [0, 0, 0], missing the two unsolicited
+historical offers (expected links [false, true, true]); requested-history returned
+[0, 0], correctly protecting both requested replies. Neither selected any deletion
+IDs. The full baseline therefore fails acceptance on mixed-history as well as the
+requested and volunteer false positives. Fixture ellipsis/cutting and model
+truncation are different facts. The synthetic mixed-history false negative does
+not establish a replay of the historical incident. All 27 static question answers
+carried the same aggregate score; strongestSignal is not evidence of an
+independently assessed category.
 The serving adapter uses its compact SPAM_QUESTION, not the bot's per-question
 prose as independent classifier prompts.
 
@@ -46,13 +54,15 @@ short positive fell to **.7064** and **.7333**, respectively, both false negativ
 at .80. This harness does not ship either experiment or pretend that improving a
 control alone is a safe fix. Serving LAYA_GATE .81 was separately observed for
 history-link optimization; the bot gate remains .80, and this harness changes
-neither. New history fixtures below have no recorded live measurements.
+neither. A bounded training candidate was also rejected; it is not a safe fix and
+was not adopted. These diagnostics remain partial, not remediation.
 
 Evidence provenance (parent's private workspace artifacts, not required to run):
 artifacts/69-cases.json, 69-live-results.jsonl, 69-live-unrelated-visible.jsonl,
-69-prompt-results.json and the untracked probe69.ts. Throwaway scripts and raw
-artifacts are not committed. Recorded scalars in the fixture module reproduce
-those measurements; offline mock responses reconstruct the aggregate adapter shape.
+69-prompt-results.json and the untracked probe69.ts/probe69-full.ts. Throwaway
+scripts and raw artifacts are not committed. Recorded scalars in the fixture
+module reproduce the 11 no-history measurements; the two history measurements
+are documented above. Offline mock responses reconstruct the aggregate adapter shape.
 Formatting entities added for Telegram validity tests do not change normalized input.
 
 ## Offline validation
@@ -84,7 +94,10 @@ identity), and LAYA_EVAL_KEY. Then run:
 There is no default endpoint, credential lookup, TypeSafe fallback, retries,
 Telegram mutation, profile enrichment, or training capture. Do not put credentials
 in shell arguments or logs. The endpoint must be operator-authorized Laya; the
-runner explicitly rejects typesafe.ai. It makes at most 13 sequential requests
+runner canonicalizes trailing-dot hostnames and explicitly rejects typesafe.ai
+and all its subdomains. Its runner-only fetch rejects redirects, so requests and
+credentials cannot follow an unvalidated redirect target. Production transport is
+unchanged. It makes at most 13 sequential requests
 (11 pairs/controls plus mixed and requested-history controls), 15 seconds each,
 and stops on the first transport/parser failure. The gate is fixed at .80.
 Run once per explicitly selected baseline/candidate and keep their outputs separate;

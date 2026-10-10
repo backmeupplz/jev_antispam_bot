@@ -223,9 +223,41 @@ test("opt-in local runner emits failed acceptance and exits nonzero without sour
   } finally { await server.stop(true); }
 });
 
+test("runner rejects 307 redirects without forwarding a request or credential", async () => {
+  let calls = 0;
+  const redirectedCredentials: (string | null)[] = [];
+  // Same-origin redirect would preserve Authorization if fetch followed it.
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
+    if (new URL(request.url).pathname === "/v1/systemone") {
+      calls++;
+      return new Response(null, { status: 307, headers: { location: "/unvalidated" } });
+    }
+    redirectedCredentials.push(request.headers.get("authorization"));
+    return Response.json(aggregate(.9));
+  } });
+  try {
+    const child = Bun.spawn([process.execPath, "run", new URL("./laya-weekend-evaluation.ts", import.meta.url).pathname], {
+      env: { RUN_LAYA_WEEKEND_EVAL: "1", LAYA_EVAL_URL: "http://127.0.0.1:" + server.port + "/v1/systemone",
+        LAYA_EVAL_MODEL: RECORDED_LAYA_MODEL, LAYA_EVAL_KEY: "offline-only" },
+      stdout: "pipe", stderr: "pipe",
+    });
+    const [output, errors, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(exit).toBe(1);
+    expect(errors).toBe("");
+    expect(calls).toBe(1);
+    expect(redirectedCredentials).toEqual([]);
+    expect(JSON.parse(output.trim())).toEqual({ id: "standalone", synthetic: true, status: "failed", accepted: false });
+    expect(output).not.toContain("offline-only");
+  } finally { await server.stop(true); }
+});
+
 test("runner has no default endpoint or paid TypeSafe fallback and requires explicit opt-in", () => {
   const valid = { RUN_LAYA_WEEKEND_EVAL: "1", LAYA_EVAL_URL: "http://127.0.0.1:8000/v1/systemone", LAYA_EVAL_MODEL: RECORDED_LAYA_MODEL, LAYA_EVAL_KEY: "offline-only" };
   expect(layaEvaluationConfig(valid).model).toBe(RECORDED_LAYA_MODEL);
+  expect(layaEvaluationConfig({ ...valid, LAYA_EVAL_URL: "https://laya.example./v1/systemone" }).url)
+    .toBe("https://laya.example/v1/systemone");
+  for (const host of ["typesafe.ai", "typesafe.ai.", "api.typesafe.ai", "api.typesafe.ai.", "nested.api.typesafe.ai.", "API.TypeSafe.AI."])
+    expect(() => layaEvaluationConfig({ ...valid, LAYA_EVAL_URL: "https://" + host + "/v1/systemone" })).toThrow();
   expect(() => layaEvaluationConfig({})).toThrow();
   for (const key of Object.keys(valid)) expect(() => layaEvaluationConfig({ ...valid, [key]: undefined })).toThrow();
   for (const url of ["https://api.typesafe.ai/v1/systemone", "http://127.0.0.1:8000/", "http://user:password@127.0.0.1/v1/systemone"])
