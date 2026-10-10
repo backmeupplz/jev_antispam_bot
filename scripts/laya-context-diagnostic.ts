@@ -1,8 +1,6 @@
-import { weekendFixtures, weekendHistoryFixtures } from "../src/fixtures/laya-weekend-recruitment";
-import { contextControls } from "../src/fixtures/laya-context-controls";
+import { contextFixtures as fixtures, validateContextMatrix } from "../src/laya-context-matrix";
 import { evaluateWeekend } from "../src/laya-weekend-evaluation";
 import { JevSpamClassifier } from "../src/spam";
-const fixtures = [...weekendFixtures, ...weekendHistoryFixtures, ...contextControls];
 const [mode, path] = process.argv.slice(2);
 if (!path || !["prepare", "parse"].includes(mode!)) throw new Error("prepare REQUESTS or parse RESPONSES; offline files only");
 if (mode === "prepare") {
@@ -20,7 +18,7 @@ if (mode === "prepare") {
   }
   await Bun.write(path, JSON.stringify(rows, null, 2));
 } else {
-  const rows = await Bun.file(path).json() as { variant: string; id: string; response: unknown }[];
+  const rows = validateContextMatrix(await Bun.file(path).json());
   const parsed = [];
   for (const row of rows) {
     const fixture = fixtures.find(f => f.id === row.id);
