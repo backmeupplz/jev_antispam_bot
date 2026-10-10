@@ -1,3 +1,4 @@
+import { APPROVED_MODEL } from "./policy";
 import type { DestinationPreview } from "./telegram-preview";
 
 export const CONTEXT_LINK_THRESHOLD = 0.75;
@@ -424,6 +425,9 @@ export class JevSpamClassifier {
 
     const body: unknown = await response.json();
     let assessment = parseAssessment(body, this.options.threshold, recentMessages.length);
+    if (this.options.model === APPROVED_MODEL && assessment.model !== APPROVED_MODEL) {
+      throw new Error("Approved classifier identity mismatch");
+    }
     if (message.mediaOnly) {
       const probability = assessment.signals.media_profile_funnel;
       assessment = { ...assessment, strongestSignal: "media_profile_funnel", probability,

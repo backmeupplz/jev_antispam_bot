@@ -1,3 +1,4 @@
+import { effectiveModel } from "./policy";
 export type Config = {
   telegramBotToken: string;
   typesafeApiKey: string;
@@ -38,7 +39,7 @@ export function loadConfig(): Config {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
     typesafeApiKey: required("TYPESAFE_API_KEY"),
     databaseUrl: process.env.DATABASE_URL?.trim() || undefined,
-    jevModel: process.env.JEV_MODEL?.trim() || "jev-1.13.0",
+    jevModel: effectiveModel(process.env.JEV_MODEL?.trim() || "jev-1.13.0"),
     spamThreshold,
     jevTimeoutMs,
     // Any Jev wire-compatible /v1/systemone server, e.g. self-hosted laya-serve.

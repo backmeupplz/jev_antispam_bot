@@ -31,3 +31,5 @@ jobs:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bun run check
+        env:
+          AUDIT_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
