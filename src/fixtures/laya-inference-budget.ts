@@ -54,4 +54,13 @@ export const budgetFixtures: BudgetFixture[] = [...contextFixtures, ...newBudget
  { ...structuredClone(visible), id: "near-gate-benign-history", recent: [{ ...benign, message_id: 80 }], expectedContextLinks: [false] },
  { ...structuredClone(visible), id: "near-gate-spam-history", recent: [{ ...structuredClone(visible.raw), message_id: 81 }], expectedContextLinks: [true] },
 ];
+// Pre-inference token audit showed German-only long cases fit768. For budget stress,
+// retain a full 1200-char multilingual prior requested reply; current tail remains
+// present before model serialization. This is synthetic, never recovered history.
+for (const f of newBudgetFixtures.filter(f => f.id.startsWith("long-end"))) {
+ const prior = recruitmentReply("Обсуждаем расписание библиотеки и список прочитанных книг. ".repeat(19), "Какие книги вы читали?");
+ prior.message_id = 70;
+ f.recent = [prior];
+ f.expectedContextLinks = [false];
+}
 export const budgetVariants = ["base", "compact-json", "current-last", "budget1536", "linkage080"] as const;
