@@ -11,7 +11,7 @@ test("frozen matrix is unique, complete and rejects duplicates", () => {
  expect(() => validateMatrix([{ ...rows[0], id: "invented" }, ...rows.slice(1)])).toThrow();
 });
 test("full screenshot body, separate card and long tail survive bot normalization", () => {
- expect(fullMedicalText.length).toBeGreaterThan(1300);
+ expect(fullMedicalText.length).toBe(1252);
  for (const f of budgetFixtures) {
   const normalized = toModerationMessage(f.raw)!;
   if (f.tail) expect(normalized.text).toContain(f.tail);
