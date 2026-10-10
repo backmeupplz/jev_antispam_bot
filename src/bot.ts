@@ -266,10 +266,7 @@ export function registerBotHandlers(bot: Bot, {
             const own = snapshots.find(s => s.messageId === messageId);
             if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
             try {
-              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own, {
-                source: cacheHit ? "cache" : "jev", model: assessment?.model ?? model,
-                linked: messageId !== ctx.msgId, history: snapshots,
-              }));
+              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own));
             } catch { /* Persistence failures never become classifier failures. */ }
             if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped" })); throw new Error("Audit intent unavailable"); }
           }
