@@ -28,7 +28,7 @@ async function main() {
     while (Date.now() < deadline) {
       await audit.runOnce();
       const state = await audit.status(id);
-      if (state === "sent") { console.info(JSON.stringify({ event: "audit_integration", receipt: "telegram_accepted", deletion: false })); return; }
+      if (state === "sent") { console.info(JSON.stringify({ event: "audit_integration", receipt: "telegram_accepted", sinkMessageIds: (await audit.receipts(id)).map(part => part.messageId), deletion: false })); return; }
       if (["send_unknown", "terminal", "delete_unknown"].includes(state ?? "")) throw new Error("Integration report did not reach a confirmed receipt; inspect private sink, do not blindly resend");
       await Bun.sleep(1_000);
     }

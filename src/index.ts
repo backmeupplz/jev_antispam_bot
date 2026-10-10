@@ -1,3 +1,4 @@
+import { trackHandlers, drainBot } from "./lifecycle";
 import { PostgresDeletionAudit } from "./audit-outbox";
 import { CACHE_POLICY_REVISION } from "./spam-cache";
 import { APPROVED_MODEL, APPROVED_PROMPT_SHA256, APPROVED_CHECKPOINT_SHA256 } from "./policy";
@@ -13,6 +14,7 @@ const config = loadConfig();
 if (!config.databaseUrl) throw new Error("DATABASE_URL is required for private deletion auditing");
 if (config.jevModel === APPROVED_MODEL && config.spamThreshold !== 0.80) throw new Error("Approved policy requires SPAM_THRESHOLD=0.80");
 const bot = new Bot(config.telegramBotToken);
+const drainHandlers = trackHandlers(bot);
 const deletionAudit = new PostgresDeletionAudit(config.databaseUrl, bot.api);
 await deletionAudit.initialize();
 deletionAudit.start();
@@ -41,12 +43,13 @@ const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.ap
 
 registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
 
+let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
 function shutdown(signal: string): Promise<void> {
   if (!shutdownPromise) {
     shutdownPromise = (async () => {
       console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
-      await bot.stop();
+      await drainBot(bot, polling, drainHandlers);
       clearInterval(auditHealthTimer);
       await deletionAudit.close();
       await spamCache?.close();
@@ -75,11 +78,12 @@ console.info(JSON.stringify({
   trainingCapture: Boolean(trainingCapture),
 }));
 try {
-  await bot.start({
+  polling = bot.start({
     allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
     onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
   });
+  await polling;
 } finally {
   if (shutdownPromise) await shutdownPromise;
-  else { clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await trainingCapture?.close(); await stats.stop(); }
+  else { await drainHandlers(); clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await trainingCapture?.close(); await stats.stop(); }
 }

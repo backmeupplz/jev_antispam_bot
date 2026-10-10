@@ -1827,7 +1827,7 @@ function auditHarness(cache?: SpamCache) {
   const prepared = new Map<string, string>(); const confirmed: string[] = []; const failed: string[] = [];
   let unavailable = false; let confirmationFails = false;
   const audit: DeletionAudit = {
-    prepare: async (_chat, id, report) => { if (unavailable) return undefined; prepared.set(String(id), report); return String(id); },
+    prepare: async (_chat, id, report) => { if (unavailable) return undefined; prepared.set(String(id), Array.isArray(report) ? report.join("\n") : report); return String(id); },
     confirmed: async id => { if (confirmationFails) throw new Error("private DB failure"); confirmed.push(id); },
     failed: async id => { failed.push(id); },
   };
@@ -1842,14 +1842,14 @@ test("audit covers fresh new/edit and cache deletes with actual actor and own co
   expect(h.confirmed).toEqual(["1", "2"]);
   expect(h.prepared.get("1")).toContain("private pitch &lt;unsafe&gt;&amp;");
   expect(h.prepared.get("1")).toContain("Actor user:12");
-  expect(h.prepared.get("1")).toContain("https://t.me/private_username");
+  expect(h.prepared.get("1")).toContain("tg://user?id=12");
   expect(h.prepared.get("1")).toContain("source context");
   expect(h.prepared.get("2")).toContain("Edited message");
   const cached = auditHarness({ lookup: async () => true, seed: async () => {} });
   await cached.send({ text: "cached long spam offer" });
   expect(cached.classifications).toHaveLength(0);
   expect(cached.confirmed).toEqual(["1"]);
-  expect(cached.prepared.get("1")).toContain("verdict cache");
+  expect(cached.prepared.get("1")).toContain("&quot;verdict&quot;:&quot;cache&quot;");
   await h.stats.stop(); await cached.stats.stop();
 });
 

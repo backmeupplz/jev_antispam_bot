@@ -5,14 +5,15 @@ import pg from "pg";
 
 export const AUDIT_CHAT_ID = -5477973916;
 export interface DeletionAudit {
-  prepare(chatId: number, messageId: number, report: string): Promise<string | undefined>;
+  prepare(chatId: number, messageId: number, report: string | string[]): Promise<string | undefined>;
   confirmed(id: string): Promise<void>;
   failed(id: string, ambiguous?: boolean): Promise<void>;
 }
 type AuditApi = Pick<Api, "sendMessage">;
 type Options = { capacity?: number; retentionMs?: number; timeoutMs?: number; intentLeaseMs?: number;
   sendLeaseMs?: number; pollMs?: number; paceMs?: number };
-type Claimed = { id: string; report: string; lease_token: string; attempts: number };
+type Claimed = { id: string; sequence: number; report: string; lease_token: string; attempts: number };
+export const MAX_AUDIT_PARTS = 256;
 const DAY = 86_400_000;
 function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
   const result = value ?? fallback;
@@ -21,16 +22,18 @@ function bounded(value: number | undefined, fallback: number, min: number, max: 
 }
 
 /** One attempt only. No transformer retries: a lost response is not proof of non-delivery. */
-export async function sendAuditReport(api: AuditApi, report: string, timeoutMs: number): Promise<void> {
+export async function sendAuditReport(api: AuditApi, report: string, timeoutMs: number): Promise<number> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
+    const receipt = await Promise.race([
       api.sendMessage(AUDIT_CHAT_ID, report, { parse_mode: "HTML", link_preview_options: { is_disabled: true } }, controller.signal as Parameters<Api["sendMessage"]>[3]),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => { controller.abort(); reject(new Error("Audit transport timeout")); }, timeoutMs);
       }),
     ]);
+    if (!Number.isSafeInteger(receipt?.message_id) || receipt.message_id <= 0) throw new Error("Invalid audit receipt");
+    return receipt.message_id;
   } finally { if (timer) clearTimeout(timer); }
 }
 
@@ -64,6 +67,7 @@ export class PostgresDeletionAudit implements DeletionAudit {
     return this.migration ??= this.transaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(69004)");
       await client.query(readFileSync(new URL("../migrations/004_deletion_audit.sql", import.meta.url), "utf8"));
+      await client.query(readFileSync(new URL("../migrations/005_deletion_audit_parts.sql", import.meta.url), "utf8"));
     }).catch(() => { this.migration = undefined; this.counters.error++; throw new Error("Audit database initialization failed"); });
   }
   private async transaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -86,6 +90,7 @@ export class PostgresDeletionAudit implements DeletionAudit {
     if (lock.rowCount !== 1) throw new Error("Audit sink unavailable");
   }
   private async maintain(client: pg.PoolClient) {
+    await client.query("UPDATE deletion_audit_parts p SET state='send_unknown',lease_until=NULL,lease_token=NULL FROM deletion_audit_outbox o WHERE p.audit_id=o.id AND p.state='sending' AND o.state='sending' AND o.lease_until<=clock_timestamp()");
     const stale = await client.query(
       "UPDATE deletion_audit_outbox SET state=CASE state WHEN 'intent' THEN 'delete_unknown' ELSE 'send_unknown' END, lease_until=NULL, lease_token=NULL WHERE state IN ('intent','sending') AND lease_until<=clock_timestamp() RETURNING state");
     for (const row of stale.rows) this.counters[row.state === "delete_unknown" ? "deleteUnknown" : "sendUnknown"]++;
@@ -97,23 +102,30 @@ export class PostgresDeletionAudit implements DeletionAudit {
       this.counters.expired += total; this.counters.expiredUndelivered += undelivered;
     }
   }
-  async prepare(chatId: number, messageId: number, report: string): Promise<string | undefined> {
+  async prepare(chatId: number, messageId: number, report: string | string[]): Promise<string | undefined> {
+    // Snapshot caller-owned arrays before the first await; never clip an intent.
+    const parts = typeof report === "string" ? [report] : Array.isArray(report) ? [...report] : [];
     if (this.closing || !Number.isSafeInteger(chatId) || chatId === AUDIT_CHAT_ID || !Number.isSafeInteger(messageId) || messageId <= 0 ||
-        !report || report.length > 4_000 || Buffer.byteLength(report) > 16_000) { this.counters.refused++; return; }
+        parts.length < 1 || parts.length > MAX_AUDIT_PARTS || parts.some(part => typeof part !== "string" || !part || part.length > 4_000 || Buffer.byteLength(part) > 16_000)) {
+      this.counters.refused++; return;
+    }
     try {
       await this.initialize();
       return await this.transaction(async (client) => {
         await this.lock(client); await this.maintain(client);
-        const existing = (await client.query("SELECT state FROM deletion_audit_outbox WHERE chat_id=$1 AND message_id=$2 FOR UPDATE", [chatId, messageId])).rows[0];
+        const existing = (await client.query("SELECT id,state FROM deletion_audit_outbox WHERE chat_id=$1 AND message_id=$2 FOR UPDATE", [chatId, messageId])).rows[0];
         if (existing && existing.state !== "delete_failed") { this.counters.duplicate++; return; }
-        if (!existing && Number((await client.query("SELECT COUNT(*) FROM deletion_audit_outbox")).rows[0].count) >= this.limits.capacity) {
+        const occupied = Number((await client.query("SELECT COUNT(*) FROM deletion_audit_parts WHERE audit_id IS DISTINCT FROM $1::uuid", [existing?.id ?? null])).rows[0].count);
+        if (occupied + parts.length > this.limits.capacity) {
           await client.query("UPDATE deletion_audit_sink SET refused=refused+1"); this.counters.refused++; return;
         }
         const id = randomUUID();
-        // A fresh token on a known-failed retry fences delayed callbacks from the previous deletion.
+        // Replace only known-failed intent, atomically, fencing its old callbacks.
+        if (existing) await client.query("DELETE FROM deletion_audit_outbox WHERE id=$1", [existing.id]);
         await client.query(
-          "INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at,lease_until) VALUES ($1,$2,$3,$4,'intent',clock_timestamp()+$5*INTERVAL '1 millisecond',clock_timestamp()+$6*INTERVAL '1 millisecond') ON CONFLICT(chat_id,message_id) DO UPDATE SET id=EXCLUDED.id,report=EXCLUDED.report,state='intent',created_at=clock_timestamp(),expires_at=EXCLUDED.expires_at,lease_until=EXCLUDED.lease_until,next_attempt_at=clock_timestamp(),attempts=0",
-          [id, chatId, messageId, report, this.limits.retentionMs, this.limits.intentLeaseMs]);
+          "INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at,lease_until) VALUES ($1,$2,$3,$4,'intent',clock_timestamp()+$5*INTERVAL '1 millisecond',clock_timestamp()+$6*INTERVAL '1 millisecond')",
+          [id, chatId, messageId, parts[0], this.limits.retentionMs, this.limits.intentLeaseMs]);
+        await client.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state) SELECT $1,ordinality,body,'pending' FROM unnest($2::text[]) WITH ORDINALITY AS part(body,ordinality)", [id, parts]);
         await client.query("UPDATE deletion_audit_sink SET prepared=prepared+1"); this.counters.prepared++;
         return id;
       });
@@ -121,7 +133,7 @@ export class PostgresDeletionAudit implements DeletionAudit {
   }
   /** A fixed, content-free probe. Never accepts an export body or a destination. */
   async integrationReport(): Promise<string | undefined> {
-    const id = await this.prepare(0, 1, "<b>Integration report — NOT a deletion</b>\nHarmless audit delivery check. No message was deleted; no user content is included.");
+    const id = await this.prepare(0, 1, ["<b>Integration report — NOT a deletion (1/2)</b>\nHarmless audit delivery check. No message was deleted; no user content is included.", "<b>Integration report — NOT a deletion (2/2)</b>\nFixed multipart delivery check complete. No user content is included."]);
     if (id) await this.confirmed(id);
     return id;
   }
@@ -130,6 +142,14 @@ export class PostgresDeletionAudit implements DeletionAudit {
       await this.initialize();
       return (await this.pool.query("SELECT state FROM deletion_audit_outbox WHERE id=$1", [id])).rows[0]?.state;
     } catch { this.counters.error++; throw new Error("Audit status unavailable"); }
+  }
+  /** Confirmed sink IDs only, in part order; no report or source identity. */
+  async receipts(id: string): Promise<Array<{ sequence: number; messageId: number }>> {
+    try {
+      await this.initialize();
+      const rows = await this.pool.query("SELECT sequence,receipt_message_id FROM deletion_audit_parts WHERE audit_id=$1 AND state='sent' AND receipt_message_id IS NOT NULL ORDER BY sequence", [id]);
+      return rows.rows.map(row => ({ sequence: row.sequence, messageId: Number(row.receipt_message_id) }));
+    } catch { this.counters.error++; throw new Error("Audit receipts unavailable"); }
   }
   async confirmed(id: string): Promise<void> { await this.finishDeletion(id, "pending"); }
   async failed(id: string, ambiguous = false): Promise<void> { await this.finishDeletion(id, ambiguous ? "delete_unknown" : "delete_failed"); }
@@ -160,16 +180,18 @@ export class PostgresDeletionAudit implements DeletionAudit {
       if (!(await client.query("SELECT 1 FROM deletion_audit_sink WHERE next_send_at<=clock_timestamp()")).rowCount) return;
       // One outstanding send per sink, including across processes and restarts.
       if ((await client.query("SELECT 1 FROM deletion_audit_outbox WHERE state='sending' LIMIT 1")).rowCount) return;
-      const candidate = (await client.query("SELECT id FROM deletion_audit_outbox WHERE state='pending' AND expires_at>clock_timestamp() AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED")).rows[0];
+      const candidate = (await client.query("SELECT o.id,p.sequence FROM deletion_audit_outbox o JOIN deletion_audit_parts p ON p.audit_id=o.id WHERE o.state='pending' AND o.expires_at>clock_timestamp() AND p.state='pending' AND p.next_attempt_at<=clock_timestamp() AND NOT EXISTS (SELECT 1 FROM deletion_audit_parts earlier WHERE earlier.audit_id=o.id AND earlier.sequence<p.sequence AND earlier.state<>'sent') ORDER BY p.next_attempt_at,o.created_at,p.sequence LIMIT 1 FOR UPDATE OF o,p SKIP LOCKED")).rows[0];
       if (!candidate) return;
       const token = randomUUID();
-      const claimed = (await client.query("UPDATE deletion_audit_outbox SET state='sending',lease_until=clock_timestamp()+$2*INTERVAL '1 millisecond',lease_token=$3,attempts=attempts+1 WHERE id=$1 RETURNING id,report,lease_token,attempts", [candidate.id, this.limits.sendLeaseMs, token])).rows[0];
+      const claimed = (await client.query("UPDATE deletion_audit_parts SET state='sending',lease_until=clock_timestamp()+$3*INTERVAL '1 millisecond',lease_token=$4,attempts=attempts+1 WHERE audit_id=$1 AND sequence=$2 RETURNING audit_id AS id,sequence,report,lease_token,attempts,lease_until", [candidate.id, candidate.sequence, this.limits.sendLeaseMs, token])).rows[0];
+      await client.query("UPDATE deletion_audit_outbox SET state='sending',lease_until=$2,lease_token=$3,attempts=$4 WHERE id=$1", [candidate.id, claimed.lease_until, token, claimed.attempts]);
       await client.query("UPDATE deletion_audit_sink SET next_send_at=clock_timestamp()+$1*INTERVAL '1 millisecond'", [this.limits.paceMs]);
       return claimed;
     });
     if (!row) return;
     let state = "sent", delay = this.limits.paceMs;
-    try { await sendAuditReport(this.api, row.report, this.limits.timeoutMs); }
+    let receipt: number | null = null;
+    try { receipt = await sendAuditReport(this.api, row.report, this.limits.timeoutMs); }
     catch (error) {
       // Only an explicit Telegram rejection proves the request was not accepted.
       if (error instanceof GrammyError && error.error_code === 429) {
@@ -183,8 +205,10 @@ export class PostgresDeletionAudit implements DeletionAudit {
     }
     await this.transaction(async (client) => {
       await this.lock(client);
-      const updated = await client.query("UPDATE deletion_audit_outbox SET state=$3,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$4*INTERVAL '1 millisecond' WHERE id=$1 AND state='sending' AND lease_token=$2 AND lease_until>clock_timestamp()", [row.id, row.lease_token, state, delay]);
+      const updated = await client.query("UPDATE deletion_audit_parts SET state=$4,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$5*INTERVAL '1 millisecond',receipt_message_id=$6 WHERE audit_id=$1 AND sequence=$2 AND state='sending' AND lease_token=$3 AND lease_until>clock_timestamp()", [row.id, row.sequence, row.lease_token, state, delay, receipt]);
       if (!updated.rowCount) return;
+      const remaining = state === "sent" && (await client.query("SELECT 1 FROM deletion_audit_parts WHERE audit_id=$1 AND state<>'sent' LIMIT 1", [row.id])).rowCount;
+      await client.query("UPDATE deletion_audit_outbox SET state=$3,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$4*INTERVAL '1 millisecond' WHERE id=$1 AND state='sending' AND lease_token=$2", [row.id, row.lease_token, remaining ? "pending" : state, delay]);
       // Completion-based pacing is conservative and survives a 429/restart/second worker.
       await client.query("UPDATE deletion_audit_sink SET next_send_at=GREATEST(next_send_at,clock_timestamp()+$1*INTERVAL '1 millisecond')", [delay]);
       this.counters[state === "sent" ? "sent" : state === "pending" ? "retried" : state === "terminal" ? "terminal" : "sendUnknown"]++;

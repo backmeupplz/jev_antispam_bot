@@ -9,7 +9,7 @@ test("product grammY transport fixes sink, HTML and disabled previews without ke
     calls.push({ method, payload }); expect(signal).toBeDefined();
     return { ok: true, result: { message_id: 1, date: 1, chat: { id: AUDIT_CHAT_ID, type: "group", title: "fixture" }, text: "fixture" } } as never;
   });
-  await sendAuditReport(api, "<b>fixture &amp; context</b>", 100);
+  expect(await sendAuditReport(api, "<b>fixture &amp; context</b>", 100)).toBe(1);
   expect(calls).toEqual([{ method: "sendMessage", payload: { chat_id: AUDIT_CHAT_ID,
     text: "<b>fixture &amp; context</b>", parse_mode: "HTML", link_preview_options: { is_disabled: true } } }]);
 });
@@ -40,3 +40,11 @@ test("invalid intent inputs fail closed before any database connection", async (
     expect(outbox.health().refused).toBe(3); expect(outbox.health().error).toBe(0);
   } finally { await outbox.close(); }
 });
+
+for (const messageId of [undefined, 0, -1, 1.5, "12", Number.MAX_SAFE_INTEGER + 1]) {
+  test("invalid Telegram receipt is ambiguous, never claimed delivered: " + messageId, async () => {
+    const api = new Api("123:fixture");
+    api.config.use(async () => ({ ok: true, result: { message_id: messageId } }) as never);
+    await expect(sendAuditReport(api, "fixture", 100)).rejects.toThrow("Invalid audit receipt");
+  });
+}
