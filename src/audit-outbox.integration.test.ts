@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Api } from "grammy";
 import pg from "pg";
 import { AUDIT_CHAT_ID, PostgresDeletionAudit } from "./audit-outbox";
+import { renderAuditReport, type AuditSnapshot } from "./audit-report";
 const url = process.env.AUDIT_TEST_DATABASE_URL;
 if (url && (!["/jev_audit_test", "/jev_stats_test"].includes(new URL(url).pathname) || !["127.0.0.1", "localhost"].includes(new URL(url).hostname))) throw new Error("Dedicated local audit test database required");
 const integration = url ? test : test.skip;
@@ -298,4 +299,22 @@ integration("normal multipart pacing is global and completion-based across resta
     await other.runOnce(); expect(f.t.calls).toHaveLength(1);
     await f.ready(); await other.runOnce(); expect(f.t.calls).toHaveLength(2); expect(await other.status(id)).toBe("sent");
   } finally { await paced.close(); await other.close(); await f.close(); }
+});
+
+integration("concise rendering and pre-upgrade queued HTML survive restart without rewriting", async () => {
+  const f = await fixture(); const other = new PostgresDeletionAudit(url!, f.t.api, options);
+  try {
+    const legacy = ['<b>Confirmed spam deletion — part 1/2</b>\n<pre>old body</pre>', '<b>Own available reply/context</b>\n<pre>{&quot;replySource&quot;:&quot;unavailable&quot;}</pre>'];
+    const oldId = (await f.audit.prepare(-71, 1, legacy))!; await f.audit.confirmed(oldId);
+    const snapshot: AuditSnapshot = { chatId: -71, messageId: 2, chatTitle: "private", actor: "user:10", actorName: "Alice", senderUrl: "tg://user?id=10", edited: false, body: "new body <&>", media: "none supplied", context: '{"replySource":{"text":"direct source"}}', links: "private links", profile: "private bio" };
+    const concise = renderAuditReport(snapshot);
+    const newId = (await f.audit.prepare(-71, 2, concise))!; await f.audit.confirmed(newId);
+    const failedId = (await f.audit.prepare(-71, 3, renderAuditReport({ ...snapshot, body: "failed deletion" })))!; await f.audit.failed(failedId);
+    await f.audit.close();
+    for (let i = 0; i < 4; i++) { await f.ready(); await other.runOnce(); }
+    expect(f.t.calls.map(call => (call as { text: string }).text)).toEqual([...legacy, '<a href="tg://user?id=10">Alice</a>\n<pre>new body &lt;&amp;&gt;</pre>\n\nReply to: <pre>direct source</pre>']);
+    for (const call of f.t.calls) expect(call).toMatchObject({ chat_id: AUDIT_CHAT_ID, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+    expect(await other.status(oldId)).toBe("sent"); expect(await other.status(newId)).toBe("sent"); expect(await other.status(failedId)).toBe("delete_failed");
+    expect(await other.prepare(-71, 1, concise)).toBeUndefined();
+  } finally { await other.close(); await f.close(); }
 });

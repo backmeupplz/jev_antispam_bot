@@ -1840,34 +1840,29 @@ test("audit covers fresh new/edit and cache deletes with actual actor and own co
   await h.send({ text: "private pitch <unsafe>&", reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: "source context" } });
   await h.send({ text: "changed caption evidence" }, true);
   expect(h.confirmed).toEqual(["1", "2"]);
-  expect(h.prepared.get("1")).toContain("private pitch &lt;unsafe&gt;&amp;");
-  expect(h.prepared.get("1")).toContain("Actor user:12");
-  expect(h.prepared.get("1")).toContain("tg://user?id=12");
-  expect(h.prepared.get("1")).toContain("source context");
-  expect(h.prepared.get("2")).toContain("Edited message");
+  expect(h.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>private pitch &lt;unsafe&gt;&amp;</pre>\n\nReply to: <pre>source context</pre>');
+  expect(h.prepared.get("2")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>changed caption evidence</pre>');
   const cached = auditHarness({ lookup: async () => true, seed: async () => {} });
   await cached.send({ text: "cached long spam offer" });
   expect(cached.classifications).toHaveLength(0);
   expect(cached.confirmed).toEqual(["1"]);
-  expect(cached.prepared.get("1")).toContain("&quot;verdict&quot;:&quot;cache&quot;");
+  expect(cached.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>cached long spam offer</pre>');
   await h.stats.stop(); await cached.stats.stop();
 });
 
 test("audit snapshots each linked historical message before history clear; partial failures never report deleted", async () => {
   const h = auditHarness();
   h.setProfileMetadata({ id: user.id, type: "private", first_name: "private", bio: "earlier own profile" });
-  await h.send({ text: "older own offer" });
+  await h.send({ text: "older own offer", reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: "older direct source" } });
   await h.send({ text: "middle failed deletion" });
   h.failedDeletes.add(2); h.setAnswer(assessment(true, [.99, .99]));
   await h.send({ text: "current own call to action" }, true);
   expect(h.deletes()).toEqual([1, 2, 3]);
   expect(h.confirmed).toEqual(["1", "3"]); expect(h.failed).toEqual(["2"]);
-  expect(h.prepared.get("1")).toContain("<pre>older own offer</pre>");
-  expect(h.prepared.get("1")).toContain("earlier own profile");
-  expect(h.prepared.get("1")).toContain("linked historical deletion");
-  expect(h.prepared.get("3")).toContain("<pre>current own call to action</pre>");
-  expect(h.prepared.get("3")).toContain("middle failed deletion");
-  expect(h.prepared.get("3")).toContain("not all deleted");
+  expect(h.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>older own offer</pre>\n\nReply to: <pre>older direct source</pre>');
+  expect(h.prepared.get("3")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>current own call to action</pre>');
+  await h.stats.flush();
+  expect(h.batches.flatMap(batch => batch.deletions).map(item => item.messageId)).toEqual(["1", "3"]);
   await h.stats.stop();
 });
 
@@ -1875,7 +1870,7 @@ test("audit sender_chat ignores synthetic sender and forward origin; sink never 
   const h = auditHarness(); h.setAnswer(assessment(true));
   await h.send({ sender_chat: { ...channel, username: "real_channel" }, from: synthetic, forward_origin: { type: "user", date: 1, sender_user: forwardedUser }, text: "channel advertisement" });
   const report = h.prepared.get("1")!;
-  expect(report).toContain("Actor chat:-2001"); expect(report).toContain("https://t.me/real_channel");
+  expect(report).toBe('<a href="https://t.me/real_channel">private channel identity</a>\n<pre>channel advertisement</pre>');
   expect(report).not.toContain("tg://user?id=136817688");
   const beforeCalls = h.calls.length, beforeLogs = h.logs.length;
   await h.send({ chat: { id: AUDIT_CHAT_ID, type: "group", title: "Audit" }, text: "private report" });

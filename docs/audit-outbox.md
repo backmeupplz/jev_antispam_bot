@@ -14,6 +14,12 @@ Construct `PostgresDeletionAudit(databaseUrl, bot.api)`, await `initialize()` be
 
 `health()` gives process counters only. `summary()` asynchronously gives durable state counts plus prepared/refused/expiry totals. Both omit content, identities and error text. The index should log health periodically, not only on shutdown. Alerts should use rising refused/error/unknown/terminal/expired_undelivered counts, not expose stored reports.
 
+## Confirmation format
+
+New confirmations contain only the linked actual sender name, escaped original text/caption (or a factual media marker), and `Reply to:` with direct source text/caption when present. Missing source content is marked unavailable; previews, partial quotes, nested reply chains, profiles and classification metadata are not printed. Message bodies use inert `<pre>` blocks and previews remain disabled. Long bodies use bounded continuations without repeating sender metadata.
+
+There is no persistence migration: stored outbox parts are already-rendered HTML, not snapshots. Pre-upgrade pending parts finish unchanged (and can still have the old verbose format); they are not re-rendered, purged or resent. Older in-memory snapshots use only recognized direct-source fields, never raw context JSON.
+
 ## State and bounds
 
 * A unique source chat/message row and all ordered parts are committed atomically as intent before deletion. Known failures can retry with a **new UUID**, fencing callbacks from earlier attempts. Other existing rows refuse repeated deletion.
