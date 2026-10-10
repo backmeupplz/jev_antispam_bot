@@ -9,6 +9,8 @@ import { JevSpamClassifier, SPAM_QUESTIONS, type ModerationMessage } from "./spa
 import { evaluateWeekend, layaEvaluationConfig } from "./laya-weekend-evaluation";
 import { weekendFixtures, weekendHistoryFixtures, weekendOffer, weekendSources, RECORDED_LAYA_MODEL, LAYA_DIAGNOSTIC_THRESHOLD } from "./fixtures/laya-weekend-recruitment";
 
+import { newBudgetFixtures } from "./fixtures/laya-inference-budget";
+
 const fixture = (id: string) => weekendFixtures.find(item => item.id === id)!;
 type RequestBody = { model: string; state: { message: ModerationMessage; recentMessages: ModerationMessage[] }; questions: Record<string, unknown> };
 // Laya broadcasts one aggregate score to the static question keys. This mocked
@@ -132,8 +134,10 @@ function routingHarness(c: JevSpamClassifier) {
 
 for (const edited of [false, true]) {
   test("actual grammY routes every recorded weekend fixture; edited=" + edited, async () => {
-    for (const item of weekendFixtures) {
-      const c = classifier(() => aggregate(item.recordedProbability!));
+    for (const item of [...weekendFixtures, ...newBudgetFixtures]) {
+      // New fixtures use a fixed low mock to prove routing/normalization only.
+      const probability = item.recordedProbability ?? .1;
+      const c = classifier(() => aggregate(probability));
       const h = routingHarness(c.instance);
       try {
         await h.send(item.raw, edited);
@@ -141,7 +145,7 @@ for (const edited of [false, true]) {
         expect(c.requests[0]!.state.message).toEqual(toModerationMessage(item.raw)!);
         expect(c.requests[0]!.state.recentMessages).toEqual([]);
         // Recorded false positives must remain visible; mock does not certify accuracy.
-        expect(h.deleted).toEqual(item.recordedProbability! >= .80 ? [item.raw.message_id] : []);
+        expect(h.deleted).toEqual(probability >= .80 ? [item.raw.message_id] : []);
         expect(h.deleted).not.toContain(900);
         expect(h.logs.filter(log => log.event === "message_analyzed")).toHaveLength(1);
         expect(JSON.stringify(h.logs)).not.toContain(weekendOffer);
