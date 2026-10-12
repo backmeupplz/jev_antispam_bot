@@ -135,8 +135,8 @@ export class PostgresDeletionAudit implements DeletionAudit {
         if (existing && existing.state !== "delete_failed") return { refusal: "duplicate" };
         // Capacity bounds only parts that may still be sent. Sent, terminal, unknown and failed-deletion
         // rows are finished: they stay for dedupe/inspection until retention expiry but never block intents.
-        // (A replaced delete_failed intent is therefore already excluded.)
-        const occupied = Number((await client.query("SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending')")).rows[0].count);
+        // (A replaced delete_failed intent is therefore already excluded.) Expired reports are never sent either.
+        const occupied = Number((await client.query("SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending') AND o.expires_at>statement_timestamp()")).rows[0].count);
         if (occupied + parts.length > this.limits.capacity) {
           await client.query("UPDATE deletion_audit_sink SET refused=refused+1"); return { refusal: "capacity" };
         }

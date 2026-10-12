@@ -294,6 +294,9 @@ integration("capacity counts unsent parts of partly-sent and in-flight multipart
     expect(await audit.prepare(-69, 1, "fits", reason => reasons.push(reason))).toBeDefined();
     expect(await audit.prepare(-69, 2, "full", reason => reasons.push(reason))).toBeUndefined();
     expect(reasons).toEqual(["capacity"]);
+    // Expired live reports free their capacity (they are never sent).
+    await f.pool.query("UPDATE deletion_audit_outbox SET created_at=NOW()-INTERVAL '2 days',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1", [pending]);
+    expect(await audit.prepare(-69, 2, "fits after expiry", reason => reasons.push(reason))).toBeDefined();
   } finally { await audit.close(); await f.close(); }
 });
 
