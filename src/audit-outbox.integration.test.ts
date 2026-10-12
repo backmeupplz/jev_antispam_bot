@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Api } from "grammy";
@@ -7,19 +7,21 @@ import { AUDIT_CHAT_ID, LIVE_PARTS_SQL, PostgresDeletionAudit } from "./audit-ou
 import { renderAuditReport, type AuditSnapshot } from "./audit-report";
 const url = process.env.AUDIT_TEST_DATABASE_URL;
 if (url && (!["/jev_audit_test", "/jev_stats_test"].includes(new URL(url).pathname) || !["127.0.0.1", "localhost"].includes(new URL(url).hostname))) throw new Error("Dedicated local audit test database required");
-// Bun's 5s default is too tight on a loaded host; a slow test should pass, not cascade into the next one.
-const integration = url ? (name: string, run: () => Promise<void>, timeoutMs = 60_000) => test(name, run, timeoutMs) : test.skip;
-const options = { paceMs: 1, timeoutMs: 100, sendLeaseMs: 1_000 };
 // A timed-out test never reaches its finally: close whatever it opened before the next test resets the tables,
 // so a straggling worker, pool or open transaction cannot block (or deadlock) the next fixture.
 const leftovers: Array<() => unknown> = [];
 function owned<T>(resource: T, close: (resource: T) => unknown): T { leftovers.push(() => close(resource)); return resource; }
+// Runs inside each test rather than a beforeEach hook: the deploy build's Bun 1.3 rejects hook timeouts, and closing
+// waits for in-flight queries (bounded by the 10s lock timeout and the audit's own timeouts), beyond Bun's 5s default.
+async function closeLeftovers() { await Promise.allSettled(leftovers.splice(0).map(async close => await close())); }
+// Bun's 5s default is too tight on a loaded host; a slow test should pass, not cascade into the next one.
+const integration = url
+  ? (name: string, run: () => Promise<void>, timeoutMs = 60_000) => test(name, async () => { await closeLeftovers(); await run(); }, timeoutMs)
+  : test.skip;
+const options = { paceMs: 1, timeoutMs: 100, sendLeaseMs: 1_000 };
 const testPool = () => owned(new pg.Pool({ connectionString: url, lock_timeout: 10_000 }), pool => pool.end());
 const auditor = (api: Api, overrides: ConstructorParameters<typeof PostgresDeletionAudit>[2] = options) =>
   owned(new PostgresDeletionAudit(url!, api, overrides), audit => audit.close());
-// Closing waits for in-flight queries (bounded by the 10s lock timeout and the audit's own timeouts), so the hook
-// needs more than Bun's 5s default.
-beforeEach(async () => { await Promise.allSettled(leftovers.splice(0).map(async close => await close())); }, 60_000);
 function transport() {
   const api = new Api("123:fixture");
   const calls: unknown[] = [];
