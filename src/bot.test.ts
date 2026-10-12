@@ -1920,9 +1920,11 @@ test("repeat campaign under three linked posts deletes every kept copy at an unc
   expect(JSON.stringify(h.logs)).not.toContain(repeatedOffer);
   await h.stats.flush();
   expect(h.batches.flatMap((batch) => batch.deletions).map((d) => [d.messageId, d.source])).toEqual([["1", "jev"], ["2", "jev"], ["3", "jev"]]);
-  // History was cleared: a later copy under a fourth post starts a fresh window.
+  // Classifier history was cleared, but the campaign ledger still catches later copies on arrival.
+  h.setAnswer(keepAt(0.7929));
   await h.send({ text: repeatedOffer, reply_to_message: channelPost(3) });
-  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(h.classifications[3]!.recent).toEqual([]);
+  expect(h.deletes()).toEqual([1, 2, 3, 4]);
   await h.stats.stop();
 });
 
@@ -1935,6 +1937,36 @@ test("repeat campaign also widens a model deletion past weak copy links", async 
   expect(h.deletes()).toEqual([1, 2, 3]);
   expect(h.logs.find((log) => log.event === "repeat_campaign_detected")?.modelDecision).toBe("delete");
   await h.stats.stop();
+});
+
+test("repeat campaign counts copies the model already deleted and survives classifier failure", async () => {
+  const deleted = harness();
+  deleted.setAnswer({ ...assessment(true), probability: 0.81 });
+  await deleted.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  deleted.setAnswer(keepAt(0.6));
+  await deleted.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  expect(deleted.deletes()).toEqual([1]);
+  await deleted.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(deleted.deletes()).toEqual([1, 2, 3]);
+
+  let calls = 0;
+  const failing = harness(async () => {
+    if (++calls === 3) throw new Error("private model failure");
+    return keepAt(0.7);
+  });
+  for (let index = 0; index < 3; index += 1) await failing.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  expect(failing.deletes()).toEqual([1, 2, 3]);
+  expect(failing.logs.find((log) => log.event === "repeat_campaign_detected")?.modelDecision).toBe("failed");
+  expect(failing.logs.some((log) => log.event === "classification_failed")).toBe(true);
+
+  // More unrelated messages than the 10-message classifier history between copies.
+  const busy = harness();
+  await busy.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  for (let index = 0; index < 11; index += 1) await busy.send({ text: "chatter " + index });
+  await busy.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  await busy.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(busy.deletes()).toEqual([1, 13, 14]);
+  for (const h of [deleted, failing, busy]) await h.stats.stop();
 });
 
 test("repeat campaign needs three distinct linked posts and the same actor", async () => {
@@ -1989,9 +2021,19 @@ test("repeat campaign keeps replies to members' requests, interleaved messages a
   // A non-linked channel speaking in the group is not a post.
   for (let index = 0; index < 3; index += 1) await controls.send({ text: repeatControls.jobSeeker, reply_to_message: {
     message_id: 900 + index, date: 1, chat: group, sender_chat: { ...channel, id: -2999 }, from: synthetic, text: "Channel chat" } });
+  // Several members echoing the same warning or report under every post are separate actors.
+  for (const text of [repeatControls.warning, repeatControls.report]) {
+    for (let index = 0; index < 3; index += 1) await controls.send({ from: { ...user, id: 60 + index }, text, reply_to_message: channelPost(index) });
+  }
   expect(controls.deletes()).toEqual([]);
   expect(controls.logs.some((log) => log.event === "repeat_campaign_detected")).toBe(false);
-  for (const h of [requested, mixed, controls]) await h.stats.stop();
+
+  // In scope by decision: one actor pasting any identical 40+ character text under
+  // three posts in ten minutes is mass-posting, whether an offer, a job search or a warning.
+  const massPosted = harness();
+  for (let index = 0; index < 3; index += 1) await massPosted.send({ text: repeatControls.warning, reply_to_message: channelPost(index) });
+  expect(massPosted.deletes()).toEqual([1, 2, 3]);
+  for (const h of [requested, mixed, controls, massPosted]) await h.stats.stop();
 });
 
 test("repeat campaign audit snapshots every deleted copy with its own channel post", async () => {

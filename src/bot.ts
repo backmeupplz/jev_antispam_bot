@@ -2,7 +2,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache } from "./admin-cache";
-import { campaignMessageIds, campaignPost } from "./campaign";
+import { CampaignLedger, campaignPost, campaignText } from "./campaign";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
@@ -39,6 +39,7 @@ export function registerBotHandlers(bot: Bot, {
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
+  const campaigns = new CampaignLedger();
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
 
@@ -189,7 +190,6 @@ export function registerBotHandlers(bot: Bot, {
         } catch { /* Optional public context fails open without raw error telemetry. */ }
       }
       const moderationMessage = message;
-      const post = mediaOnly ? undefined : campaignPost(ctx.msg);
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
@@ -222,6 +222,7 @@ export function registerBotHandlers(bot: Bot, {
         ? startShadow(shadowClassifier.classify(classifierInput, context), ctx.chat.id, ctx.msgId, "edited_message" in ctx.update)
         : () => {};
       let assessment: SpamAssessment | undefined;
+      let classificationFailed = false;
       try {
         if (!cacheHit) {
           stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
@@ -231,43 +232,50 @@ export function registerBotHandlers(bot: Bot, {
           if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
         }
       } catch (error) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, campaignPost: post });
+        classificationFailed = true;
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         logShadow("failed");
-        await next();
-        return;
       }
 
-      if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
-      logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
+      if (!classificationFailed) {
+        if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
+        logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
+      }
 
       // Repetition is decided by the bot, not the model: Laya scores repeated
       // copies lower because its training history only ever held kept messages.
-      const campaignIds = cacheHit || mediaOnly ? [] : campaignMessageIds(recentMessages,
-        { messageId: ctx.msgId, text: message.text, campaignPost: post });
-      if (campaignIds.length) logger.info(JSON.stringify({
+      // Every eligible copy is recorded whatever the verdict, so model, cache and
+      // campaign deletions all count towards the distinct posts.
+      const post = mediaOnly ? undefined : campaignPost(ctx.msg);
+      const copyText = post === undefined ? undefined : campaignText(message.text);
+      const campaignCopies = copyText === undefined ? undefined : campaigns.observe(ctx.chat.id, senderId,
+        { messageId: ctx.msgId, text: copyText, post: post!, receivedAt: Date.now(), auditSnapshot: snapshot });
+      if (campaignCopies) logger.info(JSON.stringify({
         event: "repeat_campaign_detected", chatId: ctx.chat.id, messageId: ctx.msgId,
-        copyCount: campaignIds.length, modelDecision: cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep",
+        copyCount: campaignCopies.length + 1,
+        modelDecision: classificationFailed ? "failed" : cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep",
       }));
 
-      if (!cacheHit && !assessment?.shouldDelete && !campaignIds.length) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, campaignPost: post });
+      if (!cacheHit && !assessment?.shouldDelete && !campaignCopies) {
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
         await next();
         return;
       }
 
       // Profile-only evidence cannot prove earlier text was part of the ad.
-      const linkedIds = cacheHit || mediaOnly || !assessment!.shouldDelete ? [ctx.msgId] : deletionMessageIds(
+      const linkedIds = cacheHit || mediaOnly || !assessment?.shouldDelete ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
-        assessment!.contextProbabilities,
+        assessment.contextProbabilities,
         CONTEXT_LINK_THRESHOLD,
       );
-      const selected = new Set([...linkedIds, ...campaignIds]);
-      const messageIds = [...recentMessages.map(m => m.messageId).filter(id => selected.has(id)), ctx.msgId];
+      const earlierIds = new Set([...linkedIds, ...(campaignCopies ?? []).map(c => c.messageId)]);
+      earlierIds.delete(ctx.msgId);
+      const messageIds = [...[...earlierIds].sort((a, b) => a - b), ctx.msgId];
       // Freeze each message’s own profile/content before clearing history.
-      const snapshots = [...recentMessages.flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : []), ...(snapshot ? [snapshot] : [])];
+      const snapshots = [...recentMessages, ...(campaignCopies ?? [])].flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : [])
+        .concat(snapshot ? [snapshot] : []);
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
 
       const deletedMessageCount = await deleteMessages(
@@ -298,7 +306,10 @@ export function registerBotHandlers(bot: Bot, {
             catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
           }
         },
-        (chatId, messageId) => stats.recordDeletion({ chatId, messageId, source: cacheHit ? "cache" : "jev" }),
+        (chatId, messageId) => {
+          campaigns.markDeleted(chatId, senderId, messageId);
+          stats.recordDeletion({ chatId, messageId, source: cacheHit ? "cache" : "jev" });
+        },
         (error, messageId) => logFailure("delete_failed", error, ctx.chat.id, messageId),
       );
 
@@ -310,7 +321,7 @@ export function registerBotHandlers(bot: Bot, {
           deletedMessageCount,
           attemptedMessageCount: messageIds.length,
           source: cacheHit ? "cache" : "jev",
-          rule: campaignIds.length ? "repeat_campaign" : "model",
+          rule: campaignCopies ? "repeat_campaign" : "model",
           signal: assessment?.strongestSignal,
           probability: assessment?.probability,
           model: assessment?.model ?? model,
