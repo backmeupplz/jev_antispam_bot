@@ -1,6 +1,6 @@
 # Pinned Telegram preview TLS (GEN-KANEO-41)
 
-The managed Easypanel Nixpacks 1.41.0 build runs Bun 1.3.0, independently of the Dockerfile and previous CI pin (1.4.0). On 1.3.0, `node:https` custom lookup synthesizes `Host: t.me:443` and uses that authority for TLS identity; the validated public IP succeeds without custom lookup but fails with `ERR_TLS_CERT_ALTNAME_INVALID` when pinned. Explicit `servername` alone does not fix it. Bun 1.4.0 accepts the original request.
+The managed Easypanel Nixpacks 1.41.0 build ran Bun 1.3.0 when this was written, independently of the Dockerfile and CI pin (1.4.0); production now builds the Dockerfile on the CI Bun version (#89), and the explicit Host stays harmless on 1.4.0. On 1.3.0, `node:https` custom lookup synthesizes `Host: t.me:443` and uses that authority for TLS identity; the validated public IP succeeds without custom lookup but fails with `ERR_TLS_CERT_ALTNAME_INVALID` when pinned. Explicit `servername` alone does not fix it. Bun 1.4.0 accepts the original request.
 
 Set the exact admitted `Host: t.me` explicitly. Keep the original URL, validated IPv4 lookup callback, normal CA and hostname verification, manual redirect admission, deadline and byte limits. No insecure TLS flags, new outbound hosts, runtime upgrade, environment changes or unpinned retries.
 
