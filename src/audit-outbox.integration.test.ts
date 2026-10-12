@@ -38,7 +38,9 @@ integration("migration concurrency, durable intent, restart, source dedupe and n
     await other.runOnce(); expect(f.t.calls).toHaveLength(0);
     await f.audit.close(); await other.confirmed(id); await other.confirmed(id);
     await other.runOnce(); expect(f.t.calls).toHaveLength(1); expect((await f.state(id)).state).toBe("sent");
-    expect(await other.prepare(-69, 1, "fixture")).toBeUndefined();
+    const reasons: string[] = [];
+    expect(await other.prepare(-69, 1, "fixture", reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["duplicate"]);
     await other.runOnce(); expect(f.t.calls).toHaveLength(1);
   } finally { await other.close(); await f.close(); }
 });
@@ -131,7 +133,9 @@ integration("network errors, API 5xx and abort are unknown; known 400/403 are te
 integration("database outage refuses deletion intent without leaking errors", async () => {
   const audit = new PostgresDeletionAudit("postgresql://fixture@127.0.0.1:1/jev_audit_test", transport().api);
   try {
-    expect(await audit.prepare(-69, 1, "private fixture")).toBeUndefined();
+    const reasons: string[] = [];
+    expect(await audit.prepare(-69, 1, "private fixture", reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["database"]); expect(audit.health().capacityRefused).toBe(0);
     expect(audit.health().refused).toBe(1); expect(audit.health().error).toBeGreaterThan(0);
     await audit.confirmed(randomUUID()); await audit.failed(randomUUID());
   } finally { await audit.close(); }
@@ -176,7 +180,9 @@ integration("shutdown waits for active send and does not schedule another", asyn
     let closed = false; const closing = f.audit.close().then(() => { closed = true; });
     await Bun.sleep(10); expect(closed).toBe(false); release(); await closing;
     expect((await f.state(id)).state).toBe("sent"); expect(f.t.calls).toHaveLength(1);
-    expect(await f.audit.prepare(-69, 2, "fixture")).toBeUndefined();
+    const reasons: string[] = [];
+    expect(await f.audit.prepare(-69, 2, "fixture", reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["closing"]);
   } finally { await f.close(); }
 });
 
@@ -231,7 +237,7 @@ integration("429 retries only the current part and durably paces all workers and
   } finally { await other.close(); await f.close(); }
 });
 
-integration("multipart capacity counts all retained parts atomically and refuses whole intents", async () => {
+integration("multipart capacity counts live parts atomically and refuses whole intents", async () => {
   const f = await fixture(); const a = new PostgresDeletionAudit(url!, f.t.api, { ...options, capacity: 3 });
   const b = new PostgresDeletionAudit(url!, f.t.api, { ...options, capacity: 3 });
   try {
@@ -248,10 +254,39 @@ integration("multipart capacity counts all retained parts atomically and refuses
   } finally { await a.close(); await b.close(); await f.close(); }
 });
 
+integration("default capacity ignores 10k finished parts but still refuses a live backlog with a distinct reason", async () => {
+  const f = await fixture(); const audit = new PostgresDeletionAudit(url!, f.t.api, { paceMs: 60_000, timeoutMs: 100, sendLeaseMs: 1_000 });
+  const rows = async (chatId: number, count: number, outbox: string, part: string) => {
+    await f.pool.query("INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at) SELECT gen_random_uuid(),$1,g,'x',$2,NOW()+INTERVAL '1 day' FROM generate_series(1,$3::int) g", [chatId, outbox, count]);
+    await f.pool.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state,receipt_message_id) SELECT id,1,'x',$2,CASE WHEN $2='sent' THEN message_id END FROM deletion_audit_outbox WHERE chat_id=$1", [chatId, part]);
+  };
+  try {
+    // Production incident shape: every retained part already finished (mostly sent), at the 10k default.
+    await rows(-70, 10_000, "sent", "sent");
+    for (const [chat, outbox, part] of [[-71, "delete_failed", "pending"], [-72, "delete_unknown", "pending"], [-73, "terminal", "terminal"], [-74, "send_unknown", "send_unknown"]] as const) await rows(chat, 500, outbox, part);
+    const reasons: string[] = [];
+    const id = await audit.prepare(-69, 1, ["one", "two"], reason => reasons.push(reason));
+    expect(id).toBeDefined(); expect(reasons).toEqual([]);
+    // Undelivered work is still bounded: 2 live intent parts + 9,997 pending parts leave room for exactly one more.
+    await rows(-75, 9_997, "pending", "pending");
+    expect(await audit.prepare(-69, 2, ["a", "b"], reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["capacity"]); expect(audit.health().capacityRefused).toBe(1);
+    expect((await audit.summary()).refused).toBe(1);
+    expect(await audit.prepare(-69, 3, "fits", reason => reasons.push(reason))).toBeDefined();
+    // Delivering frees capacity without waiting for retention expiry.
+    await f.pool.query("UPDATE deletion_audit_parts SET state='sent' WHERE audit_id IN (SELECT id FROM deletion_audit_outbox WHERE chat_id=-75 AND message_id<=2)");
+    await f.pool.query("UPDATE deletion_audit_outbox SET state='sent' WHERE chat_id=-75 AND message_id<=2");
+    expect(await audit.prepare(-69, 2, ["a", "b"], reason => reasons.push(reason))).toBeDefined();
+    expect(reasons).toEqual(["capacity"]); expect(f.t.calls).toHaveLength(0);
+  } finally { await audit.close(); await f.close(); }
+});
+
 integration("256 parts persist intact and 257 parts are wholly refused", async () => {
   const f = await fixture();
   try {
-    expect(await f.audit.prepare(-69, 1, Array(257).fill("x"))).toBeUndefined();
+    const reasons: string[] = [];
+    expect(await f.audit.prepare(-69, 1, Array(257).fill("x"), reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["invalid"]);
     expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM deletion_audit_outbox")).rows[0].count).toBe(0);
     const id = (await f.audit.prepare(-69, 2, Array(256).fill("x")))!; expect(id).toBeDefined();
     expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM deletion_audit_parts WHERE audit_id=$1", [id])).rows[0].count).toBe(256);
