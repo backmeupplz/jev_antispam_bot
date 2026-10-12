@@ -21,4 +21,6 @@ RUN bun install --frozen-lockfile --production
 
 COPY src ./src
 COPY migrations ./migrations
+# Operator commands run inside this container, e.g. bun scripts/audit-report.ts check.
+COPY scripts ./scripts
 CMD ["bun", "run", "src/index.ts"]
