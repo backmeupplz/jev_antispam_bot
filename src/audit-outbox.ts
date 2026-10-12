@@ -103,8 +103,8 @@ export class PostgresDeletionAudit implements DeletionAudit {
       "UPDATE deletion_audit_outbox SET state=CASE state WHEN 'intent' THEN 'delete_unknown' ELSE 'send_unknown' END, lease_until=NULL, lease_token=NULL WHERE state IN ('intent','sending') AND lease_until<=clock_timestamp() RETURNING state");
     for (const row of stale.rows) this.counters[row.state === "delete_unknown" ? "deleteUnknown" : "sendUnknown"]++;
     const expired = await client.query(
-      // Stable statement_timestamp() keeps expiry on the expires_at index; batches bound one pass.
-      "WITH gone AS (DELETE FROM deletion_audit_outbox WHERE id IN (SELECT id FROM deletion_audit_outbox WHERE expires_at<=statement_timestamp() AND state NOT IN ('intent','sending') ORDER BY expires_at LIMIT 1000) RETURNING state) SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE state IN ('pending','send_unknown','delete_unknown','terminal'))::int AS undelivered FROM gone");
+      // Stable statement_timestamp() keeps expiry on the expires_at index; 100 reports (≤25,600 parts) per pass.
+      "WITH gone AS (DELETE FROM deletion_audit_outbox WHERE id IN (SELECT id FROM deletion_audit_outbox WHERE expires_at<=statement_timestamp() AND state NOT IN ('intent','sending') ORDER BY expires_at LIMIT 100) RETURNING state) SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE state IN ('pending','send_unknown','delete_unknown','terminal'))::int AS undelivered FROM gone");
     const { total, undelivered } = expired.rows[0];
     if (total) {
       await client.query("UPDATE deletion_audit_sink SET expired=expired+$1, expired_undelivered=expired_undelivered+$2", [total, undelivered]);

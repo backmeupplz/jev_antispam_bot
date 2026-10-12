@@ -313,7 +313,8 @@ integration("startup on an existing schema takes no table locks; live paths stay
       const id = await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason)); expect(id).toBeDefined(); expect(reasons).toEqual([]);
       await audit.confirmed(id!); await f.ready(); await audit.runOnce(); expect(await audit.status(id!)).toBe("sent");
       const plan = JSON.stringify((await f.pool.query("EXPLAIN (FORMAT JSON) SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending')")).rows);
-      expect(plan).toContain("deletion_audit_parts_live");
+      expect(plan).toContain("deletion_audit_parts_live"); expect(plan).toContain("deletion_audit_outbox_live");
+      expect(plan).not.toContain("Seq Scan");
     } finally { await audit.close(); }
   } finally { await holder.end(); await f.close(); }
 }, 30_000);
@@ -321,13 +322,17 @@ integration("startup on an existing schema takes no table locks; live paths stay
 integration("upgrade adds live indexes to an existing schema while another replica keeps admitting intents", async () => {
   const f = await fixture();
   try {
-    await f.pool.query("DROP INDEX deletion_audit_parts_live; DROP INDEX deletion_audit_outbox_leased");
+    await f.pool.query("DROP INDEX deletion_audit_parts_live; DROP INDEX deletion_audit_outbox_leased; DROP INDEX deletion_audit_outbox_live");
     const upgraded = new PostgresDeletionAudit(url!, f.t.api, options);
     try {
       const [, ...ids] = await Promise.all([upgraded.initialize(), ...Array.from({ length: 5 }, (_, i) => f.audit.prepare(-69, i + 1, "fixture"))]);
       expect(ids.every(Boolean)).toBe(true);
-      expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM pg_indexes WHERE indexname IN ('deletion_audit_parts_live','deletion_audit_outbox_leased')")).rows[0].count).toBe(2);
+      expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM pg_indexes WHERE indexname IN ('deletion_audit_parts_live','deletion_audit_outbox_leased','deletion_audit_outbox_live')")).rows[0].count).toBe(3);
     } finally { await upgraded.close(); }
+    // Skipping 004 on restart still restores a missing sink row.
+    await f.pool.query("DELETE FROM deletion_audit_sink");
+    const restarted = new PostgresDeletionAudit(url!, f.t.api, options);
+    try { await restarted.initialize(); expect(await restarted.prepare(-69, 9, "fixture")).toBeDefined(); } finally { await restarted.close(); }
   } finally { await f.close(); }
 });
 
