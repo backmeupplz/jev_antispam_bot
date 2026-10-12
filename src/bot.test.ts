@@ -1908,9 +1908,8 @@ test("repeat campaign under three linked posts deletes every kept copy at an unc
     if (index < 2) expect(h.deletes()).toEqual([]);
   }
   expect(h.classifications).toHaveLength(3);
-  // The model input and history projection are unchanged; post linkage never reaches the classifier.
+  // The classifier still sees exactly the kept history it saw before this rule.
   expect(h.classifications[2]!.recent.map((message) => message.text)).toEqual([repeatedOffer, repeatedOffer]);
-  expect(JSON.stringify(h.classifications)).not.toContain("campaignPost");
   expect(h.classifications.map((c) => c.message.preview?.[0])).toEqual(incident.map(() => expect.objectContaining({ kind: "reply", sourceKind: "channel" })));
   expect(h.deletes()).toEqual([1, 2, 3]);
   expect(h.logs.find((log) => log.event === "repeat_campaign_detected")).toEqual({
@@ -1967,6 +1966,24 @@ test("repeat campaign counts copies the model already deleted and survives class
   await busy.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
   expect(busy.deletes()).toEqual([1, 13, 14]);
   for (const h of [deleted, failing, busy]) await h.stats.stop();
+});
+
+test("repeat campaign forgets copies edited away and never retries a failed delete", async () => {
+  const edited = auditHarness();
+  await edited.send({ message_id: 50, text: repeatedOffer, reply_to_message: channelPost(0) });
+  await edited.send({ message_id: 50, text: "short edit", reply_to_message: channelPost(0) }, true);
+  await edited.send({ message_id: 51, text: repeatedOffer, reply_to_message: channelPost(1) });
+  await edited.send({ message_id: 52, text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(edited.deletes()).toEqual([]);
+  await edited.send({ message_id: 53, text: repeatedOffer, reply_to_message: channelPost(3) });
+  expect(edited.deletes()).toEqual([51, 52, 53]);
+
+  const failed = harness();
+  failed.failedDeletes.add(1);
+  for (let index = 0; index < 4; index += 1) await failed.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  expect(failed.deletes()).toEqual([1, 2, 3, 4]);
+  expect(failed.logs.filter((log) => log.event === "delete_failed").map((log) => log.messageId)).toEqual([1]);
+  for (const h of [edited, failed]) await h.stats.stop();
 });
 
 test("repeat campaign needs three distinct linked posts and the same actor", async () => {

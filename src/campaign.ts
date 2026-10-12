@@ -26,7 +26,8 @@ export type CampaignCopy = {
   text: string;
   post: number;
   receivedAt: number;
-  deleted?: boolean;
+  // Deletion was attempted (succeeded or failed); never retried in the window.
+  handled?: boolean;
   auditSnapshot?: AuditSnapshot;
 };
 
@@ -51,12 +52,22 @@ export class CampaignLedger {
     this.copies.set(key, [...earlier, copy].slice(-this.maxCopies));
     const same = earlier.filter((c) => c.text === copy.text);
     const posts = new Set([...same.map((c) => c.post), copy.post]);
-    return posts.size >= CAMPAIGN_MIN_POSTS ? same.filter((c) => !c.deleted) : undefined;
+    return posts.size >= CAMPAIGN_MIN_POSTS ? same.filter((c) => !c.handled) : undefined;
   }
 
-  markDeleted(chatId: number, actor: string, messageId: number): void {
+  markHandled(chatId: number, actor: string, messageId: number): void {
     const copy = this.copies.get(`${chatId}:${actor}`)?.find((c) => c.messageId === messageId);
-    if (copy) copy.deleted = true;
+    if (copy) copy.handled = true;
+  }
+
+  // An edit that is no longer an eligible copy must not keep its old text/snapshot.
+  forget(chatId: number, actor: string, messageId: number): void {
+    const key = `${chatId}:${actor}`;
+    const copies = this.copies.get(key);
+    if (!copies?.some((c) => c.messageId === messageId)) return;
+    const rest = copies.filter((c) => c.messageId !== messageId);
+    if (rest.length) this.copies.set(key, rest);
+    else this.copies.delete(key);
   }
 
   private live(key: string, now: number): CampaignCopy[] {

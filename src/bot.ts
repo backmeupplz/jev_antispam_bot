@@ -251,6 +251,7 @@ export function registerBotHandlers(bot: Bot, {
       const copyText = post === undefined ? undefined : campaignText(message.text);
       const campaignCopies = copyText === undefined ? undefined : campaigns.observe(ctx.chat.id, senderId,
         { messageId: ctx.msgId, text: copyText, post: post!, receivedAt: Date.now(), auditSnapshot: snapshot });
+      if (copyText === undefined) campaigns.forget(ctx.chat.id, senderId, ctx.msgId);
       if (campaignCopies) logger.info(JSON.stringify({
         event: "repeat_campaign_detected", chatId: ctx.chat.id, messageId: ctx.msgId,
         copyCount: campaignCopies.length + 1,
@@ -307,10 +308,13 @@ export function registerBotHandlers(bot: Bot, {
           }
         },
         (chatId, messageId) => {
-          campaigns.markDeleted(chatId, senderId, messageId);
+          campaigns.markHandled(chatId, senderId, messageId);
           stats.recordDeletion({ chatId, messageId, source: cacheHit ? "cache" : "jev" });
         },
-        (error, messageId) => logFailure("delete_failed", error, ctx.chat.id, messageId),
+        (error, messageId) => {
+          campaigns.markHandled(ctx.chat.id, senderId, messageId);
+          logFailure("delete_failed", error, ctx.chat.id, messageId);
+        },
       );
 
       if (deletedMessageCount) {

@@ -34,12 +34,12 @@ test("needs identical copies under three distinct posts and returns undeleted ea
   expect(ledger.observe(1, "user:1", copy(3, 101, 0, "a different but long enough comment text here"))).toBeUndefined();
   expect(ledger.observe(1, "user:2", copy(4, 102))).toBeUndefined();
   expect(ledger.observe(2, "user:1", copy(5, 102))).toBeUndefined();
-  ledger.markDeleted(1, "user:1", 2);
+  ledger.markHandled(1, "user:1", 2);
   expect(ids(ledger.observe(1, "user:1", copy(6, 102)))).toBeUndefined();
   expect(ids(ledger.observe(1, "user:1", copy(7, 101)))).toEqual([1, 6]);
-  ledger.markDeleted(1, "user:1", 1);
-  ledger.markDeleted(1, "user:1", 6);
-  ledger.markDeleted(1, "user:1", 7);
+  ledger.markHandled(1, "user:1", 1);
+  ledger.markHandled(1, "user:1", 6);
+  ledger.markHandled(1, "user:1", 7);
   // Later copies in the same window are caught on arrival, even with nothing left to delete.
   expect(ids(ledger.observe(1, "user:1", copy(8, 103)))).toEqual([]);
 });
@@ -59,4 +59,14 @@ test("edits replace their own copy; copies expire after the window; the ledger i
   bounded.observe(1, "a", copy(2, 101, 0, "x".repeat(50)));
   bounded.observe(1, "a", copy(3, 102, 0, "y".repeat(50)));
   expect(bounded.observe(1, "a", copy(4, 103))).toBeUndefined();
+});
+
+test("forgetting an edited-away copy removes it from the campaign", () => {
+  const ledger = new CampaignLedger();
+  ledger.observe(1, "a", copy(1, 100));
+  ledger.observe(1, "a", copy(2, 101));
+  ledger.forget(1, "a", 1);
+  ledger.forget(1, "a", 99);
+  expect(ledger.observe(1, "a", copy(3, 102))).toBeUndefined();
+  expect(ids(ledger.observe(1, "a", copy(4, 103)))).toEqual([2, 3]);
 });
