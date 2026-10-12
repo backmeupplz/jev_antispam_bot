@@ -5,6 +5,8 @@ export type RecentMessage = ModerationMessage & {
   messageId: number;
   receivedAt: number;
   auditSnapshot?: AuditSnapshot;
+  // Linked channel post this copy commented under; never sent to the classifier.
+  campaignPost?: number;
 };
 
 export class MessageHistory {

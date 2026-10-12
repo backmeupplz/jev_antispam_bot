@@ -2,6 +2,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache } from "./admin-cache";
+import { campaignMessageIds, campaignPost } from "./campaign";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
@@ -188,6 +189,7 @@ export function registerBotHandlers(bot: Bot, {
         } catch { /* Optional public context fails open without raw error telemetry. */ }
       }
       const moderationMessage = message;
+      const post = mediaOnly ? undefined : campaignPost(ctx.msg);
       const recentMessages = history.recent(ctx.chat.id, senderId, Date.now(), ctx.msgId);
       logger.info(JSON.stringify({
         event: "message_analysis_started",
@@ -229,7 +231,7 @@ export function registerBotHandlers(bot: Bot, {
           if (fingerprint && assessment.model === model && confirmedSpam(assessment, spamThreshold)) await spamCache!.seed(fingerprint);
         }
       } catch (error) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, campaignPost: post });
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
         logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
         logShadow("failed");
@@ -240,19 +242,30 @@ export function registerBotHandlers(bot: Bot, {
       if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
       logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
 
-      if (!cacheHit && !assessment?.shouldDelete) {
-        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
+      // Repetition is decided by the bot, not the model: Laya scores repeated
+      // copies lower because its training history only ever held kept messages.
+      const campaignIds = cacheHit || mediaOnly ? [] : campaignMessageIds(recentMessages,
+        { messageId: ctx.msgId, text: message.text, campaignPost: post });
+      if (campaignIds.length) logger.info(JSON.stringify({
+        event: "repeat_campaign_detected", chatId: ctx.chat.id, messageId: ctx.msgId,
+        copyCount: campaignIds.length, modelDecision: cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep",
+      }));
+
+      if (!cacheHit && !assessment?.shouldDelete && !campaignIds.length) {
+        if (!mediaOnly) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, campaignPost: post });
         await next();
         return;
       }
 
       // Profile-only evidence cannot prove earlier text was part of the ad.
-      const messageIds = cacheHit || mediaOnly ? [ctx.msgId] : deletionMessageIds(
+      const linkedIds = cacheHit || mediaOnly || !assessment!.shouldDelete ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
         assessment!.contextProbabilities,
         CONTEXT_LINK_THRESHOLD,
       );
+      const selected = new Set([...linkedIds, ...campaignIds]);
+      const messageIds = [...recentMessages.map(m => m.messageId).filter(id => selected.has(id)), ctx.msgId];
       // Freeze each message’s own profile/content before clearing history.
       const snapshots = [...recentMessages.flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : []), ...(snapshot ? [snapshot] : [])];
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
@@ -297,6 +310,7 @@ export function registerBotHandlers(bot: Bot, {
           deletedMessageCount,
           attemptedMessageCount: messageIds.length,
           source: cacheHit ? "cache" : "jev",
+          rule: campaignIds.length ? "repeat_campaign" : "model",
           signal: assessment?.strongestSignal,
           probability: assessment?.probability,
           model: assessment?.model ?? model,

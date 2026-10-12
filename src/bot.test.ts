@@ -22,6 +22,7 @@ import {
 import { AsyncStatsBuffer, type StatsBatch } from "./stats";
 import { heartFixtures, heartTitle, heartSource } from "./fixtures/heart-profile";
 import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
+import { channelPosts, repeatControls, repeatedOffer } from "./fixtures/repeat-campaign";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -1890,4 +1891,113 @@ test("audit persistence unavailable skips destructive action; confirmation failu
   expect(f.logs.some(x => x.event === "classification_failed")).toBe(false);
   expect(JSON.stringify(f.logs)).not.toContain("private DB failure");
   await h.stats.stop(); await f.stats.stop();
+});
+
+// #81: identical copies under several linked channel posts (SYNTHETIC reconstruction).
+const channelPost = (index: number) => ({ message_id: 500 + index, date: 1, chat: group, sender_chat: channel, from: synthetic,
+  is_automatic_forward: true, forward_origin: { ...forwarded, message_id: 60 + index }, text: channelPosts[index % channelPosts.length] });
+const memberRequest = (index: number) => ({ message_id: 700 + index, date: 1, chat: group, from: { ...user, id: 40 + index }, text: repeatControls.seekerRequest });
+const keepAt = (probability: number) => ({ ...assessment(false), probability });
+
+test("repeat campaign under three linked posts deletes every kept copy at an unchanged gate", async () => {
+  const h = harness();
+  const incident = [0.7929, 0.6143, 0.542];
+  for (const [index, probability] of incident.entries()) {
+    h.setAnswer(keepAt(probability));
+    await h.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+    if (index < 2) expect(h.deletes()).toEqual([]);
+  }
+  expect(h.classifications).toHaveLength(3);
+  // The model input and history projection are unchanged; post linkage never reaches the classifier.
+  expect(h.classifications[2]!.recent.map((message) => message.text)).toEqual([repeatedOffer, repeatedOffer]);
+  expect(JSON.stringify(h.classifications)).not.toContain("campaignPost");
+  expect(h.classifications.map((c) => c.message.preview?.[0])).toEqual(incident.map(() => expect.objectContaining({ kind: "reply", sourceKind: "channel" })));
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(h.logs.find((log) => log.event === "repeat_campaign_detected")).toEqual({
+    event: "repeat_campaign_detected", chatId: group.id, messageId: 3, copyCount: 3, modelDecision: "keep" });
+  expect(h.logs.find((log) => log.event === "spam_deleted")).toMatchObject({ deletedMessageCount: 3, attemptedMessageCount: 3, rule: "repeat_campaign", source: "jev" });
+  expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep", "keep"]);
+  expect(JSON.stringify(h.logs)).not.toContain(repeatedOffer);
+  await h.stats.flush();
+  expect(h.batches.flatMap((batch) => batch.deletions).map((d) => [d.messageId, d.source])).toEqual([["1", "jev"], ["2", "jev"], ["3", "jev"]]);
+  // History was cleared: a later copy under a fourth post starts a fresh window.
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(3) });
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  await h.stats.stop();
+});
+
+test("repeat campaign also widens a model deletion past weak copy links", async () => {
+  const h = harness();
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  h.setAnswer(assessment(true, [0.7287, 0.7212]));
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(h.logs.find((log) => log.event === "repeat_campaign_detected")?.modelDecision).toBe("delete");
+  await h.stats.stop();
+});
+
+test("repeat campaign needs three distinct linked posts and the same actor", async () => {
+  const twice = harness();
+  await twice.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await twice.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  await twice.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  expect(twice.deletes()).toEqual([]);
+
+  const edits = harness();
+  await edits.send({ message_id: 50, text: repeatedOffer, reply_to_message: channelPost(0) });
+  await edits.send({ message_id: 50, text: repeatedOffer, reply_to_message: channelPost(0) }, true);
+  await edits.send({ message_id: 51, text: repeatedOffer, reply_to_message: channelPost(1) });
+  expect(edits.deletes()).toEqual([]);
+
+  const actors = harness();
+  const other = { ...user, id: 77 };
+  await actors.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await actors.send({ from: other, text: repeatedOffer, reply_to_message: channelPost(1) });
+  await actors.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(actors.deletes()).toEqual([]);
+  await actors.send({ text: repeatedOffer, reply_to_message: channelPost(3) });
+  // Only the triggering actor's copies; the other member's copy and history stay.
+  expect(actors.deletes()).toEqual([1, 3, 4]);
+  await actors.send({ from: other, text: repeatedOffer, reply_to_message: channelPost(4) });
+  expect(actors.classifications[4]!.recent.map((message) => message.text)).toEqual([repeatedOffer]);
+  expect(actors.deletes()).toEqual([1, 3, 4]);
+  for (const h of [twice, edits, actors]) await h.stats.stop();
+});
+
+test("repeat campaign keeps replies to members' requests, interleaved messages and distinct controls", async () => {
+  const requested = harness();
+  for (let index = 0; index < 3; index += 1) await requested.send({ text: repeatControls.requestedOffer, reply_to_message: memberRequest(index) });
+  await requested.send({ text: repeatControls.requestedOffer });
+  expect(requested.deletes()).toEqual([]);
+
+  const mixed = harness();
+  await mixed.send({ text: repeatedOffer, reply_to_message: memberRequest(0) });
+  await mixed.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await mixed.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  expect(mixed.deletes()).toEqual([]);
+  await mixed.send({ text: "Unrelated but long enough message from the same member here" });
+  await mixed.send({ text: "  " + repeatedOffer.toUpperCase() + "\n", reply_to_message: channelPost(2) });
+  // The member-request reply (1) and interleaved message (4) are not campaign copies.
+  expect(mixed.deletes()).toEqual([2, 3, 5]);
+
+  const controls = harness();
+  const texts = [repeatControls.jobSeeker, repeatControls.wageDiscussion, repeatControls.warning, repeatControls.report];
+  for (const [index, text] of texts.entries()) await controls.send({ text, reply_to_message: channelPost(index) });
+  // Short repeated chatter is below the 40-character floor.
+  for (let index = 0; index < 3; index += 1) await controls.send({ text: repeatControls.chatter, reply_to_message: channelPost(index) });
+  // A non-linked channel speaking in the group is not a post.
+  for (let index = 0; index < 3; index += 1) await controls.send({ text: repeatControls.jobSeeker, reply_to_message: {
+    message_id: 900 + index, date: 1, chat: group, sender_chat: { ...channel, id: -2999 }, from: synthetic, text: "Channel chat" } });
+  expect(controls.deletes()).toEqual([]);
+  expect(controls.logs.some((log) => log.event === "repeat_campaign_detected")).toBe(false);
+  for (const h of [requested, mixed, controls]) await h.stats.stop();
+});
+
+test("repeat campaign audit snapshots every deleted copy with its own channel post", async () => {
+  const h = auditHarness();
+  for (let index = 0; index < 3; index += 1) await h.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  expect(h.confirmed).toEqual(["1", "2", "3"]);
+  for (let index = 0; index < 3; index += 1) expect(h.prepared.get(String(index + 1))).toContain(channelPosts[index]!);
+  await h.stats.stop();
 });
