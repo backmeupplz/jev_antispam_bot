@@ -17,6 +17,8 @@ type Options = { capacity?: number; retentionMs?: number; timeoutMs?: number; in
   sendLeaseMs?: number; pollMs?: number; paceMs?: number };
 type Claimed = { id: string; sequence: number; report: string; lease_token: string; attempts: number };
 export const MAX_AUDIT_PARTS = 256;
+/** Retained reports have no hard cap (retention × deletion attempts); above the tested 100k scale, alert. */
+export const RETAINED_REPORTS_ALERT = 100_000;
 /** Parts that may still be sent; the only rows that occupy capacity (exported for the plan test). */
 export const LIVE_PARTS_SQL = "SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending') AND o.expires_at>statement_timestamp()";
 const DAY = 86_400_000;
@@ -240,12 +242,13 @@ export class PostgresDeletionAudit implements DeletionAudit {
     });
   }
   /** Durable, identity/content-free state summary; throws a generic error on DB failure. */
-  async summary(): Promise<Record<string, number>> {
+  async summary(): Promise<Record<string, number> & { retained: number }> {
     try {
       await this.initialize();
       const rows = await this.pool.query("SELECT state,COUNT(*)::int AS count FROM deletion_audit_outbox GROUP BY state");
       const sink = (await this.pool.query("SELECT prepared,refused,expired,expired_undelivered FROM deletion_audit_sink")).rows[0];
-      return Object.fromEntries([...rows.rows.map((row) => [row.state, row.count]), ...Object.entries(sink).map(([key, value]) => [key, Number(value)])]);
+      const retained = rows.rows.reduce((total, row) => total + row.count, 0);
+      return { ...Object.fromEntries([...rows.rows.map((row) => [row.state, row.count]), ...Object.entries(sink).map(([key, value]) => [key, Number(value)])]), retained };
     } catch { this.counters.error++; throw new Error("Audit summary unavailable"); }
   }
   close(): Promise<void> {

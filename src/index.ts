@@ -1,5 +1,5 @@
 import { trackHandlers, drainBot } from "./lifecycle";
-import { PostgresDeletionAudit } from "./audit-outbox";
+import { PostgresDeletionAudit, RETAINED_REPORTS_ALERT } from "./audit-outbox";
 import { CACHE_POLICY_REVISION } from "./spam-cache";
 import { APPROVED_MODEL, APPROVED_PROMPT_SHA256, APPROVED_CHECKPOINT_SHA256 } from "./policy";
 import { PostgresSpamCache } from "./spam-cache";
@@ -19,8 +19,10 @@ const deletionAudit = new PostgresDeletionAudit(config.databaseUrl, bot.api);
 await deletionAudit.initialize();
 deletionAudit.start();
 const auditHealthTimer = setInterval(() => {
-  void deletionAudit.summary().then(summary => console.info(JSON.stringify({ event: "deletion_audit_health", ...summary, process: deletionAudit.health() })))
-    .catch(() => console.error(JSON.stringify({ event: "deletion_audit_health", outcome: "unavailable" })));
+  void deletionAudit.summary().then(summary => {
+    console.info(JSON.stringify({ event: "deletion_audit_health", ...summary, process: deletionAudit.health() }));
+    if (summary.retained > RETAINED_REPORTS_ALERT) console.warn(JSON.stringify({ event: "deletion_audit_retention_high", retained: summary.retained, threshold: RETAINED_REPORTS_ALERT }));
+  }).catch(() => console.error(JSON.stringify({ event: "deletion_audit_health", outcome: "unavailable" })));
 }, 60_000);
 auditHealthTimer.unref();
 const stats = createStatsRecorder(config.databaseUrl);
