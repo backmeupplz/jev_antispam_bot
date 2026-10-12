@@ -93,6 +93,8 @@ docker build -t jev-antispam-bot .
 docker run --rm --env-file .env jev-antispam-bot
 ```
 
+Production (Easypanel) builds this Dockerfile. Its first stage runs `bun run check` (typecheck plus the tests that need no database) on the same Bun that runs the bot, and `bun install --frozen-lockfile` fails the build if `bun.lock` is out of date. The Bun version in the Dockerfile must match `BUN_VERSION` in `.github/workflows/ci.yml`; the CI `deploy-image` job enforces this and builds the image.
+
 ## Optional PostgreSQL statistics
 
 Create a PostgreSQL database and set `DATABASE_URL` to its connection URL:
