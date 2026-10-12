@@ -4,8 +4,11 @@ import { GrammyError, type Api } from "grammy";
 import pg from "pg";
 
 export const AUDIT_CHAT_ID = -5477973916;
+/** Fixed, content-free reasons an intent was not admitted (safe to log). */
+export type AuditRefusal = "invalid" | "closing" | "duplicate" | "capacity" | "database";
 export interface DeletionAudit {
-  prepare(chatId: number, messageId: number, report: string | string[]): Promise<string | undefined>;
+  /** undefined means skip deletion; `refused` (optional) receives the allowlisted reason. */
+  prepare(chatId: number, messageId: number, report: string | string[], refused?: (reason: AuditRefusal) => void): Promise<string | undefined>;
   confirmed(id: string): Promise<void>;
   failed(id: string, ambiguous?: boolean): Promise<void>;
 }
@@ -14,6 +17,8 @@ type Options = { capacity?: number; retentionMs?: number; timeoutMs?: number; in
   sendLeaseMs?: number; pollMs?: number; paceMs?: number };
 type Claimed = { id: string; sequence: number; report: string; lease_token: string; attempts: number };
 export const MAX_AUDIT_PARTS = 256;
+/** Parts that may still be sent; the only rows that occupy capacity (exported for the plan test). */
+export const LIVE_PARTS_SQL = "SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending') AND o.expires_at>statement_timestamp()";
 const DAY = 86_400_000;
 function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
   const result = value ?? fallback;
@@ -45,7 +50,7 @@ export class PostgresDeletionAudit implements DeletionAudit {
   private work?: Promise<void>;
   private closing = false;
   private closePromise?: Promise<void>;
-  private readonly counters = { prepared: 0, refused: 0, duplicate: 0, confirmed: 0, deleteFailed: 0,
+  private readonly counters = { prepared: 0, refused: 0, capacityRefused: 0, duplicate: 0, confirmed: 0, deleteFailed: 0,
     deleteUnknown: 0, sent: 0, sendUnknown: 0, retried: 0, terminal: 0, expired: 0, expiredUndelivered: 0, error: 0 };
   constructor(databaseUrl: string, private readonly api: AuditApi, options: Options = {}) {
     const timeoutMs = bounded(options.timeoutMs, 10_000, 10, 30_000);
@@ -66,8 +71,13 @@ export class PostgresDeletionAudit implements DeletionAudit {
   initialize(): Promise<void> {
     return this.migration ??= this.transaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(69004)");
-      await client.query(readFileSync(new URL("../migrations/004_deletion_audit.sql", import.meta.url), "utf8"));
-      await client.query(readFileSync(new URL("../migrations/005_deletion_audit_parts.sql", import.meta.url), "utf8"));
+      // 004/005 (with 005's whole-table legacy backfill) run only until the parts table exists: they commit
+      // together, and re-running CREATE INDEX IF NOT EXISTS takes table locks that can deadlock a live replica.
+      if (!(await client.query("SELECT to_regclass('deletion_audit_parts') AS parts")).rows[0].parts) {
+        await client.query(readFileSync(new URL("../migrations/004_deletion_audit.sql", import.meta.url), "utf8"));
+        await client.query(readFileSync(new URL("../migrations/005_deletion_audit_parts.sql", import.meta.url), "utf8"));
+      }
+      await client.query(readFileSync(new URL("../migrations/006_deletion_audit_live_indexes.sql", import.meta.url), "utf8"));
     }).catch(() => { this.migration = undefined; this.counters.error++; throw new Error("Audit database initialization failed"); });
   }
   private async transaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -95,29 +105,42 @@ export class PostgresDeletionAudit implements DeletionAudit {
       "UPDATE deletion_audit_outbox SET state=CASE state WHEN 'intent' THEN 'delete_unknown' ELSE 'send_unknown' END, lease_until=NULL, lease_token=NULL WHERE state IN ('intent','sending') AND lease_until<=clock_timestamp() RETURNING state");
     for (const row of stale.rows) this.counters[row.state === "delete_unknown" ? "deleteUnknown" : "sendUnknown"]++;
     const expired = await client.query(
-      "WITH gone AS (DELETE FROM deletion_audit_outbox WHERE expires_at<=clock_timestamp() AND state NOT IN ('intent','sending') RETURNING state) SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE state IN ('pending','send_unknown','delete_unknown','terminal'))::int AS undelivered FROM gone");
+      // Stable statement_timestamp() keeps expiry on the expires_at index; 100 reports (≤25,600 parts) per pass.
+      "WITH gone AS (DELETE FROM deletion_audit_outbox WHERE id IN (SELECT id FROM deletion_audit_outbox WHERE expires_at<=statement_timestamp() AND state NOT IN ('intent','sending') ORDER BY expires_at LIMIT 100) RETURNING state) SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE state IN ('pending','send_unknown','delete_unknown','terminal'))::int AS undelivered FROM gone");
     const { total, undelivered } = expired.rows[0];
     if (total) {
       await client.query("UPDATE deletion_audit_sink SET expired=expired+$1, expired_undelivered=expired_undelivered+$2", [total, undelivered]);
       this.counters.expired += total; this.counters.expiredUndelivered += undelivered;
     }
   }
-  async prepare(chatId: number, messageId: number, report: string | string[]): Promise<string | undefined> {
+  async prepare(chatId: number, messageId: number, report: string | string[], refused?: (reason: AuditRefusal) => void): Promise<string | undefined> {
+    const refuse = (reason: AuditRefusal): undefined => {
+      this.counters[reason === "duplicate" ? "duplicate" : "refused"]++;
+      if (reason === "capacity") this.counters.capacityRefused++;
+      try { refused?.(reason); } catch { /* A reporting callback never changes admission. */ }
+      return undefined;
+    };
     // Snapshot caller-owned arrays before the first await; never clip an intent.
     const parts = typeof report === "string" ? [report] : Array.isArray(report) ? [...report] : [];
-    if (this.closing || !Number.isSafeInteger(chatId) || chatId === AUDIT_CHAT_ID || !Number.isSafeInteger(messageId) || messageId <= 0 ||
+    if (this.closing) return refuse("closing");
+    if (!Number.isSafeInteger(chatId) || chatId === AUDIT_CHAT_ID || !Number.isSafeInteger(messageId) || messageId <= 0 ||
         parts.length < 1 || parts.length > MAX_AUDIT_PARTS || parts.some(part => typeof part !== "string" || !part || part.length > 4_000 || Buffer.byteLength(part) > 16_000)) {
-      this.counters.refused++; return;
+      return refuse("invalid");
     }
+    let result: { id: string } | { refusal: AuditRefusal };
     try {
       await this.initialize();
-      return await this.transaction(async (client) => {
+      // Counters/callback run once, after COMMIT settles: a failed COMMIT is only a database refusal.
+      result = await this.transaction(async (client): Promise<typeof result> => {
         await this.lock(client); await this.maintain(client);
         const existing = (await client.query("SELECT id,state FROM deletion_audit_outbox WHERE chat_id=$1 AND message_id=$2 FOR UPDATE", [chatId, messageId])).rows[0];
-        if (existing && existing.state !== "delete_failed") { this.counters.duplicate++; return; }
-        const occupied = Number((await client.query("SELECT COUNT(*) FROM deletion_audit_parts WHERE audit_id IS DISTINCT FROM $1::uuid", [existing?.id ?? null])).rows[0].count);
+        if (existing && existing.state !== "delete_failed") return { refusal: "duplicate" };
+        // Capacity bounds only parts that may still be sent. Sent, terminal, unknown and failed-deletion
+        // rows are finished: they stay for dedupe/inspection until retention expiry but never block intents.
+        // (A replaced delete_failed intent is therefore already excluded.) Expired reports are never sent either.
+        const occupied = Number((await client.query(LIVE_PARTS_SQL)).rows[0].count);
         if (occupied + parts.length > this.limits.capacity) {
-          await client.query("UPDATE deletion_audit_sink SET refused=refused+1"); this.counters.refused++; return;
+          await client.query("UPDATE deletion_audit_sink SET refused=refused+1"); return { refusal: "capacity" };
         }
         const id = randomUUID();
         // Replace only known-failed intent, atomically, fencing its old callbacks.
@@ -126,10 +149,12 @@ export class PostgresDeletionAudit implements DeletionAudit {
           "INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at,lease_until) VALUES ($1,$2,$3,$4,'intent',clock_timestamp()+$5*INTERVAL '1 millisecond',clock_timestamp()+$6*INTERVAL '1 millisecond')",
           [id, chatId, messageId, parts[0], this.limits.retentionMs, this.limits.intentLeaseMs]);
         await client.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state) SELECT $1,ordinality,body,'pending' FROM unnest($2::text[]) WITH ORDINALITY AS part(body,ordinality)", [id, parts]);
-        await client.query("UPDATE deletion_audit_sink SET prepared=prepared+1"); this.counters.prepared++;
-        return id;
+        await client.query("UPDATE deletion_audit_sink SET prepared=prepared+1");
+        return { id };
       });
-    } catch { this.counters.error++; this.counters.refused++; return; }
+    } catch { this.counters.error++; return refuse("database"); }
+    if ("refusal" in result) return refuse(result.refusal);
+    this.counters.prepared++; return result.id;
   }
   /** A fixed, content-free probe. Never accepts an export body or a destination. */
   async integrationReport(): Promise<string | undefined> {

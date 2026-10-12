@@ -1,5 +1,5 @@
 import { Bot, GrammyError, HttpError } from "grammy";
-import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
+import { AUDIT_CHAT_ID, type AuditRefusal, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache } from "./admin-cache";
 import { CampaignLedger, campaignPost, campaignText } from "./campaign";
@@ -284,13 +284,14 @@ export function registerBotHandlers(bot: Bot, {
         messageIds,
         async (chatId, messageId) => {
           let intent: string | undefined;
+          let refusal: AuditRefusal | "unavailable" = "unavailable";
           if (deletionAudit) {
             const own = snapshots.find(s => s.messageId === messageId);
             if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
             try {
-              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own));
+              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own), reason => { refusal = reason; });
             } catch { /* Persistence failures never become classifier failures. */ }
-            if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped" })); throw new Error("Audit intent unavailable"); }
+            if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped", reason: refusal })); throw new Error("Audit intent unavailable"); }
           }
           try {
             const deleted = await ctx.api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<typeof ctx.api.deleteMessage>[2]);

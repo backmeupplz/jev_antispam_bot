@@ -1828,7 +1828,7 @@ function auditHarness(cache?: SpamCache) {
   const prepared = new Map<string, string>(); const confirmed: string[] = []; const failed: string[] = [];
   let unavailable = false; let confirmationFails = false;
   const audit: DeletionAudit = {
-    prepare: async (_chat, id, report) => { if (unavailable) return undefined; prepared.set(String(id), Array.isArray(report) ? report.join("\n") : report); return String(id); },
+    prepare: async (_chat, id, report, refused) => { if (unavailable) { refused?.("capacity"); return undefined; } prepared.set(String(id), Array.isArray(report) ? report.join("\n") : report); return String(id); },
     confirmed: async id => { if (confirmationFails) throw new Error("private DB failure"); confirmed.push(id); },
     failed: async id => { failed.push(id); },
   };
@@ -1884,7 +1884,7 @@ test("audit sender_chat ignores synthetic sender and forward origin; sink never 
 test("audit persistence unavailable skips destructive action; confirmation failure is not classification failure", async () => {
   const h = auditHarness(); h.setAnswer(assessment(true)); h.unavailable();
   await h.send(); expect(h.deletes()).toEqual([]); expect(h.confirmed).toEqual([]);
-  expect(h.logs.some(x => x.outcome === "intent_unavailable_delete_skipped")).toBe(true);
+  expect(h.logs.filter(x => x.outcome === "intent_unavailable_delete_skipped").map(x => x.reason)).toEqual(["capacity"]);
   const f = auditHarness(); f.setAnswer(assessment(true)); f.confirmationFails(); await f.send();
   expect(f.deletes()).toEqual([1]);
   expect(f.logs.some(x => x.event === "spam_deleted")).toBe(true);
