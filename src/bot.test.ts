@@ -2060,3 +2060,87 @@ test("repeat campaign audit snapshots every deleted copy with its own channel po
   for (let index = 0; index < 3; index += 1) expect(h.prepared.get(String(index + 1))).toContain(channelPosts[index]!);
   await h.stats.stop();
 });
+
+test("repeat campaign window uses post time, and an edit of a handled copy is never retried", async () => {
+  const late = harness();
+  const posted = 1_790_000_000;
+  for (const [index, date] of [posted, posted + 1, posted + 601].entries()) await late.send({ date, text: repeatedOffer, reply_to_message: channelPost(index) });
+  // Processed back to back, but the third copy was posted more than ten minutes after the first.
+  expect(late.deletes()).toEqual([]);
+
+  const failed = harness();
+  failed.failedDeletes.add(1);
+  for (let index = 0; index < 3; index += 1) await failed.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  expect(failed.deletes()).toEqual([1, 2, 3]);
+  await failed.send({ message_id: 1, text: repeatedOffer, reply_to_message: channelPost(0) }, true);
+  expect(failed.deletes()).toEqual([1, 2, 3]);
+  await failed.send({ text: repeatedOffer, reply_to_message: channelPost(3) });
+  expect(failed.deletes()).toEqual([1, 2, 3, 5]);
+  expect(failed.logs.filter((log) => log.event === "repeat_campaign_detected").map((log) => log.copyCount)).toEqual([3, 3, 4]);
+  for (const h of [late, failed]) await h.stats.stop();
+});
+
+test("repeat campaign counts cache-hit copies and attributes each copy's source and rule", async () => {
+  let hit = true;
+  const counted = harness(undefined, undefined, { lookup: async () => hit, seed: async () => {} });
+  await counted.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  hit = false;
+  counted.setAnswer(keepAt(0.6));
+  await counted.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  await counted.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(counted.classifications).toHaveLength(2);
+  expect(counted.deletes()).toEqual([1, 2, 3]);
+  expect(counted.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.rule, log.source])).toEqual([["cache", "cache"], ["repeat_campaign", "jev"]]);
+  await counted.stats.flush();
+  expect(counted.batches.flatMap((batch) => batch.deletions).map((d) => [d.messageId, d.source])).toEqual([["1", "cache"], ["2", "jev"], ["3", "jev"]]);
+
+  // A cache hit completing the campaign: the earlier model-kept copies stay attributed to Jev.
+  hit = false;
+  const trigger = harness(undefined, undefined, { lookup: async () => hit, seed: async () => {} });
+  await trigger.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await trigger.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  await trigger.send({ text: "ordinary discussion" });
+  // An unrelated linked deletion clears the classifier history, so the next copy is cacheable.
+  trigger.setAnswer(assessment(true, [0, 0, 0.99]));
+  await trigger.send({ text: "Synthetic widget advertising offer" });
+  expect(trigger.deletes()).toEqual([3, 4]);
+  hit = true;
+  await trigger.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(trigger.classifications).toHaveLength(4);
+  expect(trigger.deletes()).toEqual([3, 4, 1, 2, 5]);
+  expect(trigger.logs.find((log) => log.event === "repeat_campaign_detected")).toMatchObject({ copyCount: 3, modelDecision: "cache_delete" });
+  expect(trigger.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.rule, log.source])).toEqual([["model", "jev"], ["repeat_campaign", "cache"]]);
+  await trigger.stats.flush();
+  expect(trigger.batches.flatMap((batch) => batch.deletions).map((d) => [d.messageId, d.source]))
+    .toEqual([["3", "jev"], ["4", "jev"], ["1", "jev"], ["2", "jev"], ["5", "cache"]]);
+  for (const h of [counted, trigger]) await h.stats.stop();
+});
+
+test("repeat campaign copies in different chats never combine and deletes target their own chat", async () => {
+  const h = harness();
+  const other = { ...group, id: -1002 };
+  const otherPost = (index: number) => ({ ...channelPost(index), chat: other });
+  const deleteCalls = () => h.calls.filter((call) => call.method === "deleteMessage").map((call) => [call.payload.chat_id, call.payload.message_id]);
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(0) });
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(1) });
+  await h.send({ chat: other, text: repeatedOffer, reply_to_message: otherPost(2) });
+  await h.send({ chat: other, text: repeatedOffer, reply_to_message: otherPost(0) });
+  expect(deleteCalls()).toEqual([]);
+  await h.send({ text: repeatedOffer, reply_to_message: channelPost(2) });
+  expect(deleteCalls()).toEqual([[group.id, 1], [group.id, 2], [group.id, 5]]);
+  await h.send({ chat: other, text: repeatedOffer, reply_to_message: otherPost(1) });
+  expect(deleteCalls().slice(3)).toEqual([[other.id, 3], [other.id, 4], [other.id, 6]]);
+  await h.stats.stop();
+});
+
+test("a spam cache seed failure is logged and never becomes a classification failure", async () => {
+  const h = harness(undefined, undefined, { lookup: async () => false, seed: async () => { throw new Error("private cache failure"); } });
+  h.setAnswer(assessment(true));
+  await h.send({ text: "Synthetic sale: buy this test widget today!" });
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.some((log) => log.event === "classification_failed")).toBe(false);
+  expect(h.logs.find((log) => log.event === "message_analyzed")?.status).toBe("completed");
+  expect(h.logs.find((log) => log.event === "spam_cache_seed_failed")).toEqual({ event: "spam_cache_seed_failed", kind: "error", chatId: group.id, messageId: 1 });
+  expect(JSON.stringify(h.logs)).not.toContain("private cache failure");
+  await h.stats.stop();
+});
