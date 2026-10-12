@@ -281,6 +281,56 @@ integration("default capacity ignores 10k finished parts but still refuses a liv
   } finally { await audit.close(); await f.close(); }
 });
 
+integration("capacity counts unsent parts of partly-sent and in-flight multipart reports", async () => {
+  const f = await fixture(); const audit = new PostgresDeletionAudit(url!, f.t.api, { ...options, capacity: 4 });
+  try {
+    const pending = randomUUID(), sending = randomUUID(), token = randomUUID();
+    await f.pool.query("INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at) VALUES ($1,-70,1,'x','pending',NOW()+INTERVAL '1 day')", [pending]);
+    await f.pool.query("INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at,lease_until,lease_token) VALUES ($1,-70,2,'x','sending',NOW()+INTERVAL '1 day',NOW()+INTERVAL '1 hour',$2)", [sending, token]);
+    await f.pool.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state,receipt_message_id) VALUES ($1,1,'x','sent',1),($1,2,'x','pending',NULL)", [pending]);
+    await f.pool.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state,lease_until,lease_token) VALUES ($1,1,'x','sending',NOW()+INTERVAL '1 hour',$2),($1,2,'x','pending',NULL,NULL)", [sending, token]);
+    // Live: 1 unsent part of the pending report + 2 of the in-flight report = 3 of 4.
+    const reasons: string[] = [];
+    expect(await audit.prepare(-69, 1, "fits", reason => reasons.push(reason))).toBeDefined();
+    expect(await audit.prepare(-69, 2, "full", reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["capacity"]);
+  } finally { await audit.close(); await f.close(); }
+});
+
+integration("startup on an existing schema takes no table locks; live paths stay indexed with 100k finished rows", async () => {
+  const f = await fixture(); const holder = new pg.Client({ connectionString: url });
+  try {
+    await f.pool.query("INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at) SELECT gen_random_uuid(),-70,g,repeat('x',1000),(ARRAY['sent','delete_failed','send_unknown','terminal'])[1+g%4],NOW()+INTERVAL '1 day' FROM generate_series(1,100000) g");
+    await f.pool.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state,receipt_message_id) SELECT id,1,report,CASE state WHEN 'delete_failed' THEN 'pending' ELSE state END,CASE state WHEN 'sent' THEN message_id END FROM deletion_audit_outbox WHERE chat_id=-70");
+    await f.pool.query("ANALYZE deletion_audit_outbox; ANALYZE deletion_audit_parts");
+    // A replica mid-transaction on both tables must not block (or deadlock) another replica's startup.
+    await holder.connect(); await holder.query("BEGIN; LOCK TABLE deletion_audit_parts, deletion_audit_outbox IN ROW EXCLUSIVE MODE");
+    const audit = new PostgresDeletionAudit(url!, f.t.api, options);
+    try {
+      await audit.initialize();
+      await holder.query("COMMIT");
+      const reasons: string[] = [];
+      const id = await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason)); expect(id).toBeDefined(); expect(reasons).toEqual([]);
+      await audit.confirmed(id!); await f.ready(); await audit.runOnce(); expect(await audit.status(id!)).toBe("sent");
+      const plan = JSON.stringify((await f.pool.query("EXPLAIN (FORMAT JSON) SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending')")).rows);
+      expect(plan).toContain("deletion_audit_parts_live");
+    } finally { await audit.close(); }
+  } finally { await holder.end(); await f.close(); }
+}, 30_000);
+
+integration("upgrade adds live indexes to an existing schema while another replica keeps admitting intents", async () => {
+  const f = await fixture();
+  try {
+    await f.pool.query("DROP INDEX deletion_audit_parts_live; DROP INDEX deletion_audit_outbox_leased");
+    const upgraded = new PostgresDeletionAudit(url!, f.t.api, options);
+    try {
+      const [, ...ids] = await Promise.all([upgraded.initialize(), ...Array.from({ length: 5 }, (_, i) => f.audit.prepare(-69, i + 1, "fixture"))]);
+      expect(ids.every(Boolean)).toBe(true);
+      expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM pg_indexes WHERE indexname IN ('deletion_audit_parts_live','deletion_audit_outbox_leased')")).rows[0].count).toBe(2);
+    } finally { await upgraded.close(); }
+  } finally { await f.close(); }
+});
+
 integration("256 parts persist intact and 257 parts are wholly refused", async () => {
   const f = await fixture();
   try {
