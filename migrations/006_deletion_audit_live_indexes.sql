@@ -8,7 +8,7 @@ BEGIN
   IF to_regclass('deletion_audit_parts_live') IS NULL OR to_regclass('deletion_audit_outbox_leased') IS NULL
      OR to_regclass('deletion_audit_outbox_live') IS NULL THEN
     -- Every prepare/tick transaction takes the sink row before parts/outbox. Holding it first means a live
-    -- replica cannot hold one table while waiting for the other, so the two SHARE locks below cannot deadlock.
+    -- replica cannot hold one table while waiting for the other, so the SHARE locks below cannot deadlock.
     PERFORM 1 FROM deletion_audit_sink FOR UPDATE;
     CREATE INDEX IF NOT EXISTS deletion_audit_parts_live ON deletion_audit_parts(audit_id) WHERE state IN ('pending','sending');
     -- Finished parents (delete_failed etc.) keep pending parts, so both sides of the capacity join need a live index.
