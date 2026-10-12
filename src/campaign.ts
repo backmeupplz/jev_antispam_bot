@@ -26,15 +26,15 @@ export type CampaignCopy = {
   text: string;
   post: number;
   // Original Telegram post time (ms). The window is keyed on it, not on when
-  // the bot processed the update, so delays and edits never move a copy.
+  // the bot processed the update, so edits and short delays never move a copy.
   postedAt: number;
   // Deletion was attempted (succeeded or failed); never retried in the window.
   handled?: boolean;
   auditSnapshot?: AuditSnapshot;
 };
 
-// size counts every copy in the campaign; pending are those not yet handled,
-// oldest first, the current copy last when it is still pending.
+// size counts every copy in the campaign; pending are those not yet handled
+// (the current copy included while it is).
 export type Campaign = { size: number; pending: CampaignCopy[] };
 
 type Entry = CampaignCopy & { seenAt: number };
@@ -42,7 +42,9 @@ type Entry = CampaignCopy & { seenAt: number };
 export class CampaignLedger {
   // chat:actor -> normalized text -> copies. Texts are kept in least-recently
   // seen order and only whole texts are evicted, so the cap can never drop part
-  // of a campaign; copies of one text are bounded by the window alone.
+  // of a campaign; copies of one text are bounded by retention alone. Losing a
+  // text to the cap takes as many other distinct 40+ character texts in the
+  // window, which is itself abnormal for one actor.
   private readonly actors = new Map<string, Map<string, Entry[]>>();
 
   constructor(
@@ -62,7 +64,8 @@ export class CampaignLedger {
     // An edit keeps the copy's original time and its handled state.
     const previous = this.take(texts, copy.messageId);
     const current: Entry = previous
-      ? { ...copy, postedAt: previous.postedAt, handled: previous.handled, seenAt: previous.seenAt }
+      ? { ...copy, postedAt: previous.postedAt, handled: previous.handled, seenAt: previous.seenAt,
+        auditSnapshot: previous.handled ? undefined : copy.auditSnapshot }
       : { ...copy, seenAt: now };
     const copies = texts.get(current.text) ?? [];
     texts.delete(current.text);
@@ -72,16 +75,35 @@ export class CampaignLedger {
       texts.delete(text);
     }
     this.actors.set(key, texts);
-    const same = copies.filter((c) => Math.abs(c.postedAt - current.postedAt) < this.ttlMs);
-    const posts = new Set([...same.map((c) => c.post), current.post]);
-    if (posts.size < CAMPAIGN_MIN_POSTS) return undefined;
-    return { size: same.length + 1, pending: [...same, current].filter((c) => !c.handled) };
+    // Members: every copy sharing a window shorter than ttl with the current copy
+    // that spans enough distinct posts. Two pointers over post time keep it linear.
+    const sorted = [...copies, current].sort((a, b) => a.postedAt - b.postedAt);
+    const members = new Set<Entry>();
+    const posts = new Map<number, number>();
+    for (let start = 0, end = 0, marked = 0; start < sorted.length; start += 1) {
+      for (; end < sorted.length && sorted[end]!.postedAt - sorted[start]!.postedAt < this.ttlMs; end += 1) {
+        posts.set(sorted[end]!.post, (posts.get(sorted[end]!.post) ?? 0) + 1);
+      }
+      const from = sorted[start]!.postedAt;
+      if (from <= current.postedAt && current.postedAt - from < this.ttlMs && posts.size >= CAMPAIGN_MIN_POSTS) {
+        for (marked = Math.max(marked, start); marked < end; marked += 1) members.add(sorted[marked]!);
+      }
+      const left = posts.get(sorted[start]!.post)! - 1;
+      if (left) posts.set(sorted[start]!.post, left);
+      else posts.delete(sorted[start]!.post);
+    }
+    if (!members.size) return undefined;
+    const campaign = [...copies, current].filter((c) => members.has(c));
+    return { size: campaign.length, pending: campaign.filter((c) => !c.handled) };
   }
 
   markHandled(chatId: number, actor: string, messageId: number): void {
     for (const copies of this.actors.get(`${chatId}:${actor}`)?.values() ?? []) {
       const copy = copies.find((c) => c.messageId === messageId);
-      if (copy) copy.handled = true;
+      if (!copy) continue;
+      copy.handled = true;
+      // Only pending copies are deleted, so a handled copy needs no audit evidence.
+      delete copy.auditSnapshot;
     }
   }
 
@@ -105,11 +127,12 @@ export class CampaignLedger {
     }
   }
 
-  // Memory is bounded by when copies were seen; matching uses post times.
+  // Memory is bounded by when copies were seen; matching uses post times. The
+  // extra window of retention absorbs processing backlogs and late edits.
   private live(key: string, now: number): Map<string, Entry[]> {
     const texts = this.actors.get(key) ?? new Map<string, Entry[]>();
     for (const [text, copies] of texts) {
-      const live = copies.filter((c) => now - c.seenAt < this.ttlMs);
+      const live = copies.filter((c) => now - c.seenAt < 2 * this.ttlMs);
       if (live.length) texts.set(text, live);
       else texts.delete(text);
     }

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { Bot } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
@@ -2076,7 +2076,18 @@ test("repeat campaign window uses post time, and an edit of a handled copy is ne
   expect(failed.deletes()).toEqual([1, 2, 3]);
   await failed.send({ text: repeatedOffer, reply_to_message: channelPost(3) });
   expect(failed.deletes()).toEqual([1, 2, 3, 5]);
-  expect(failed.logs.filter((log) => log.event === "repeat_campaign_detected").map((log) => log.copyCount)).toEqual([3, 3, 4]);
+  expect(failed.logs.filter((log) => log.event === "repeat_campaign_detected").map((log) => log.copyCount)).toEqual([3, 4]);
+
+  // An edit processed long after the campaign still carries its original date and stays handled.
+  const lateEdit = harness();
+  lateEdit.failedDeletes.add(1);
+  for (let index = 0; index < 3; index += 1) await lateEdit.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  setSystemTime(new Date(Date.now() + 15 * 60_000));
+  try {
+    await lateEdit.send({ message_id: 1, text: repeatedOffer, reply_to_message: channelPost(0) }, true);
+  } finally { setSystemTime(); }
+  expect(lateEdit.deletes()).toEqual([1, 2, 3]);
+  await lateEdit.stats.stop();
   for (const h of [late, failed]) await h.stats.stop();
 });
 

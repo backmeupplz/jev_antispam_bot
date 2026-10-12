@@ -255,7 +255,8 @@ export function registerBotHandlers(bot: Bot, {
       const campaign = copyText === undefined ? undefined : campaigns.observe(ctx.chat.id, senderId,
         { messageId: ctx.msgId, text: copyText, post: post!, postedAt: ctx.msg.date * 1000, auditSnapshot: snapshot });
       if (copyText === undefined) campaigns.forget(ctx.chat.id, senderId, ctx.msgId);
-      if (campaign) logger.info(JSON.stringify({
+      // An edit of an already handled copy re-finds its campaign but is not a new detection.
+      if (campaign?.pending.length) logger.info(JSON.stringify({
         event: "repeat_campaign_detected", chatId: ctx.chat.id, messageId: ctx.msgId,
         copyCount: campaign.size,
         modelDecision: classificationFailed ? "failed" : cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep",

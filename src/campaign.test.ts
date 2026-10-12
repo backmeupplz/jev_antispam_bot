@@ -58,16 +58,45 @@ test("the window is keyed on post time, and edits keep the original time and han
   expect(ids(ledger.observe(1, "a", copy(5, 104, 10 * 60_000 + 700)))).toEqual([5]);
 });
 
-test("edits replace their own copy; copies are forgotten after the window", () => {
+test("edits replace their own copy; copies are kept through a backlog, then forgotten", () => {
   const ledger = new CampaignLedger();
   ledger.observe(1, "a", copy(1, 100));
   expect(ledger.observe(1, "a", copy(1, 101))).toBeUndefined();
   expect(ledger.observe(1, "a", copy(2, 102))).toBeUndefined();
+  // Posted minutes apart but processed late: the first copy is still there for the third.
+  const backlog = new CampaignLedger();
+  backlog.observe(1, "a", copy(1, 100, 0), 0);
+  backlog.observe(1, "a", copy(2, 101, 3 * 60_000), 5 * 60_000);
+  expect(ids(backlog.observe(1, "a", copy(3, 102, 6 * 60_000), 11 * 60_000))).toEqual([1, 2, 3]);
   const expiring = new CampaignLedger();
   expiring.observe(1, "a", copy(1, 100), 0);
   expiring.observe(1, "a", copy(2, 101), 0);
-  // Even a matching post time cannot revive copies seen longer ago than the window.
-  expect(expiring.observe(1, "a", copy(3, 102), 10 * 60_000)).toBeUndefined();
+  // Even a matching post time cannot revive copies seen two windows ago.
+  expect(expiring.observe(1, "a", copy(3, 102), 20 * 60_000)).toBeUndefined();
+});
+
+test("all distinct posts must fit in one window with the current copy, edits included", () => {
+  const ledger = new CampaignLedger();
+  ledger.observe(1, "a", copy(1, 100, 0));
+  ledger.observe(1, "a", copy(2, 101, 9 * 60_000));
+  expect(ledger.observe(1, "a", copy(3, 102, 18 * 60_000))).toBeUndefined();
+  // The middle copy is within ten minutes of both others, but they are 18 minutes apart.
+  expect(ledger.observe(1, "a", copy(2, 101, 9 * 60_000))).toBeUndefined();
+  expect(ids(ledger.observe(1, "a", copy(4, 100, 17 * 60_000)))?.sort()).toEqual([2, 3, 4]);
+});
+
+test("an edit to another eligible text keeps its handled state and drops its audit snapshot", () => {
+  const ledger = new CampaignLedger();
+  const other = "another long enough comment text that is also repeated";
+  const snapshot = { messageId: 2 } as never;
+  for (const [id, post] of [[1, 100], [2, 101], [3, 102]] as const) ledger.observe(1, "a", { ...copy(id, post), auditSnapshot: snapshot });
+  for (const id of [1, 2, 3]) ledger.markHandled(1, "a", id);
+  ledger.observe(1, "a", { ...copy(2, 101, 0, other), auditSnapshot: snapshot });
+  ledger.observe(1, "a", copy(4, 102, 0, other));
+  const campaign = ledger.observe(1, "a", copy(5, 103, 0, other));
+  expect(campaign?.size).toBe(3);
+  expect(ids(campaign)).toEqual([4, 5]);
+  expect(ledger.observe(1, "a", copy(6, 103))?.pending).toEqual([expect.not.objectContaining({ auditSnapshot: expect.anything() })]);
 });
 
 test("the cap evicts whole texts, never copies of a campaign", () => {
