@@ -46,6 +46,9 @@ export class CampaignLedger {
   // text to the cap takes as many other distinct 40+ character texts in the
   // window, which is itself abnormal for one actor.
   private readonly actors = new Map<string, Map<string, Entry[]>>();
+  // Handled copies edited out of eligibility: chat:actor:messageId -> seenAt.
+  // Editing one back must not retry its delete.
+  private readonly handledAway = new Map<string, number>();
 
   constructor(
     private readonly ttlMs = 10 * 60_000,
@@ -54,6 +57,7 @@ export class CampaignLedger {
     setInterval(() => {
       const now = Date.now();
       for (const key of this.actors.keys()) this.live(key, now);
+      for (const [id, seenAt] of this.handledAway) if (now - seenAt >= 2 * ttlMs) this.handledAway.delete(id);
     }, Math.min(ttlMs, 60_000)).unref();
   }
 
@@ -62,7 +66,10 @@ export class CampaignLedger {
     const key = `${chatId}:${actor}`;
     const texts = this.live(key, now);
     // An edit keeps the copy's original time and its handled state.
-    const previous = this.take(texts, copy.messageId);
+    const away = this.handledAway.get(`${key}:${copy.messageId}`);
+    this.handledAway.delete(`${key}:${copy.messageId}`);
+    const previous = this.take(texts, copy.messageId)
+      ?? (away === undefined ? undefined : { ...copy, handled: true, seenAt: away });
     const current: Entry = previous
       ? { ...copy, postedAt: previous.postedAt, handled: previous.handled, seenAt: previous.seenAt,
         auditSnapshot: previous.handled ? undefined : copy.auditSnapshot }
@@ -112,7 +119,8 @@ export class CampaignLedger {
     const key = `${chatId}:${actor}`;
     const texts = this.actors.get(key);
     if (!texts) return;
-    this.take(texts, messageId);
+    const taken = this.take(texts, messageId);
+    if (taken?.handled) this.handledAway.set(`${key}:${messageId}`, taken.seenAt);
     if (!texts.size) this.actors.delete(key);
   }
 

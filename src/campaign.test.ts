@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Message } from "grammy/types";
-import { CampaignLedger, campaignPost, campaignText } from "./campaign";
+import { CampaignLedger, campaignPost, campaignText, type CampaignCopy } from "./campaign";
 import { repeatedOffer } from "./fixtures/repeat-campaign";
 
 const chat = { id: -1001, type: "supergroup" as const, title: "group" };
@@ -96,7 +96,21 @@ test("an edit to another eligible text keeps its handled state and drops its aud
   const campaign = ledger.observe(1, "a", copy(5, 103, 0, other));
   expect(campaign?.size).toBe(3);
   expect(ids(campaign)).toEqual([4, 5]);
-  expect(ledger.observe(1, "a", copy(6, 103))?.pending).toEqual([expect.not.objectContaining({ auditSnapshot: expect.anything() })]);
+  // The handled copy edited back to the first text carries no snapshot; only the new copy is pending.
+  const back = ledger.observe(1, "a", { ...copy(2, 101), auditSnapshot: snapshot });
+  expect(back?.pending).toEqual([]);
+  ledger.observe(1, "a", { ...copy(6, 103), auditSnapshot: snapshot });
+  const handled = (ledger as unknown as { actors: Map<string, Map<string, CampaignCopy[]>> }).actors.get("1:a")!.get(text)!;
+  expect(handled.filter((c) => c.auditSnapshot).map((c) => c.messageId)).toEqual([6]);
+});
+
+test("a handled copy edited away and back stays handled", () => {
+  const ledger = new CampaignLedger();
+  for (const [id, post] of [[1, 100], [2, 101], [3, 102]] as const) ledger.observe(1, "a", copy(id, post));
+  for (const id of [1, 2, 3]) ledger.markHandled(1, "a", id);
+  ledger.forget(1, "a", 1);
+  expect(ledger.observe(1, "a", copy(1, 100))).toEqual({ size: 3, pending: [] });
+  expect(ids(ledger.observe(1, "a", copy(4, 103)))).toEqual([4]);
 });
 
 test("the cap evicts whole texts, never copies of a campaign", () => {
