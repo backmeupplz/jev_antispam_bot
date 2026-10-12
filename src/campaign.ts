@@ -69,7 +69,7 @@ export class CampaignLedger {
     const away = this.handledAway.get(`${key}:${copy.messageId}`);
     this.handledAway.delete(`${key}:${copy.messageId}`);
     const previous = this.take(texts, copy.messageId)
-      ?? (away === undefined ? undefined : { ...copy, handled: true, seenAt: away });
+      ?? (away === undefined || now - away >= 2 * this.ttlMs ? undefined : { ...copy, handled: true, seenAt: away });
     const current: Entry = previous
       ? { ...copy, postedAt: previous.postedAt, handled: previous.handled, seenAt: previous.seenAt,
         auditSnapshot: previous.handled ? undefined : copy.auditSnapshot }

@@ -111,6 +111,14 @@ test("a handled copy edited away and back stays handled", () => {
   ledger.forget(1, "a", 1);
   expect(ledger.observe(1, "a", copy(1, 100))).toEqual({ size: 3, pending: [] });
   expect(ids(ledger.observe(1, "a", copy(4, 103)))).toEqual([4]);
+  // A tombstone older than retention is not restored.
+  const stale = new CampaignLedger();
+  stale.observe(1, "a", copy(1, 100), 0);
+  stale.markHandled(1, "a", 1);
+  stale.forget(1, "a", 1);
+  stale.observe(1, "a", copy(2, 101, 20 * 60_000), 20 * 60_000);
+  stale.observe(1, "a", copy(3, 102, 20 * 60_000), 20 * 60_000);
+  expect(ids(stale.observe(1, "a", copy(1, 100, 20 * 60_000), 20 * 60_000))?.sort()).toEqual([1, 2, 3]);
 });
 
 test("the cap evicts whole texts, never copies of a campaign", () => {

@@ -2088,6 +2088,15 @@ test("repeat campaign window uses post time, and an edit of a handled copy is ne
   } finally { setSystemTime(); }
   expect(lateEdit.deletes()).toEqual([1, 2, 3]);
   await lateEdit.stats.stop();
+
+  // Edited out of eligibility and back: the failed delete is still not retried.
+  const away = harness();
+  away.failedDeletes.add(1);
+  for (let index = 0; index < 3; index += 1) await away.send({ text: repeatedOffer, reply_to_message: channelPost(index) });
+  await away.send({ message_id: 1, text: "short edit", reply_to_message: channelPost(0) }, true);
+  await away.send({ message_id: 1, text: repeatedOffer, reply_to_message: channelPost(0) }, true);
+  expect(away.deletes()).toEqual([1, 2, 3]);
+  await away.stats.stop();
   for (const h of [late, failed]) await h.stats.stop();
 });
 
