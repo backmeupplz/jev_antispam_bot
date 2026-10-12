@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Api } from "grammy";
 import pg from "pg";
-import { AUDIT_CHAT_ID, PostgresDeletionAudit } from "./audit-outbox";
+import { AUDIT_CHAT_ID, LIVE_PARTS_SQL, PostgresDeletionAudit } from "./audit-outbox";
 import { renderAuditReport, type AuditSnapshot } from "./audit-report";
 const url = process.env.AUDIT_TEST_DATABASE_URL;
 if (url && (!["/jev_audit_test", "/jev_stats_test"].includes(new URL(url).pathname) || !["127.0.0.1", "localhost"].includes(new URL(url).hostname))) throw new Error("Dedicated local audit test database required");
@@ -315,7 +315,7 @@ integration("startup on an existing schema takes no table locks; live paths stay
       const reasons: string[] = [];
       const id = await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason)); expect(id).toBeDefined(); expect(reasons).toEqual([]);
       await audit.confirmed(id!); await f.ready(); await audit.runOnce(); expect(await audit.status(id!)).toBe("sent");
-      const plan = JSON.stringify((await f.pool.query("EXPLAIN (FORMAT JSON) SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending')")).rows);
+      const plan = JSON.stringify((await f.pool.query("EXPLAIN (FORMAT JSON) " + LIVE_PARTS_SQL)).rows);
       expect(plan).toContain("deletion_audit_parts_live"); expect(plan).toContain("deletion_audit_outbox_live");
       expect(plan).not.toContain("Seq Scan");
     } finally { await audit.close(); }
