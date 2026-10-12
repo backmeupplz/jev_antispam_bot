@@ -17,7 +17,9 @@ function owned<T>(resource: T, close: (resource: T) => unknown): T { leftovers.p
 const testPool = () => owned(new pg.Pool({ connectionString: url, lock_timeout: 10_000 }), pool => pool.end());
 const auditor = (api: Api, overrides: ConstructorParameters<typeof PostgresDeletionAudit>[2] = options) =>
   owned(new PostgresDeletionAudit(url!, api, overrides), audit => audit.close());
-beforeEach(async () => { await Promise.allSettled(leftovers.splice(0).map(async close => await close())); });
+// Closing waits for in-flight queries (bounded by the 10s lock timeout and the audit's own timeouts), so the hook
+// needs more than Bun's 5s default.
+beforeEach(async () => { await Promise.allSettled(leftovers.splice(0).map(async close => await close())); }, 60_000);
 function transport() {
   const api = new Api("123:fixture");
   const calls: unknown[] = [];
@@ -30,8 +32,9 @@ async function fixture() {
   const t = transport();
   const audit = auditor(t.api);
   // Same lock order as the code under test (sink row, then tables), and before initialize() so rows left by an
-  // aborted run cannot push its index creation past the 1s statement timeout.
-  await db.query("DO $$ BEGIN IF to_regclass('deletion_audit_sink') IS NOT NULL THEN PERFORM 1 FROM deletion_audit_sink FOR UPDATE; END IF; IF to_regclass('deletion_audit_parts') IS NOT NULL THEN TRUNCATE deletion_audit_parts,deletion_audit_outbox; END IF; END $$");
+  // aborted run cannot push its index creation past the 1s statement timeout (or, with only 004 applied, be
+  // copied into parts by 005).
+  await db.query("DO $$ BEGIN IF to_regclass('deletion_audit_sink') IS NOT NULL THEN PERFORM 1 FROM deletion_audit_sink FOR UPDATE; END IF; IF to_regclass('deletion_audit_parts') IS NOT NULL THEN TRUNCATE deletion_audit_parts,deletion_audit_outbox; ELSIF to_regclass('deletion_audit_outbox') IS NOT NULL THEN TRUNCATE deletion_audit_outbox; END IF; END $$");
   await audit.initialize();
   await db.query("UPDATE deletion_audit_sink SET next_send_at=NOW(),prepared=0,refused=0,expired=0,expired_undelivered=0");
   const state = async (id: string) => (await db.query("SELECT state,attempts FROM deletion_audit_outbox WHERE id=$1", [id])).rows[0];
