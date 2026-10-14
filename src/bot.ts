@@ -11,6 +11,7 @@ import { SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
+import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatSnapshots, type RepeatCopy, type RepeatStore } from "./repeat-sends";
 import type { StatsRecorder } from "./stats";
 import type { TrainingCapture } from "./training-capture";
 
@@ -25,6 +26,7 @@ export function registerBotHandlers(bot: Bot, {
   previewRequest,
   spamCache,
   spamThreshold = 0.81,
+  repeats = new MemoryRepeatStore(),
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
@@ -36,12 +38,14 @@ export function registerBotHandlers(bot: Bot, {
   previewRequest?: PageRequest;
   spamCache?: SpamCache;
   spamThreshold?: number;
+  repeats?: RepeatStore;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
   const campaigns = new CampaignLedger();
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
+  const repeatSnapshots = new RepeatSnapshots();
 
   bot.use(async (ctx, next) => {
     // Exclude the sink before stats, enrichment, history, capture and commands.
@@ -263,9 +267,37 @@ export function registerBotHandlers(bot: Bot, {
       }));
 
       const modelDelete = cacheHit || Boolean(assessment?.shouldDelete);
+      // Repeat sends (#124): the same account sending the same content again, in
+      // this group or another one, raises the score. Across the gate, its earlier
+      // copies in the window go too. A failed classification never counts.
+      const isEdited = "edited_message" in ctx.update;
+      const probability = cacheHit ? 1 : assessment?.probability;
+      const key = mediaOnly || probability === undefined || !(probability >= REPEAT_MIN_SCORE) ? undefined : repeatKey(senderId, message.text);
+      let copies: RepeatCopy[] = [];
+      if (key) {
+        copies = await repeats.record(key, { chatId: ctx.chat.id, messageId: ctx.msgId, sentAt: ctx.msg.date * 1000 }) ?? [];
+        if (snapshot) repeatSnapshots.set(snapshot);
+      } else if (isEdited) {
+        await repeats.forget(ctx.chat.id, ctx.msgId);
+        repeatSnapshots.delete(ctx.chat.id, ctx.msgId);
+      }
+      const effective = escalatedScore(probability ?? 0, copies.length);
+      const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
+      // A copy already handled (deleted, or its delete failed) is never retried.
+      const repeatCopies = modelDelete || repeatDelete ? copies.filter(c => !c.handled) : [];
+      if (copies.length) logger.info(JSON.stringify({
+        event: "repeat_send_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited,
+        copyCount: copies.length + 1,
+        otherChatCopyCount: copies.filter(c => c.chatId !== ctx.chat.id).length,
+        confidence: probability,
+        effectiveConfidence: Math.round(effective * 10_000) / 10_000,
+        decision: cacheHit ? "cache_delete" : modelDelete ? "delete" : repeatDelete ? "repeat_delete" : "keep",
+        pendingCopyCount: repeatCopies.length,
+      }));
+
       // A copy already handled (e.g. an edit of a failed delete) is never retried.
       const campaignIds = (campaign?.pending ?? []).map(c => c.messageId);
-      if (!modelDelete && !campaignIds.length) {
+      if (!modelDelete && !repeatDelete && !campaignIds.length) {
         if (!mediaOnly && !campaign) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
         await next();
         return;
@@ -278,53 +310,69 @@ export function registerBotHandlers(bot: Bot, {
         assessment!.contextProbabilities,
         CONTEXT_LINK_THRESHOLD,
       );
-      const ids = new Set([...linkedIds, ...campaignIds]);
+      const repeatIds = repeatCopies.filter(c => c.chatId === ctx.chat.id).map(c => c.messageId);
+      const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...(repeatDelete ? [ctx.msgId] : [])]);
       const messageIds = [...ids].filter(id => id !== ctx.msgId).sort((a, b) => a - b).concat(ids.has(ctx.msgId) ? [ctx.msgId] : []);
+      // Earlier copies in the account's other groups, oldest first per group.
+      const otherChats = new Map<number, number[]>();
+      for (const c of [...repeatCopies].sort((a, b) => a.messageId - b.messageId)) {
+        if (c.chatId !== ctx.chat.id) otherChats.set(c.chatId, [...otherChats.get(c.chatId) ?? [], c.messageId]);
+      }
       // The rule that widened the deletion; only the current copy can be a cache hit.
-      const rule = campaignIds.some(id => !linkedIds.includes(id)) ? "repeat_campaign" : cacheHit ? "cache" : "model";
+      const rule = campaignIds.some(id => !linkedIds.includes(id)) ? "repeat_campaign"
+        : repeatDelete || repeatCopies.length ? "repeat_send" : cacheHit ? "cache" : "model";
       // Freeze each message’s own profile/content before clearing history.
       const snapshots = [...recentMessages, ...(campaign?.pending ?? [])].flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : [])
-        .concat(snapshot ? [snapshot] : []);
+        .concat(snapshot ? [snapshot, ...repeatCopies.map(c => repeatSnapshots.get(c, snapshot))] : []);
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
 
-      const deletedMessageCount = await deleteMessages(
-        ctx.chat.id,
-        messageIds,
-        async (chatId, messageId) => {
-          let intent: string | undefined;
-          let refusal: AuditRefusal | "unavailable" = "unavailable";
-          if (deletionAudit) {
-            const own = snapshots.find(s => s.messageId === messageId);
-            if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
-            try {
-              intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own), reason => { refusal = reason; });
-            } catch { /* Persistence failures never become classifier failures. */ }
-            if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped", reason: refusal })); throw new Error("Audit intent unavailable"); }
-          }
+      const deleteOne = async (chatId: number, messageId: number) => {
+        let intent: string | undefined;
+        let refusal: AuditRefusal | "unavailable" = "unavailable";
+        if (deletionAudit) {
+          const own = snapshots.find(s => s.chatId === chatId && s.messageId === messageId);
+          if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
           try {
-            const deleted = await ctx.api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<typeof ctx.api.deleteMessage>[2]);
-            if (deleted !== true) throw new Error("Unconfirmed deletion");
-          } catch (error) {
-            if (intent) {
-              try { await deletionAudit!.failed(intent, !(error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500)); }
-              catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "failure_state_unavailable" })); }
-            }
-            throw error;
-          }
+            intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own), reason => { refusal = reason; });
+          } catch { /* Persistence failures never become classifier failures. */ }
+          if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped", reason: refusal })); throw new Error("Audit intent unavailable"); }
+        }
+        try {
+          const deleted = await ctx.api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<typeof ctx.api.deleteMessage>[2]);
+          if (deleted !== true) throw new Error("Unconfirmed deletion");
+        } catch (error) {
           if (intent) {
-            try { await deletionAudit!.confirmed(intent); }
-            catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
+            try { await deletionAudit!.failed(intent, !(error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500)); }
+            catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "failure_state_unavailable" })); }
           }
-        },
-        (chatId, messageId) => {
-          campaigns.markHandled(chatId, senderId, messageId);
-          stats.recordDeletion({ chatId, messageId, source: cacheHit && messageId === ctx.msgId ? "cache" : "jev" });
-        },
-        (error, messageId) => {
-          campaigns.markHandled(ctx.chat.id, senderId, messageId);
-          logFailure("delete_failed", error, ctx.chat.id, messageId);
-        },
-      );
+          throw error;
+        }
+        if (intent) {
+          try { await deletionAudit!.confirmed(intent); }
+          catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
+        }
+      };
+      const handled = async (chatId: number, messageId: number) => {
+        campaigns.markHandled(chatId, senderId, messageId);
+        repeatSnapshots.delete(chatId, messageId);
+        await repeats.markHandled(chatId, messageId);
+      };
+      let deletedMessageCount = 0;
+      for (const [chatId, chatMessageIds] of [[ctx.chat.id, messageIds] as const, ...otherChats]) {
+        deletedMessageCount += await deleteMessages(
+          chatId,
+          [...chatMessageIds],
+          deleteOne,
+          async (chatId, messageId) => {
+            stats.recordDeletion({ chatId, messageId, source: cacheHit && chatId === ctx.chat.id && messageId === ctx.msgId ? "cache" : "jev" });
+            await handled(chatId, messageId);
+          },
+          async (error, messageId) => {
+            logFailure("delete_failed", error, chatId, messageId);
+            await handled(chatId, messageId);
+          },
+        );
+      }
 
       if (deletedMessageCount) {
         logger.info(JSON.stringify({
@@ -332,11 +380,13 @@ export function registerBotHandlers(bot: Bot, {
           chatId: ctx.chat.id,
           messageId: ctx.msgId,
           deletedMessageCount,
-          attemptedMessageCount: messageIds.length,
+          attemptedMessageCount: messageIds.length + [...otherChats.values()].reduce((n, l) => n + l.length, 0),
+          otherChatCount: otherChats.size,
           source: cacheHit ? "cache" : "jev",
           rule,
           signal: assessment?.strongestSignal,
           probability: assessment?.probability,
+          ...(repeatDelete ? { effectiveProbability: Math.round(effective * 10_000) / 10_000 } : {}),
           model: assessment?.model ?? model,
         }));
       }

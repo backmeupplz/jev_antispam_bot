@@ -23,6 +23,9 @@ import { AsyncStatsBuffer, type StatsBatch } from "./stats";
 import { heartFixtures, heartTitle, heartSource } from "./fixtures/heart-profile";
 import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
 import { channelPosts, repeatControls, repeatedOffer } from "./fixtures/repeat-campaign";
+import { directCryptoTradeControls } from "./fixtures/crypto-trade-courier";
+import { shortRepeats, usdtAsk, usdtAskVariants, usdtControls } from "./fixtures/usdt-repeat";
+import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -49,7 +52,8 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
 }
 
 function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache,
-  shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit) {
+  shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit,
+  repeats?: RepeatStore) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -100,7 +104,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     return { ok: true, result: true } as never;
   });
   registerBotHandlers(bot, {
-    model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit,
+    model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit, ...(repeats ? { repeats } : {}),
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
@@ -1824,7 +1828,7 @@ for (const caption of [false, true]) {
 }
 
 
-function auditHarness(cache?: SpamCache) {
+function auditHarness(cache?: SpamCache, repeats?: RepeatStore) {
   const prepared = new Map<string, string>(); const confirmed: string[] = []; const failed: string[] = [];
   let unavailable = false; let confirmationFails = false;
   const audit: DeletionAudit = {
@@ -1832,7 +1836,7 @@ function auditHarness(cache?: SpamCache) {
     confirmed: async id => { if (confirmationFails) throw new Error("private DB failure"); confirmed.push(id); },
     failed: async id => { failed.push(id); },
   };
-  const h = harness(undefined, undefined, cache, undefined, audit);
+  const h = harness(undefined, undefined, cache, undefined, audit, repeats);
   return { ...h, prepared, confirmed, failed, unavailable: () => { unavailable = true; }, confirmationFails: () => { confirmationFails = true; } };
 }
 
@@ -2163,4 +2167,110 @@ test("a spam cache seed failure is logged and never becomes a classification fai
   expect(h.logs.find((log) => log.event === "spam_cache_seed_failed")).toEqual({ event: "spam_cache_seed_failed", kind: "error", chatId: group.id, messageId: 1 });
   expect(JSON.stringify(h.logs)).not.toContain("private cache failure");
   await h.stats.stop();
+});
+
+// #124: the same account sending the same content again (SYNTHETIC reconstruction).
+const groupB = { id: -1002, type: "supergroup" as const, title: "second group" };
+const groupC = { id: -1003, type: "supergroup" as const, title: "third group" };
+const deleted = (h: { calls: { method: string; payload: Record<string, unknown> }[] }) =>
+  h.calls.filter((call) => call.method === "deleteMessage").map((call) => [call.payload.chat_id, call.payload.message_id]);
+
+test("repeat sends of the #124 ask escalate across groups and delete the earlier copies", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.6407));
+  await h.send({ text: usdtAsk });
+  expect(deleted(h)).toEqual([]);
+  await h.send({ chat: groupB, text: usdtAskVariants[1] });
+  expect(deleted(h)).toEqual([[groupB.id, 2], [group.id, 1]]);
+  await h.send({ chat: groupC, text: usdtAskVariants[2] });
+  // Handled copies are never retried; the third copy goes on arrival.
+  expect(deleted(h)).toEqual([[groupB.id, 2], [group.id, 1], [groupC.id, 3]]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep", "keep"]);
+  expect(h.logs.filter((log) => log.event === "repeat_send_detected")).toEqual([
+    { event: "repeat_send_detected", chatId: groupB.id, messageId: 2, isEdited: false, copyCount: 2, otherChatCopyCount: 1,
+      confidence: 0.6407, effectiveConfidence: 0.8204, decision: "repeat_delete", pendingCopyCount: 1 },
+    { event: "repeat_send_detected", chatId: groupC.id, messageId: 3, isEdited: false, copyCount: 3, otherChatCopyCount: 2,
+      confidence: 0.6407, effectiveConfidence: 0.9102, decision: "repeat_delete", pendingCopyCount: 0 },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted")).toEqual([
+    expect.objectContaining({ chatId: groupB.id, messageId: 2, deletedMessageCount: 2, attemptedMessageCount: 2, otherChatCount: 1, rule: "repeat_send", source: "jev", effectiveProbability: 0.8204 }),
+    expect.objectContaining({ chatId: groupC.id, messageId: 3, deletedMessageCount: 1, attemptedMessageCount: 1, otherChatCount: 0, rule: "repeat_send" }),
+  ]);
+  // Each copy is reported with its own content and counted like any other deletion.
+  expect(h.confirmed).toEqual(["2", "1", "3"]);
+  expect(h.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAsk + "</pre>");
+  expect(h.prepared.get("2")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAskVariants[1] + "</pre>");
+  await h.stats.flush();
+  expect(h.batches.flatMap((batch) => batch.deletions).map((d) => [d.chatId, d.messageId, d.source])).toEqual([
+    [String(groupB.id), "2", "jev"], [String(group.id), "1", "jev"], [String(groupC.id), "3", "jev"]]);
+  expect(JSON.stringify(h.logs)).not.toContain("юстд");
+  await h.stats.stop();
+});
+
+test("the #124 incident posted twice in one group deletes both copies; a model delete takes earlier copies too", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6407));
+  await h.send({ text: usdtAsk });
+  await h.send({ text: "в другой теме обсуждаем совсем другое и довольно долго" });
+  await h.send({ text: usdtAsk });
+  expect(deleted(h)).toEqual([[group.id, 1], [group.id, 3]]);
+  const m = harness();
+  m.setAnswer(keepAt(0.7));
+  await m.send({ text: usdtAsk });
+  m.setAnswer(assessment(true));
+  await m.send({ chat: groupB, text: usdtAsk });
+  expect(deleted(m)).toEqual([[groupB.id, 2], [group.id, 1]]);
+  expect(m.logs.find((log) => log.event === "repeat_send_detected")?.decision).toBe("delete");
+  expect(m.logs.find((log) => log.event === "spam_deleted")?.rule).toBe("repeat_send");
+  await h.stats.stop(); await m.stats.stop();
+});
+
+test("controls sent once, short repeats, benign-scored repeats and other accounts never escalate", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  // One account sends each control once, spread over three groups.
+  for (const [index, text] of [...usdtControls, ...directCryptoTradeControls, usdtAsk].entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  for (const text of shortRepeats) for (const chat of [group, groupB, groupC, group]) await h.send({ chat, text });
+  // Different accounts sending the same text are not one account repeating it.
+  for (const [index, chat] of [group, groupB, groupC].entries()) await h.send({ chat, from: { ...user, id: 300 + index }, text: usdtAsk });
+  h.setAnswer(keepAt(0.4999));
+  for (const chat of [group, groupB, groupC, group, groupB]) await h.send({ chat, text: usdtAskVariants[0] + " и ещё раз" });
+  expect(deleted(h)).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "repeat_send_detected")).toEqual([]);
+  await h.stats.stop();
+});
+
+test("failed classifications and copies edited away never count; edits keep their copy", async () => {
+  const h = harness();
+  h.setClassifyError();
+  await h.send({ text: usdtAsk });
+  const ok = harness();
+  ok.setAnswer(keepAt(0.6407));
+  await ok.send({ text: usdtAsk });
+  ok.setAnswer(keepAt(0.3));
+  await ok.send({ message_id: 1, text: "извините, ошибся чатом, уже не актуально, всем спасибо" }, true);
+  ok.setAnswer(keepAt(0.6407));
+  const second = await ok.send({ chat: groupB, text: usdtAsk });
+  expect(deleted(ok)).toEqual([]);
+  // An unchanged edit is the same copy, not a second send.
+  await ok.send({ chat: groupB, message_id: second, text: usdtAsk }, true);
+  expect(deleted(ok)).toEqual([]);
+  const third = await ok.send({ chat: groupC, text: usdtAsk });
+  expect(deleted(ok)).toEqual([[groupC.id, third], [groupB.id, second]]);
+  await h.stats.stop(); await ok.stats.stop();
+});
+
+test("copies recorded before a restart still count and are reported with the matching content", async () => {
+  const repeats = new MemoryRepeatStore();
+  const before = auditHarness(undefined, repeats);
+  before.setAnswer(keepAt(0.6407));
+  await before.send({ message_id: 40, text: usdtAsk });
+  await before.stats.stop();
+  const after = auditHarness(undefined, repeats);
+  after.setAnswer(keepAt(0.6407));
+  await after.send({ chat: groupB, message_id: 41, text: usdtAskVariants[0] });
+  expect(deleted(after)).toEqual([[groupB.id, 41], [group.id, 40]]);
+  expect(after.prepared.get("40")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAskVariants[0] + "</pre>");
+  expect(after.confirmed).toEqual(["41", "40"]);
+  await after.stats.stop();
 });
