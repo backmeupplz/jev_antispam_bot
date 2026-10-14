@@ -71,6 +71,11 @@ test("memory is bounded by capacity and expiry; lookups by a copy cap", async ()
   const many = new MemoryRepeatStore();
   for (let id = 1; id <= 30; id += 1) await many.record("k", { chatId: 1, messageId: id, sentAt: id });
   expect(await many.record("k", { chatId: 1, messageId: 31, sentAt: 31 })).toHaveLength(20);
+  // Under the cap, an old unhandled copy still comes back ahead of newer handled ones.
+  for (let id = 2; id <= 31; id += 1) await many.markHandled(1, id);
+  const capped = await many.record("k", { chatId: 1, messageId: 32, sentAt: 32 });
+  expect(capped).toHaveLength(20);
+  expect(capped[0]).toEqual({ chatId: 1, messageId: 1, sentAt: 1, handled: false });
 });
 
 test("earlier copies keep their own audit evidence, or reuse the current content after a restart", () => {

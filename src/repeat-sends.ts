@@ -47,7 +47,7 @@ export function escalatedScore(probability: number, otherCopies: number): number
 
 export type RepeatCopy = { chatId: number; messageId: number; sentAt: number; handled: boolean };
 export interface RepeatStore {
-  /** Upserts this copy and returns the other copies of the same key whose send times are within the window of it, newest first; undefined when unavailable. */
+  /** Upserts this copy and returns the other copies of the same key whose send times are within the window of it, unhandled first, then newest first; undefined when unavailable. */
   record(key: string, copy: Omit<RepeatCopy, "handled">): Promise<RepeatCopy[] | undefined>;
   /** A deletion was attempted (succeeded or failed); it is never retried. */
   markHandled(chatId: number, messageId: number): Promise<void>;
@@ -78,7 +78,7 @@ export class MemoryRepeatStore implements RepeatStore {
     const sentAt = this.copies.get(id)!.sentAt;
     return [...this.copies.values()]
       .filter((c) => c.key === key && !(c.chatId === copy.chatId && c.messageId === copy.messageId) && near(c.sentAt, sentAt))
-      .sort((a, b) => b.sentAt - a.sentAt).slice(0, REPEAT_MAX_COPIES)
+      .sort((a, b) => Number(a.handled) - Number(b.handled) || b.sentAt - a.sentAt).slice(0, REPEAT_MAX_COPIES)
       .map(({ chatId, messageId, sentAt, handled }) => ({ chatId, messageId, sentAt, handled }));
   }
   async markHandled(chatId: number, messageId: number): Promise<void> {
@@ -101,6 +101,9 @@ export class PostgresRepeatStore implements RepeatStore {
   private active = 0;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly counters = { recorded: 0, pruned: 0, error: 0 };
+  // Copies whose forget failed: never returned as earlier copies until a
+  // later forget succeeds or the copy is recorded again with its new content.
+  private readonly forgotten = new Map<string, number>();
   constructor(databaseUrl: string, private readonly options: {
     timeoutMs?: number; capacity?: number; logger?: Pick<Console, "info">;
   } = {}) {
@@ -130,13 +133,15 @@ export class PostgresRepeatStore implements RepeatStore {
          FROM repeat_sends c JOIN repeat_sends o ON o.copy_key=c.copy_key
            AND o.sent_at > c.sent_at - $3 * INTERVAL '1 millisecond' AND o.sent_at < c.sent_at + $3 * INTERVAL '1 millisecond'
            AND (o.chat_id, o.message_id) <> (c.chat_id, c.message_id)
-         WHERE c.chat_id=$1 AND c.message_id=$2 ORDER BY o.sent_at DESC LIMIT $4`,
+         WHERE c.chat_id=$1 AND c.message_id=$2 ORDER BY o.handled, o.sent_at DESC LIMIT $4`,
         [copy.chatId, copy.messageId, REPEAT_WINDOW_MS, REPEAT_MAX_COPIES]);
       return result.rows;
     });
     if (rows === undefined) return;
     this.counters.recorded++;
-    return rows.map((r) => ({ chatId: Number(r.chat_id), messageId: Number(r.message_id), sentAt: Number(r.sent_ms), handled: r.handled }));
+    this.forgotten.delete(`${copy.chatId}:${copy.messageId}`);
+    return rows.map((r) => ({ chatId: Number(r.chat_id), messageId: Number(r.message_id), sentAt: Number(r.sent_ms), handled: r.handled }))
+      .filter((c) => !this.forgotten.has(`${c.chatId}:${c.messageId}`));
   }
   // Waits for a pool slot instead of being dropped: a lost write would retry a delete.
   async markHandled(chatId: number, messageId: number): Promise<void> {
@@ -145,14 +150,34 @@ export class PostgresRepeatStore implements RepeatStore {
       await this.pool.query("UPDATE repeat_sends SET handled=TRUE WHERE chat_id=$1 AND message_id=$2", [chatId, messageId]);
     }, true);
   }
+  // Waits for a slot too; a lost forget is remembered so an edited copy is never deleted as a repeat.
   async forget(chatId: number, messageId: number): Promise<void> {
-    await this.bounded(async () => {
+    const id = `${chatId}:${messageId}`;
+    if (await this.delete(chatId, messageId)) { this.forgotten.delete(id); return; }
+    this.forgotten.delete(id);
+    this.forgotten.set(id, Date.now());
+    for (const oldest of this.forgotten.keys()) {
+      if (this.forgotten.size <= 10_000) break;
+      this.forgotten.delete(oldest);
+    }
+  }
+  private delete(chatId: number, messageId: number) {
+    return this.bounded(async () => {
       await this.ensureMigrated();
       await this.pool.query("DELETE FROM repeat_sends WHERE chat_id=$1 AND message_id=$2", [chatId, messageId]);
-    });
+      return true;
+    }, true);
   }
-  // Expired copies, then the oldest beyond capacity.
+  // Expired copies, then the oldest beyond capacity; failed forgets are retried.
   async prune(): Promise<void> {
+    for (const [id, at] of [...this.forgotten]) {
+      if (Date.now() - at >= 2 * REPEAT_WINDOW_MS) { this.forgotten.delete(id); continue; }
+      if (this.forgotten.get(id) !== at) continue;
+      const [chatId, messageId] = id.split(":").map(Number);
+      if (!await this.delete(chatId!, messageId!)) break;
+      // A copy recorded again meanwhile carries its new content: keep that row.
+      if (this.forgotten.get(id) === at) this.forgotten.delete(id);
+    }
     const pruned = await this.bounded(async () => {
       await this.ensureMigrated();
       const expired = await this.pool.query("DELETE FROM repeat_sends WHERE sent_at < NOW() - 2 * $1 * INTERVAL '1 millisecond'", [REPEAT_WINDOW_MS]);
