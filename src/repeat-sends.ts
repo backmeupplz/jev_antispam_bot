@@ -143,14 +143,15 @@ export class PostgresRepeatStore implements RepeatStore {
     return rows.map((r) => ({ chatId: Number(r.chat_id), messageId: Number(r.message_id), sentAt: Number(r.sent_ms), handled: r.handled }))
       .filter((c) => !this.forgotten.has(`${c.chatId}:${c.messageId}`));
   }
-  // Waits for a pool slot instead of being dropped: a lost write would retry a delete.
+  // Never dropped for the in-flight cap (pg queues it, still within the deadline): a lost write would retry a delete.
   async markHandled(chatId: number, messageId: number): Promise<void> {
     await this.bounded(async () => {
       await this.ensureMigrated();
       await this.pool.query("UPDATE repeat_sends SET handled=TRUE WHERE chat_id=$1 AND message_id=$2", [chatId, messageId]);
     }, true);
   }
-  // Waits for a slot too; a lost forget is remembered so an edited copy is never deleted as a repeat.
+  // Not dropped for the in-flight cap either; a lost forget is remembered in memory (until a
+  // restart) so an edited copy is never deleted as a repeat.
   async forget(chatId: number, messageId: number): Promise<void> {
     const id = `${chatId}:${messageId}`;
     if (await this.delete(chatId, messageId)) { this.forgotten.delete(id); return; }
@@ -175,7 +176,8 @@ export class PostgresRepeatStore implements RepeatStore {
       if (this.forgotten.get(id) !== at) continue;
       const [chatId, messageId] = id.split(":").map(Number);
       if (!await this.delete(chatId!, messageId!)) break;
-      // A copy recorded again meanwhile carries its new content: keep that row.
+      // A copy recorded again meanwhile is no longer forgotten. If that record raced this
+      // delete, the row is lost and the copy simply stops counting: a missed escalation, never a delete.
       if (this.forgotten.get(id) === at) this.forgotten.delete(id);
     }
     const pruned = await this.bounded(async () => {
