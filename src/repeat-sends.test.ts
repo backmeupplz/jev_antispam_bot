@@ -81,7 +81,7 @@ test("earlier copies keep their own audit evidence, or reuse the current content
   const current = snap(2, 9, "current body");
   expect(snapshots.get({ chatId: 1, messageId: 1, sentAt: 0, handled: false }, current).body).toBe("earlier body");
   const restored = snapshots.get({ chatId: 3, messageId: 4, sentAt: 0, handled: false }, current);
-  expect(restored).toMatchObject({ chatId: 3, messageId: 4, body: "current body", chatTitle: "unavailable", actor: "user:1" });
+  expect(restored).toMatchObject({ chatId: 3, messageId: 4, body: "current body", chatTitle: "unavailable", actor: "user:1", media: "unavailable", links: "unavailable" });
   expect(JSON.parse(restored.context).repeatOf).toEqual({ chatId: 2, messageId: 9 });
   snapshots.set(snap(1, 2)); snapshots.set(snap(1, 3));
   expect(snapshots.get({ chatId: 1, messageId: 1, sentAt: 0, handled: false }, current).body).toBe("current body");

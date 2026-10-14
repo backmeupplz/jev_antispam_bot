@@ -107,13 +107,14 @@ export class PostgresRepeatStore implements RepeatStore {
     if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 1_000_000) throw new Error("Invalid repeat store bounds");
     this.pool = new pg.Pool({ connectionString: databaseUrl, max: 2,
       connectionTimeoutMillis: this.timeout, query_timeout: this.timeout,
-      statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 10_000,
+      // Eligible copies are sparse: keep connections warm so a lookup is not a connect.
+      statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 15 * 60_000,
       application_name: "jev_antispam_bot_repeats" });
     this.pool.on("error", () => undefined);
     this.timer = setInterval(() => void this.prune(), 10 * 60_000);
     this.timer.unref();
   }
-  private get timeout() { return this.options.timeoutMs ?? 250; }
+  private get timeout() { return this.options.timeoutMs ?? 500; }
   private get capacity() { return this.options.capacity ?? 100_000; }
   health() { return { ...this.counters }; }
   async close() { clearInterval(this.timer); await this.pool.end(); }
@@ -137,11 +138,12 @@ export class PostgresRepeatStore implements RepeatStore {
     this.counters.recorded++;
     return rows.map((r) => ({ chatId: Number(r.chat_id), messageId: Number(r.message_id), sentAt: Number(r.sent_ms), handled: r.handled }));
   }
+  // Waits for a pool slot instead of being dropped: a lost write would retry a delete.
   async markHandled(chatId: number, messageId: number): Promise<void> {
     await this.bounded(async () => {
       await this.ensureMigrated();
       await this.pool.query("UPDATE repeat_sends SET handled=TRUE WHERE chat_id=$1 AND message_id=$2", [chatId, messageId]);
-    });
+    }, true);
   }
   async forget(chatId: number, messageId: number): Promise<void> {
     await this.bounded(async () => {
@@ -164,8 +166,8 @@ export class PostgresRepeatStore implements RepeatStore {
       .then(() => undefined).catch((error) => { this.migration = undefined; throw error; });
     await this.migration;
   }
-  private async bounded<T>(operation: () => Promise<T>): Promise<T | undefined> {
-    if (this.active >= 2) { this.counters.error++; this.log(); return; }
+  private async bounded<T>(operation: () => Promise<T>, queue = false): Promise<T | undefined> {
+    if (this.active >= 2 && !queue) { this.counters.error++; this.log(); return; }
     this.active++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const work = operation().finally(() => { this.active--; });
@@ -180,7 +182,8 @@ export class PostgresRepeatStore implements RepeatStore {
 }
 
 // Audit evidence for copies this process saw. A copy recorded before a restart
-// has none, so its report reuses the current copy's matching content.
+// (or evicted by the cap) has none, so its report reuses the current copy's
+// matching content.
 export class RepeatSnapshots {
   private readonly snapshots = new Map<string, { snapshot: AuditSnapshot; at: number }>();
   constructor(private readonly capacity = 2_000) {}
@@ -198,7 +201,8 @@ export class RepeatSnapshots {
     const saved = this.snapshots.get(`${copy.chatId}:${copy.messageId}`);
     if (saved && now - saved.at < 2 * REPEAT_WINDOW_MS) return saved.snapshot;
     return { ...current, chatId: copy.chatId, messageId: copy.messageId, chatTitle: "unavailable", edited: false,
+      media: "unavailable", links: "unavailable",
       context: JSON.stringify({ repeatOf: { chatId: current.chatId, messageId: current.messageId },
-        note: "earlier copy recorded before a restart; body is the current copy, same content after normalization; reply context unavailable" }) };
+        note: "earlier copy's own snapshot unavailable; body is the current copy, same content after normalization; reply context, media and links unavailable" }) };
   }
 }

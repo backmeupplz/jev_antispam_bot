@@ -65,6 +65,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   let profileError = false;
   let adminError = false;
   let memberStatus = "member";
+  const memberStatusByChat = new Map<number, string>();
   let metadata: Record<string, unknown> = { ...group, accent_color_id: 0, max_reaction_count: 1 };
   let profileMetadata: Record<string, unknown> = {
     id: user.id, type: "private", first_name: "private", accent_color_id: 0,
@@ -96,7 +97,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
       if (chatId === personalChannel.id || chatId === personalChannelMetadata.id) return { ok: true, result: personalChannelMetadata } as never;
       return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
     }
-    if (method === "getChatMember") return { ok: true, result: { status: memberStatus,
+    if (method === "getChatMember") return { ok: true, result: { status: memberStatusByChat.get(chatId!) ?? memberStatus,
       user: { ...user, id: (payload as { user_id: number }).user_id } } } as never;
     if (method === "deleteMessage" && failedDeletes.has((payload as { message_id: number }).message_id)) {
       return { ok: false, error_code: 400, description: "private delete detail" };
@@ -128,6 +129,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     setProfileError: () => { profileError = true; },
     setAdminError: () => { adminError = true; },
     setMemberStatus: (value: string) => { memberStatus = value; },
+    setMemberStatusIn: (chatId: number, value: string) => { memberStatusByChat.set(chatId, value); },
     setMetadata: (value: Record<string, unknown>) => { metadata = value; },
     setProfileMetadata: (value: Record<string, unknown>) => { profileMetadata = value; },
     setPersonalChannelMetadata: (value: Record<string, unknown>) => { personalChannelMetadata = value; },
@@ -2273,4 +2275,46 @@ test("copies recorded before a restart still count and are reported with the mat
   expect(after.prepared.get("40")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAskVariants[0] + "</pre>");
   expect(after.confirmed).toEqual(["41", "40"]);
   await after.stats.stop();
+});
+
+test("repeat deletes are keyed by chat and message; a failed delete elsewhere is never retried", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6407));
+  await h.send({ message_id: 7, text: usdtAsk });
+  await h.send({ chat: groupB, message_id: 7, text: "совсем другой вопрос про аренду квартиры на месяц, кто сдаёт?" });
+  h.failedDeletes.add(8);
+  await h.send({ chat: groupB, message_id: 8, text: "и ещё совсем другой вопрос про то, где поесть недорого" });
+  await h.send({ chat: groupC, message_id: 9, text: usdtAsk });
+  expect(deleted(h)).toEqual([[groupC.id, 9], [group.id, 7]]);
+  const f = harness();
+  f.setAnswer(keepAt(0.6407));
+  const first = await f.send({ text: usdtAsk });
+  f.failedDeletes.add(first);
+  const second = await f.send({ chat: groupB, text: usdtAsk });
+  expect(f.logs.filter((log) => log.event === "delete_failed")).toEqual([expect.objectContaining({ chatId: group.id, messageId: first })]);
+  const third = await f.send({ chat: groupC, text: usdtAsk });
+  expect(deleted(f)).toEqual([[groupB.id, second], [group.id, first], [groupC.id, third]]);
+  await h.stats.stop(); await f.stats.stop();
+});
+
+test("an edit that is no longer moderated forgets its copy; senders exempt elsewhere keep their copies there", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6407));
+  const first = await h.send({ text: usdtAsk });
+  await h.send({ message_id: first, text: undefined, location: { latitude: 1, longitude: 2 } }, true);
+  expect(h.skipped().map((log) => log.reason)).toEqual(["no_text_or_caption"]);
+  await h.send({ chat: groupB, text: usdtAsk });
+  expect(deleted(h)).toEqual([]);
+  const a = harness();
+  a.setAnswer(keepAt(0.6407));
+  const earlier = await a.send({ text: usdtAsk });
+  // Promoted in the first group after posting (Telegram reports it): that copy stays.
+  a.setMemberStatusIn(group.id, "administrator");
+  await a.bot.handleUpdate({ update_id: 900, chat_member: { chat: group, from: user, date: 1,
+    old_chat_member: { status: "member", user }, new_chat_member: { status: "administrator", user } } } as unknown as Update);
+  const later = await a.send({ chat: groupB, text: usdtAsk });
+  expect(deleted(a)).toEqual([[groupB.id, later]]);
+  expect(a.logs.find((log) => log.event === "repeat_copy_skipped")).toEqual({ event: "repeat_copy_skipped", chatId: group.id, reason: "exempt_sender" });
+  expect(earlier).toBe(1);
+  await h.stats.stop(); await a.stats.stop();
 });

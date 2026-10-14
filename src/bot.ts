@@ -58,6 +58,11 @@ export function registerBotHandlers(bot: Bot, {
     ["message", "edited_message"],
     async (ctx, next) => {
       const skip = async (reason: string): Promise<void> => {
+        // An edit that is no longer moderated (e.g. its caption was removed) is no longer a copy.
+        if ("edited_message" in ctx.update && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
+          await repeats.forget(ctx.chat.id, ctx.msgId);
+          repeatSnapshots.delete(ctx.chat.id, ctx.msgId);
+        }
         logger.info(JSON.stringify({
           event: "message_skipped",
           chatId: ctx.chat.id,
@@ -313,10 +318,23 @@ export function registerBotHandlers(bot: Bot, {
       const repeatIds = repeatCopies.filter(c => c.chatId === ctx.chat.id).map(c => c.messageId);
       const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...(repeatDelete ? [ctx.msgId] : [])]);
       const messageIds = [...ids].filter(id => id !== ctx.msgId).sort((a, b) => a - b).concat(ids.has(ctx.msgId) ? [ctx.msgId] : []);
-      // Earlier copies in the account's other groups, oldest first per group.
+      // Earlier copies in the account's other groups, oldest first per group,
+      // except where the account is exempt by now (admin or that group's linked channel).
       const otherChats = new Map<number, number[]>();
       for (const c of [...repeatCopies].sort((a, b) => a.messageId - b.messageId)) {
         if (c.chatId !== ctx.chat.id) otherChats.set(c.chatId, [...otherChats.get(c.chatId) ?? [], c.messageId]);
+      }
+      for (const chatId of otherChats.keys()) {
+        try {
+          if (ctx.senderChat) {
+            const other = await ctx.api.getChat(chatId);
+            if (other.id === chatId && !("linked_chat_id" in other && other.linked_chat_id === ctx.senderChat.id)) continue;
+          } else if (!await admins.isAdmin(ctx.api, chatId, ctx.from!.id)) continue;
+          logger.info(JSON.stringify({ event: "repeat_copy_skipped", chatId, reason: "exempt_sender" }));
+        } catch (error) {
+          logFailure("repeat_exemption_check_failed", error, chatId);
+        }
+        otherChats.delete(chatId);
       }
       // The rule that widened the deletion; only the current copy can be a cache hit.
       const rule = campaignIds.some(id => !linkedIds.includes(id)) ? "repeat_campaign"
@@ -354,6 +372,7 @@ export function registerBotHandlers(bot: Bot, {
       };
       const handled = async (chatId: number, messageId: number) => {
         campaigns.markHandled(chatId, senderId, messageId);
+        if (chatId !== ctx.chat.id) history.forget(chatId, senderId, messageId);
         repeatSnapshots.delete(chatId, messageId);
         await repeats.markHandled(chatId, messageId);
       };

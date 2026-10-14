@@ -12,7 +12,7 @@ Laya scored a Russian "can anyone sell USDT at a reasonable rate?" ask at 0.6407
   - A third copy is deleted when `p ≥ 0.50`.
   - Under 0.5 nothing ever changes.
 - **Deletion.** When `effective ≥ SPAM_THRESHOLD` (0.80; the gate itself is unchanged), the current copy is deleted together with every earlier, not-yet-handled copy in the window, in every group, through the normal audit-reported, stats-counted deletion path (`rule: "repeat_send"`). When the model itself deletes a copy, the earlier copies in the window go too. A copy whose deletion was attempted, whether it succeeded or failed, is marked handled and never retried. Later copies within the window are deleted when they arrive.
-- **Edits** keep the copy's original send time and handled state. An edit is not a new send. An edit that leaves the copy ineligible (shorter, or now scored under 0.5) removes it.
+- **Edits** keep the copy's original send time and handled state. An edit is not a new send. An edit that leaves the copy ineligible (shorter, scored under 0.5, or no longer moderated at all, such as a removed caption) removes it. Earlier copies in another group are skipped when the account has become exempt there (administrator, or that group's linked channel) or the check fails.
 
 ## Choices and data
 
@@ -26,8 +26,8 @@ These choices come from the content-free production logs for 2026-10-13 15:19 to
 
 ## Storage, bounds and privacy
 
-`repeat_sends` (migration `007`) stores only `chat_id`, `message_id`, `copy_key` (the actor+content hash), `sent_at` and `handled`. It holds no text and no sender ID. Rows older than twice the window are pruned every ten minutes, and the table is capped at 100,000 rows (oldest first). Each lookup returns at most 20 copies. Every query is bounded to 250 ms with at most two in flight, and a slow or unavailable database means no escalation, never a deletion. Because the rows live in PostgreSQL, the history survives restarts and deploys.
+`repeat_sends` (migration `007`) stores only `chat_id`, `message_id`, `copy_key` (the actor+content hash), `sent_at` and `handled`. It holds no text and no sender ID. Rows older than twice the window are pruned every ten minutes, and the table is capped at 100,000 rows (oldest first). Each lookup returns at most 20 copies. Every query is bounded to 500 ms with at most two in flight (marking a copy handled waits for a slot instead of being dropped), over connections kept warm for 15 minutes, and a slow or unavailable database means no escalation, never a deletion. Because the rows live in PostgreSQL, the history survives restarts and deploys.
 
-Audit snapshots of copies this process saw stay in memory (2,000 entries) so each deleted copy is reported with its own content. A copy recorded before a restart has no snapshot. Its report uses the current copy's body, which is the same content after normalization, and its context notes the substitution.
+Audit snapshots of copies this process saw stay in memory (2,000 entries) so each deleted copy is reported with its own content. A copy recorded before a restart (or evicted by that cap) has no snapshot. Its report uses the current copy's body, which is the same content after normalization, and its context notes the substitution.
 
 Logs add `repeat_send_detected` (chat/message IDs, copy count, other-chat copy count, model and effective score, decision) and `repeat_store` health counters. `spam_deleted` gains `otherChatCount` and, for a repeat-only delete, `effectiveProbability`. As before, nothing logs text or sender identity.
