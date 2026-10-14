@@ -33,6 +33,13 @@ export class MessageHistory {
     this.messages.set(`${chatId}:${senderId}`, [...recent, message].slice(-this.maxMessages));
   }
 
+  forget(chatId: number, senderId: number | string, messageId: number): void {
+    const key = `${chatId}:${senderId}`;
+    const recent = (this.messages.get(key) ?? []).filter((message) => message.messageId !== messageId);
+    if (recent.length) this.messages.set(key, recent);
+    else this.messages.delete(key);
+  }
+
   clear(chatId: number, senderId: number | string): void {
     this.messages.delete(`${chatId}:${senderId}`);
   }

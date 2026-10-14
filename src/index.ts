@@ -3,6 +3,7 @@ import { PostgresDeletionAudit, RETAINED_REPORTS_ALERT } from "./audit-outbox";
 import { CACHE_POLICY_REVISION } from "./spam-cache";
 import { APPROVED_MODEL, APPROVED_PROMPT_SHA256, APPROVED_CHECKPOINT_SHA256 } from "./policy";
 import { PostgresSpamCache } from "./spam-cache";
+import { PostgresRepeatStore } from "./repeat-sends";
 import { Bot } from "grammy";
 import { registerBotHandlers } from "./bot";
 import { loadConfig } from "./config";
@@ -28,6 +29,8 @@ auditHealthTimer.unref();
 const stats = createStatsRecorder(config.databaseUrl);
 const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
   ? new PostgresSpamCache(config.databaseUrl) : undefined;
+// Repeat-send escalation needs history that survives restarts (#124).
+const repeats = new PostgresRepeatStore(config.databaseUrl);
 const trainingCapture = config.databaseUrl && process.env.TRAINING_CAPTURE === "true"
   ? new PostgresTrainingCapture(config.databaseUrl, { retentionDays: Number(process.env.TRAINING_CAPTURE_DAYS || 30) }) : undefined;
 const classifier = new JevSpamClassifier(config.typesafeApiKey, {
@@ -43,7 +46,7 @@ const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.ap
   url: config.shadow.url,
 });
 
-registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold });
+registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold, repeats });
 
 let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
@@ -55,6 +58,7 @@ function shutdown(signal: string): Promise<void> {
       clearInterval(auditHealthTimer);
       await deletionAudit.close();
       await spamCache?.close();
+      await repeats.close();
       await trainingCapture?.close();
       const health = await stats.stop();
       console.info(JSON.stringify({ event: "bot_stopped", ...health }));
@@ -87,5 +91,5 @@ try {
   await polling;
 } finally {
   if (shutdownPromise) await shutdownPromise;
-  else { await drainHandlers(); clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await trainingCapture?.close(); await stats.stop(); }
+  else { await drainHandlers(); clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await repeats.close(); await trainingCapture?.close(); await stats.stop(); }
 }
