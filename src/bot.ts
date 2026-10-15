@@ -9,6 +9,7 @@ import { toModerationMessage } from "./message";
 import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
 import { SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
+import { PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatSnapshots, type RepeatCopy, type RepeatStore } from "./repeat-sends";
@@ -288,21 +289,29 @@ export function registerBotHandlers(bot: Bot, {
       }
       const effective = escalatedScore(probability ?? 0, copies.length);
       const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
+      // Ad shapes Laya keeps under the gate (#126): side-gig recruitment and
+      // first-person @…bot testimonials, unless the model is confident it is benign.
+      const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined : promoPattern(message);
+      const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
+      if (pattern) logger.info(JSON.stringify({
+        event: "promo_pattern_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, pattern,
+        confidence: probability, decision: patternDelete ? "pattern_delete" : "keep",
+      }));
       // A copy already handled (deleted, or its delete failed) is never retried.
-      const repeatCopies = modelDelete || repeatDelete ? copies.filter(c => !c.handled) : [];
+      const repeatCopies = modelDelete || repeatDelete || patternDelete ? copies.filter(c => !c.handled) : [];
       if (copies.length) logger.info(JSON.stringify({
         event: "repeat_send_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited,
         copyCount: copies.length + 1,
         otherChatCopyCount: copies.filter(c => c.chatId !== ctx.chat.id).length,
         confidence: probability,
         effectiveConfidence: Math.round(effective * 10_000) / 10_000,
-        decision: cacheHit ? "cache_delete" : modelDelete ? "delete" : repeatDelete ? "repeat_delete" : "keep",
+        decision: cacheHit ? "cache_delete" : modelDelete ? "delete" : repeatDelete ? "repeat_delete" : patternDelete ? "pattern_delete" : "keep",
         pendingCopyCount: repeatCopies.length,
       }));
 
       // A copy already handled (e.g. an edit of a failed delete) is never retried.
       const campaignIds = (campaign?.pending ?? []).map(c => c.messageId);
-      if (!modelDelete && !repeatDelete && !campaignIds.length) {
+      if (!modelDelete && !repeatDelete && !patternDelete && !campaignIds.length) {
         if (!mediaOnly && !campaign) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
         await next();
         return;
@@ -316,7 +325,7 @@ export function registerBotHandlers(bot: Bot, {
         CONTEXT_LINK_THRESHOLD,
       );
       const repeatIds = repeatCopies.filter(c => c.chatId === ctx.chat.id).map(c => c.messageId);
-      const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...(repeatDelete ? [ctx.msgId] : [])]);
+      const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...(repeatDelete || patternDelete ? [ctx.msgId] : [])]);
       const messageIds = [...ids].filter(id => id !== ctx.msgId).sort((a, b) => a - b).concat(ids.has(ctx.msgId) ? [ctx.msgId] : []);
       // Earlier copies in the account's other groups, oldest first per group,
       // except where the account is exempt by now (admin or that group's linked channel).
@@ -338,7 +347,7 @@ export function registerBotHandlers(bot: Bot, {
       }
       // The rule that widened the deletion; only the current copy can be a cache hit.
       const rule = campaignIds.some(id => !linkedIds.includes(id)) ? "repeat_campaign"
-        : repeatDelete || repeatCopies.length ? "repeat_send" : cacheHit ? "cache" : "model";
+        : repeatDelete ? "repeat_send" : patternDelete ? pattern! : repeatCopies.length ? "repeat_send" : cacheHit ? "cache" : "model";
       // Freeze each message’s own profile/content before clearing history.
       const snapshots = [...recentMessages, ...(campaign?.pending ?? [])].flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : [])
         .concat(snapshot ? [snapshot, ...repeatCopies.map(c => repeatSnapshots.get(c, snapshot))] : []);

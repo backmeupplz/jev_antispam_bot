@@ -26,6 +26,7 @@ import { channelPosts, repeatControls, repeatedOffer } from "./fixtures/repeat-c
 import { directCryptoTradeControls } from "./fixtures/crypto-trade-courier";
 import { shortRepeats, usdtAsk, usdtAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
+import { botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -2317,4 +2318,63 @@ test("an edit that is no longer moderated forgets its copy; senders exempt elsew
   expect(a.logs.find((log) => log.event === "repeat_copy_skipped")).toEqual({ event: "repeat_copy_skipped", chatId: group.id, reason: "exempt_sender" });
   expect(earlier).toBe(1);
   await h.stats.stop(); await a.stats.stop();
+});
+
+// #126: ad shapes Laya keeps under the gate (incident texts, SYNTHETIC routing).
+test("side-gig comment at 0.797 and forwarded @bot testimonial at 0.437 are deleted by the pattern rule", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.797));
+  await h.send({ text: sideGigIncident, reply_to_message: channelPost(0) });
+  h.setAnswer(keepAt(0.437));
+  await h.send({ text: botTestimonialIncident, forward_origin: { type: "hidden_user", sender_user_name: "Нина", date: 1 } });
+  expect(deleted(h)).toEqual([[group.id, 1], [group.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep"]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "side_gig_offer", confidence: 0.797, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 2, isEdited: false, pattern: "bot_testimonial", confidence: 0.437, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount])).toEqual([
+    [1, "side_gig_offer", 1], [2, "bot_testimonial", 1]]);
+  expect(h.confirmed).toEqual(["1", "2"]);
+  await h.stats.flush();
+  expect(h.batches.flatMap((batch) => batch.deletions).map((d) => [d.messageId, d.source])).toEqual([["1", "jev"], ["2", "jev"]]);
+  expect(JSON.stringify(h.logs)).not.toContain("подработ");
+  await h.stats.stop();
+});
+
+test("pattern rule stays silent for admins, under the model floor, for requested answers and failed classifications", async () => {
+  const h = harness();
+  // First, so the cached admin status is the administrator's.
+  h.setMemberStatus("administrator");
+  h.setAnswer(keepAt(0.6));
+  await h.send({ text: botTestimonialIncident });
+  h.setMemberStatus("member");
+  const member = { ...user, id: 13 };
+  h.setAnswer(keepAt(0.29));
+  await h.send({ from: member, text: sideGigIncident });
+  h.setAnswer(keepAt(0.6));
+  await h.send({ from: member, text: sideGigIncident, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: "Ищу подработку на выходные, есть варианты?" } });
+  h.setClassifyError();
+  await h.send({ from: member, text: botTestimonialIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(h.skipped().map((log) => log.reason)).toEqual(["group_admin"]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 2, isEdited: false, pattern: "side_gig_offer", confidence: 0.29, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+test("a pattern delete also removes the account's earlier kept copy of the same text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.55));
+  // Kept as an answer to another member, but recorded as a copy (score >= 0.5).
+  await h.send({ chat: groupB, text: sideGigIncident, reply_to_message: { message_id: 90, date: 1, chat: groupB, from: forwardedUser, text: "Есть у кого работа?" } });
+  expect(deleted(h)).toEqual([]);
+  // Two copies at 0.55 escalate to 0.775 only: the pattern, not the repeat rule, deletes.
+  h.setAnswer(keepAt(0.55));
+  await h.send({ text: sideGigIncident, reply_to_message: channelPost(0) });
+  expect(deleted(h)).toEqual([[group.id, 2], [groupB.id, 1]]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.chatId, log.rule, log.deletedMessageCount, log.otherChatCount]))
+    .toEqual([[group.id, "side_gig_offer", 2, 1]]);
+  await h.stats.stop();
 });
