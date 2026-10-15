@@ -32,6 +32,7 @@ export const sideGigParaphrases = [
   "I earn $500 a day with this side job, DM me for details",
   "Подработка 5000 в день, обман исключен, пиши в лс",
   "Подработка 5000 в день, никаких разводов и обмана, пиши в лс",
+  "Подработка 5000 в день, ни вложений, ни обмана, пиши в лс",
 ];
 
 export const botTestimonialParaphrases = [
@@ -47,6 +48,8 @@ export const botTestimonialParaphrases = [
   "Девочки, вы не поверите\nЯ прошла тест в @mymindcounselbot и узнала много нового",
   "Прошла тест в @calm_mind_bot\nУзнала много нового о себе",
   "Прошла тест в @mymindcounselbot. Помогло? Да, очень!",
+  "Прошла тест в @mymindcounselbot. Помогло? Да не то слово!",
+  "Прошла тест в @mymindcounselbot. Помогло? Да, ни разу не пожалела!",
 ];
 
 // Controls: each holds part of a shape but is not an unsolicited ad.
@@ -76,6 +79,8 @@ export const sideGigControls = [
   "Предлагают работу 5000 в день, пишите в лс. Не соглашайтесь, обман",
   "Кто-то в лс предлагает работу 5000 в день — это не работа, это обман",
   "Зовут в лс на подработку 5000 в день. Без сомнения, лохотрон.",
+  "Зовут в лс на подработку 5000 в день, а по факту ни денег, ни работы, обман",
+  "Зовут в лс на подработку 5000 в день. Ни денег, обман один",
 ];
 
 export const botTestimonialControls = [

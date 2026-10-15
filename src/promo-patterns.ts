@@ -48,7 +48,8 @@ const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|и
 const CON = re("‹(?:обман|лохотрон|развод|fraud)\\p{L}*", "giu");
 // Ads deny it in more ways than DENIAL lists: "никакого обмана", "обмана нет", "без вложений, предоплат и обмана".
 // The negation must govern the word itself, so a warning's own advice ("не верьте, это обман") stays a warning.
-const CON_DENIED_BEFORE = re("(?:‹(?:без(?!\\sсомнени|\\sвопрос)|ни|нет|никак\\p{L}*|no|without)\\s(?:\\p{L}+(?:,\\s|\\s(?:и|или|and|or)\\s)){0,3}|‹(?:не|not|zero)\\s)$");
+// A list must end in "и/или" ("без вложений, предоплат и обмана"), so "ни денег, ни работы, обман" stays a warning.
+const CON_DENIED_BEFORE = re("‹(?:(?:без(?!\\sсомнени|\\sвопрос)|нет|никак\\p{L}*|no|without)\\s(?:(?:\\p{L}+,\\s){0,2}\\p{L}+\\s(?:и|или|and|or)\\s)?|(?:не|ни|not|zero)\\s)$");
 const CON_DENIED_AFTER = any("^\\s?(?:нет|нету|исключ\\p{L}*)›");
 function callsItACon(text: string): boolean {
   return [...text.matchAll(CON)].some((match) => !CON_DENIED_BEFORE.test(text.slice(Math.max(0, match.index - 80), match.index))
@@ -116,7 +117,8 @@ const assessment = (text: string) => PSYCH.test(text) || TOOK_TEST.test(text) ||
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
-const AFFIRM = any("^\\s?(?:да›(?!,?\\s(?:нет|не|ни)›)|ага|конечно|ещ[её] как|yes|yep|of course|absolutely|definitely)›");
+// "Да нет" and "да ни капли" are a no; "да не то слово" and "да, ни разу не пожалела" are a yes.
+const AFFIRM = any("^\\s?(?:да›(?!,?\\s(?:нет›|ни (?:капли|чуть|сколько|на грамм|на йоту)›))|ага|конечно|ещ[её] как|yes|yep|of course|absolutely|definitely)›");
 // The clause before the verb names nobody else: "кто-нибудь проходил…", "ты пробовала…" ask or report.
 const OTHER_SUBJECT = any("‹(?:кто|кто-то|кто-нибудь|кто-либо|ты|вы|тебе|вам|anyone|anybody|someone|somebody|you|has|have|did|does|do)›");
 // Answering someone's request or continuing a discussion is not an unsolicited plug.
