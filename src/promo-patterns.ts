@@ -46,6 +46,9 @@ const JOB_WORD = re("‹(?:работ|jobs?›|work)");
 const HEADER = any("‹(?:срочн|внимани|важн|новост|объявлени|акци|набор|деньг|легк|быстр|бонус|оплат|зарплат|ежедневн|удал[её]нн|онлайн|urgent|attention|important|now›|today|new›|hot›|alert|news|offer|info|update|money|cash|easy|fast|quick|bonus|pay›|daily|remote|online)");
 // "Внимание!" and "warning" open ads as often as warnings, so they are not report words on their own.
 const MESSAGE = "(?:сообщени|смс|sms|письм|предложени|рассылк)";
+// Where it arrived: "в личку", "на почту", "в вотсап".
+const PLACE = " (?:в|на) (?:лс|личк\\p{L}*|личные|директ|вотсап|ватсап|whatsapp|телег\\p{L}*|тг|вк|инст\\p{L}*|почту|смс)›";
+const RECIPIENT = "(?:мне|нам|детям|ребенк\\p{L}*|сыну|дочк\\p{L}*|дочер\\p{L}*|жене|мужу|маме|папе|многим|всем нам)";
 const RECEIVED = "(?:приходят|приходит|приходили|пришл[оаи]›|пришел›|присылают|присылали|прислали|прислал[аи]?|написали|написал[аи]?|пишут|получил[аи]?)";
 const REPORT = any("‹(?:осторожн|остерега|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|пример спам)",
   // Recruiting into crime: "Это вербовка в закладчики!".
@@ -55,20 +58,28 @@ const REPORT = any("‹(?:осторожн|остерега|предупрежд
   // ("получаешь сообщение с заданием", "пришлите сообщение") is no report.
   // An ad boasting what the author got ("Мне пришло 5000 за день", "Я получил: 15000", "Деньги приходят:")
   // names no message, so a received message needs a message word, a demonstrative or a named recipient.
-  `‹${RECEIVED}(?: (?:вот|такое|такие|это|${MESSAGE}\\p{L}*)){1,3}\\s?:`,
-  `‹(?:вот|такое|такие|это) (?:[\\p{L}-]+ )?${RECEIVED}›`,
-  `‹(?:мне|нам|детям|ребенк\\p{L}*|сыну|дочк\\p{L}*|дочер\\p{L}*|жене|мужу|маме|папе|многим|всем нам) (?:[\\p{L}-]+ )?${RECEIVED}(?:(?: [\\p{L}-]+)?\\s?:| (?:[\\p{L}-]+ )?(?:вот|такое|такие|это|${MESSAGE})| в (?:лс|личк|телег|тг|вотсап|ватсап|whatsapp|директ|инст|вк))`,
-  `‹(?:такое|такие|это|подобн\\p{L}*|странн\\p{L}*|очередн\\p{L}*) (?:[\\p{L}-]+ )?(?:сообщени|смс|sms|письм|предложени|рассылк)\\p{L}* (?:[\\p{L}-]+ )?${RECEIVED}`,
+  `‹${RECEIVED}(?: (?:вот|такое|такие|это|${MESSAGE}\\p{L}*)|${PLACE}){1,3}\\s?:`,
+  // "Мне в личку пришло:", "Нам в лс пишут:", "Опять пишут:".
+  `‹(?:${PLACE.slice(1)}|опять|снова|постоянно|тут|сюда) (?:[\\p{L}-]+ )?${RECEIVED}\\s?:`,
+  // "Вот такое прислали:"; without a colon "Вот такие выплаты приходят каждый день!" is an earnings boast.
+  `‹(?:вот|такое|такие|это|что) (?:${MESSAGE}\\p{L}* )?${RECEIVED}(?: ${RECIPIENT})?\\s?:`,
+  // A named recipient: "Ребенку написали: …", "мне пришло такое предложение", "Мужу написали в телеграме".
+  // "Мне пишут в лс каждый день" boasts, so a place counts only in the past tense.
+  `‹${RECIPIENT} (?:[\\p{L}-]+ )?${RECEIVED}(?:(?: [\\p{L}-]+)?\\s?:| (?:[\\p{L}-]+ )?(?:вот|такое|такие|это|${MESSAGE}))`,
+  `‹${RECIPIENT} (?:[\\p{L}-]+ )?(?:пришл[оаи]|пришел|прислали|написали|написал[аи]?)${PLACE}`,
+  `‹(?:такое|такие|это|подобн\\p{L}*|странн\\p{L}*|очередн\\p{L}*) (?:[\\p{L}-]+ )?${MESSAGE}\\p{L}* (?:[\\p{L}-]+ )?${RECEIVED}`,
   // Impersonal only: "Получила такое предложение и не пожалела!" is an ad's testimonial.
   `‹(?!получил)${RECEIVED} (?:[\\p{L}-]+ )?(?:такое|такие|это|подобн\\p{L}*|странн\\p{L}*|очередн\\p{L}*)›`,
   // An admin addressed at the start of a sentence or asked to act: "Админ, удали пожалуйста: …", "забаньте его".
   // Ads recruit admins and moderators ("Нужен админ, …", "We need mods!"), so a mention alone is no report.
-  "(?:^|[.!?\\n]\\s?)(?:уважаем\\p{L}* )?(?:админ|модер)\\p{L}{0,6}\\s?,|‹(?:удали(?:те)?|забан\\p{L}*|кикни(?:те)?|заблокируйте) (?:пожалуйста|плиз|это|этого|эту|его|е[её]|их|сообщени\\p{L}*|пост\\p{L}*|спам\\p{L}*|бот\\p{L}*)›|‹(?:сообщил|написал|пожаловал)\\p{L}* (?:[\\p{L}-]+ )?(?:админ|модер)",
-  "‹(?:видела?|увидела?|наткнул(?:ся|ась)) (?:[\\p{L}-]+ )?(?:объявлени|реклам|пост)",
+  "(?:^|[.!?\\n]\\s?)(?:уважаем\\p{L}* )?(?:админ|модер)\\p{L}{0,6}\\s?(?:,(?!\\s?(?:привет|здравствуйте|добр\\p{L}*|мы|нужны|требуются|срочно|набира\\p{L}*)›)|!+\\s?(?:опять|снова|тут|гляньте|посмотрите|удалите)›)|‹(?:удали(?:те)?|забан\\p{L}*|кикни(?:те)?|заблокируйте) (?:пожалуйста|плиз|это|этого|эту|его|е[её]|их|сообщени\\p{L}*|пост\\p{L}*|спам\\p{L}*|бот\\p{L}*)›|‹(?:сообщил|написал|пожаловал)\\p{L}* (?:[\\p{L}-]+ )?(?:админ|модер)",
   "‹(?:scam|spam|fake|beware|careful|report|don'?t (?:reply|respond|answer|click)|drugs?›(?!-free)|money mule|trafficking)",
-  "(?:^|[.!?\\n]\\s?)(?:admins?|mods?|moderators?)\\s?,|‹(?:will|can|could|would|please|pls|plz|should) (?:the )?(?:admins?|mods?|moderators?) (?:\\p{L}+ ){0,2}?(?:delete|remove|ban)›|‹(?:please|pls|plz) (?:remove|delete|ban)›|(?:^|[.!?\\n]\\s?)(?:ban|delete|remove) (?:this|him|her|them)›",
+  "(?:^|[.!?\\n]\\s?)(?:admins?|mods?|moderators?)\\s?,(?!\\s?(?:we|we're|hi|hello|hey|hiring|join)›)|‹(?:will|can|could|would|please|pls|plz|should) (?:the )?(?:admins?|mods?|moderators?) (?:\\p{L}+ ){0,2}?(?:delete|remove|ban)›|‹(?:please|pls|plz) (?:remove|delete|ban)›|(?:^|[.!?\\n]\\s?)(?:ban|delete|remove) (?:this|him|her|them)›",
   "‹(?:got|getting|received|receiving) (?:[\\p{L}-]+ ){0,2}?(?:messages|texts|emails|offers) (?:like|saying|about|from)›",
-  "‹(?:got|get|getting|received|receiving) (?:this|these|a|the following)(?: (?:weird |strange |random )?(?:message|text|dm|email|sms|offer)s?)?\\s?:|‹(?:got|received) (?:this|these) (?:message|text|dm|email|sms)s?›");
+  "‹(?:got|received) (?:this|these)(?: [\\p{L}]+)?\\s?:|‹(?:got|getting|received|receiving) (?:this|these|a|the following)(?: (?:weird |strange |random )?(?:message|text|dm|email|sms|offer)s?)?\\s?:|‹(?:got|received) (?:this|these) (?:message|text|dm|email|sms)s?›");
+// An ad someone saw ("Видела объявление: …"), unless the author recruits from it ("…теперь 5000 в день, хочешь так же").
+const SEEN_AD = any("‹(?:видела?|увидела?|наткнул(?:ся|ась)) (?:[\\p{L}-]+ )?(?:объявлени|реклам|пост)");
+const RECRUIT_CALL = any("‹(?:хоч(?:ешь|ете|ет) (?:так же|также|тоже)|кому интересно|в команд|присоединя)");
 // Ads deny being what they are ("не развод", "без обмана и спама", "никаких наркотиков"); a denial is no report.
 const DENIAL = re("‹(?:не|ни|без|никак\\p{L}*|no|not(?: a)?|zero)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|лохотрон|мошен|фейк|кидал|наркот|заклад|криминал|scam|spam|fake|fraud|drugs?›)\\p{L}*", "giu");
 // Calling a job offer a con is a warning. Job offers only: "развод" is also a divorce in a personal story.
@@ -87,12 +98,15 @@ function callsItACon(text: string): boolean {
 // The word "работа"/"job" alone is no offer ("электрик сделал всю работу", "did a great job"): the job
 // must be offered, sought for, or be a side gig.
 const ROLE = "(?:сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощни|упаковщик|работник|водител|оператор|менеджер|модератор|администратор)";
+// The author's own move to a job: "Перешла на удалённую работу", "Устроился на работу курьером".
+const MOVED = "(?:перешл\\p{L}*|перешел|ушл\\p{L}*|ушел|пошл\\p{L}*|пошел|устроил\\p{L}*|вышл\\p{L}*|вышел)";
 const GIG = any(
   "‹(?:подработ|под работк|работк|ваканси|заработ|доход|занятост)",
+  "‹(?:возьм[уеё]\\p{L}*|бер[её]м|берут|прим[уе]м|принима[ею]м|зов[её]м|зову|устрою|устроим|приглаша\\p{L}*) (?:[\\p{L}-]+ ){0,2}?на (?:[\\p{L}-]+ )?работу›",
   "‹(?:предлага\\p{L}*|предложить|дам|да[её]м|есть|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
   // A "Работа:" header, not a sentence about one's job ("Работа на заводе, устал").
-  "(?:^|\\n)\\s?работа(?: [\\p{L}-]+)?\\s?(?:[:!\\n—–-]|$)|(?:^|\\n)\\s?работа (?:на|в|для|с|без)›|(?<!на\\s)‹удал[её]нн\\p{L}* работ",
-  `‹работ[ауые]? (?:[\\p{L}-]+ )?${ROLE}`,
+  `(?:^|\\n)\\s?работа(?: [\\p{L}-]+)?\\s?(?:[:!\\n—–-]|$)|(?:^|\\n)\\s?работа (?:на|в|для|с|без)›|(?<!${MOVED} на\\s)‹удал[её]нн\\p{L}* работ`,
+  `(?<!${MOVED} на\\s)‹работ[ауые]? (?:[\\p{L}-]+ )?${ROLE}`,
   "‹(?:нужн[аы]|ищет|ищете|ищешь) (?:\\p{L}+ ){0,2}?работ[ауые]?›",
   "‹работ[ауые]? (?:онлайн|на дому|из дома|удал[её]нн\\p{L}*|в интернете|с телефона|для (?:всех|студент|девуш|мам|школьник))",
   // A role counts only when hired at scale: "требуется водитель", "нужны модераторы", "набираем курьеров".
@@ -145,7 +159,7 @@ function callsToDm(text: string): boolean {
 }
 // The author is the one looking for work, not offering it.
 const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|в поиске (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|(?<!(?:кто|если|тот|те)\\s)готова? (?:на любую )?работ)",
-  "‹(?:кто (?:может|сможет|готов) (?:\\p{L}+ )?предложить|предложите (?:мне )?(?:\\p{L}+ )?(?:подработ|работ|вариант)|рассмотрю (?:\\p{L}+ )?(?:предложени|вариант)|рассмотрю (?:вс[её]|все варианты)›|могу (?:за |от )?\\d)",
+  "‹(?:кто (?:может|сможет|готов) (?:\\p{L}+ )?предложить|предложите (?:мне )?(?:\\p{L}+ )?(?:подработ|работ|вариант)|рассмотрю (?:\\p{L}+ )?(?:предложени|вариант)|(?:меня|мне) (?:устроит|устраивает|подойд[её]т)›|рассмотрю (?:вс[её]|все варианты)(?=\\s?(?:[,.!?\\n]|$))|могу (?:работать )?(?:за |от )?\\d[\\d\\s.,]{0,8}(?:\\s?(?:к|тыс\\p{L}*|р|руб\\p{L}*))?\\s?(?:в|за) (?:день|час|смену|сутки)›)",
   "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|available for (?:[\\p{L}-]+ ){0,2}(?:work|jobs?|gigs?|hire|projects?)|open to (?:[\\p{L}-]+ ){0,2}(?:work|jobs?|offers|opportunit\\p{L}*)|seeking (?:a |some )?(?:[\\p{L}-]+ )?(?:job|work)|hire me)›",
 );
 // "Нужна подработка", "need a job" stated by the author seeks work; asked ("Нужна подработка?") or said of
@@ -249,7 +263,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (!raw || isAttributed(raw)) return;
   const text = promoText(raw.replace(QUOTED, " "));
   const undenied = text.replace(DENIAL, " ");
-  if (REPORT.test(undenied)) return;
+  if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied)) return;
   // A question about pay, or about whether the offer is real, is conversation, not an offer.
   if (GIG.test(text) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
     && !asksAboutPay(text) && !doubtsTheOffer(text)) {

@@ -3,6 +3,7 @@ import { botTestimonialControls, botTestimonialIncident, botTestimonialParaphras
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
 import { usdtAsk, usdtAskVariants } from "./fixtures/usdt-repeat";
+import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses } from "./fixtures/promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -86,4 +87,9 @@ test("normalization folds case, accents, lookalikes, emoji and o-for-zero but ke
   expect(promoText("Зaрплaтa 5ООО₽ в ДЕНЬ 🔥 пиши!")).toBe("зapплata 5000₽ b дehь пиши!");
   expect(promoText("Райский")).toBe(promoText("райский"));
   expect(promoText("Райский")).not.toBe(promoText("раиский"));
+});
+
+test("the pinned review corpus keeps its exact outcome: no ad lost, no conversation matched", () => {
+  expect(corpusAds.filter((text) => promoPattern(plain(text)) !== "side_gig_offer")).toEqual(corpusKnownMisses);
+  expect(corpusKeeps.filter((text) => promoPattern(plain(text)))).toEqual(corpusKnownMatches);
 });
