@@ -37,6 +37,15 @@ export const sideGigParaphrases = [
   "Хочешь подработку? Платим от 4000 в день, пиши в лс",
   "Это реально? Да! Подработка от 5000 в день, пиши в лс",
   "Need extra cash? Part-time work, $150 a day, DM me",
+  "Want to earn real money? Part-time job, $200 a day, DM me",
+  "Looking for a legit side hustle? $150 per day, DM me",
+  "Кто работал курьером? Нужны люди, 4000 за смену, пиши в лс",
+  // English calls to action that mention getting something, and readers addressed in the third person.
+  "Part-time job, $200 a day. Message me to get details",
+  "To get started DM me. Part-time job, $200 a day",
+  "Подработка от 5000 в день. Желающие пишут в лс",
+  "Нужны люди, 5000 в день, заинтересованные пишут в личку",
+  "Заработала 15000 за неделю не выходя из дома, кому интересно пишите в лс",
 ];
 
 export const botTestimonialParaphrases = [
@@ -97,6 +106,8 @@ export const sideGigControls = [
   "Got a DM about a remote job paying $200 per day. Legit?",
   "Someone DM'd me about a side job, $300 a day",
   "Предлагают подработку от 5000 в день, пишите в лс. Стоит ли связываться?",
+  "Мне в личку какая-то девушка написала, подработка 5000 в день",
+  "Is this a scam? Someone offered me a part-time job, $250 a day, message me they said",
   "Сегодня на смене заработал 3000 за день, устал как собака. Кто в лс хотел фотки — скину вечером",
 ];
 
