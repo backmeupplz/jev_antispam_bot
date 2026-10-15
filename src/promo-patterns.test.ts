@@ -60,10 +60,18 @@ test("matching stays linear on long adversarial input", () => {
     "«".repeat(4096), '"'.repeat(4096), "прошла " + "a".repeat(4000) + " @xbot", "нужны " + "люди ".repeat(800),
     "прошла @abot ".repeat(315), "ищем " + "людей ".repeat(800), "ищет " + "а ".repeat(2040) + "работу",
     "люди ищут ".repeat(400), "подработка нужна ".repeat(240), "возьму " + "любую ".repeat(680)];
+  // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI
+  // runner can exceed the bound once, while backtracking is slow on every run.
+  // The bound allows for the slower Easypanel build host (55 ms best warm run
+  // there vs ~20 ms locally); catastrophic backtracking takes seconds.
   for (const text of inputs) {
-    const started = performance.now();
-    promoPattern(plain(text));
-    expect(performance.now() - started).toBeLessThan(50);
+    let best = Infinity;
+    for (let run = 0; run < 3; run++) {
+      const started = performance.now();
+      promoPattern(plain(text));
+      best = Math.min(best, performance.now() - started);
+    }
+    expect(best).toBeLessThan(250);
   }
 });
 
