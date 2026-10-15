@@ -1,0 +1,47 @@
+# Ad-shape rules (#126)
+
+On 2026-10-15 Laya kept two ads. The first was a Russian side-gig recruitment comment under a channel post ("срочно нужны люди, … подработка …, зарплата от 5 тысяч в день, … писать в лс"), which scored 0.797, just under the 0.80 gate. The second was a forwarded first-person testimonial plugging a bot ("Я проходила тест в @…bot и узнала …"), which scored 0.437. Eighteen prompt and example variants could not lift either one without shifting held-out traffic (see #126), so Nikita chose bot-side rules, generalized to the shape of each ad rather than its wording (Telegram message 23502). The gate and the model are unchanged.
+
+## Rules
+
+Both rules run in `src/promo-patterns.ts` on the current text or caption after a completed classification (or a cache verdict). They never run on uncaptioned media, skipped updates, administrators, the linked channel or failed classifications.
+
+- **Normalization.** Text is decomposed with NFKD and lowercased. Format characters and accents are dropped, but й keeps its breve. Cyrillic and Greek lookalike letters fold to Latin in both the text and the patterns, emoji become spaces, and a letter o typed inside a number reads as 0 ("5ООО").
+- **`side_gig_offer`** needs all three parts of the ad:
+  - a work or earnings offer ("подработка", "нужны люди", "набираем", "требуются", "доход", "side job", "hiring", "earn", …);
+  - a pay rate per period, meaning an amount with a currency, a multiplier or at least three digits, tied to a day, shift, hour, week, month or weekend ("от 5 тысяч в день", "4к в день", "2500р в час", "3000-4500 за смену", "$250/day", "в день от 5000"). Bare counts such as "за 1 день" and "2 раза в день" never count;
+  - a move-to-private call ("в лс", "в личку", "в личные сообщения", "пиши мне", "DM", "message me", an @handle or a link).
+
+  A first-person job seeker ("ищу подработку", "looking for a part-time job") never matches.
+- **`bot_testimonial`** needs a first-person experience verb ("прошла", "проходила", "попробовала", "сделала", "воспользовалась", "took", "tried", "passed", "used", …) followed within one clause by an `@…bot` handle or a `t.me/…bot` link. An outcome must then follow the handle in the same or the next sentence ("узнала", "поняла", "помог", "изменил", "советую", "realized", "helped", "recommend", …). Negated outcomes ("не помогло") don't count. A clause with another subject or a question ("кто-нибудь проходил…?", "ты пробовала…") doesn't count either.
+- **Never a match**:
+  - a reply to, or a quote of, another member's message, because that answers the member (requested job answers and bot recommendations arrive this way). Replies to the group's channel posts, to one's own message and to forum-topic roots don't count as answers;
+  - text that answers a request or continues a discussion ("ты просил…", "в ответ на…", "продолжая…");
+  - reports and warnings ("осторожно", "развод", "мошенники", "спам", "не ведитесь", "scam", "beware", …);
+  - text inside quotation marks (it is removed before matching);
+  - a repost attributed to a named author ("Имя Фамилия: …"), which is the shape of a moderator quoting the ad.
+- **Decision.** A match deletes the message when the model score is at least **0.30** (`PATTERN_MIN_SCORE`). Below that the model is confident the post is benign and the rule only logs. A match deletes through the normal audit-reported, stats-counted path with `rule: "side_gig_offer"` or `"bot_testimonial"`. Like a model delete, it also removes the account's earlier unhandled copies of the same content from the #124 repeat-send window, in every group.
+
+## Data
+
+The rules were replayed on the production capture (`training_samples`): 72,511 classified texts over 8.9 days (2026-10-06 to 2026-10-15), each using the latest captured request per message.
+
+| rule | matches | already deleted by the model (≥ 0.80) | new deletions (0.30–0.80) | under the floor | false positives in the new deletions |
+|---|---:|---:|---:|---:|---:|
+| `side_gig_offer` | 74 | 64 | 10 | 0 | 0 |
+| `bot_testimonial` | 1 | 0 | 1 | 0 | 0 |
+
+- **New `side_gig_offer` deletions (10).** These are the incident (0.797) and eight copies of the same "набираем людей на временную подработку … от 5 тысяч в день … писать в лс" campaign in two other chats (0.50–0.79), two of which the repeat rule had already deleted. The tenth is an English "Earn between $1,350 and $2,600 daily from home … Send me a direct message" ad at 0.333, which set the floor at 0.30 rather than 0.35. The moderator's attributed repost of the campaign text stayed kept.
+- **The 64 model-deleted matches** are all job-scam ads (remote "work", warehouse recruitment, "под работка 8-12к в день, пиши в личные", lookalike-letter variants). That is the rule's precision on traffic the model already agrees with.
+- **New `bot_testimonial` deletions (1).** The only match is the incident itself. The shape is rare, so this rule rests on the synthetic held-out set more than on traffic.
+
+## Tests
+
+`src/promo-patterns.test.ts` checks the following:
+- Both incidents match standalone, as channel-post comments and when forwarded.
+- Held-out RU/EN paraphrases match, including lookalike letters, emoji and o-for-zero. Their wording is not in the rule text.
+- Every control stays unmatched: job seekers, wage discussion, warnings and quoted reports, the attributed repost, requested answers, bot questions, a negated outcome, the requested/discussion testimonial controls, the vague-recruitment controls and the #124 USDT controls.
+
+`src/bot.test.ts` routes the incidents through the real handler. It covers deletion, logging, the audit and stats; silence under the floor, for administrators, for requested replies and for failed classifications; and the interaction with earlier repeat copies.
+
+Logs add `promo_pattern_detected` (chat and message IDs, pattern, model score, decision). As elsewhere, nothing logs text or sender identity.

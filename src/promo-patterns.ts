@@ -1,0 +1,111 @@
+import type { ModerationMessage } from "./spam";
+
+// Nikita #126 option B: two ad shapes Laya keeps under the gate. The rules match
+// the structure of the ad (offer + pay per period + move-to-DM call; a first-person
+// "I took the test in @…bot" endorsement), not its wording. Data: docs/promo-patterns.md.
+export type PromoPattern = "side_gig_offer" | "bot_testimonial";
+// A match deletes only when the model sees some spam signal too: under this
+// score the model is confident the post is benign and the rule stays silent.
+export const PATTERN_MIN_SCORE = 0.3;
+
+// Lookalike letters fold to one form in both the text and the patterns, so a
+// swapped Latin/Cyrillic letter matches either way.
+const HOMOGLYPHS: Record<string, string> = {
+  а: "a", в: "b", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x",
+  і: "i", ї: "i", ј: "j", ѕ: "s", ԁ: "d", ӏ: "l", ο: "o", α: "a", ε: "e", ρ: "p", τ: "t", υ: "u", ν: "v", ι: "i", κ: "k",
+};
+const glyphs = (text: string) => [...text].map((char) => HOMOGLYPHS[char] ?? char).join("");
+
+// Case, accents, format characters, emoji and lookalikes never change a match.
+// The breve of й survives (NFKD would split it off and turn й into и).
+export function promoText(text: string): string {
+  const folded = text.replace(/й/giu, "\u0000").normalize("NFKD").toLowerCase()
+    .replace(/[\p{Cf}\p{M}]/gu, "").replace(/\u0000/g, "й");
+  return glyphs(folded)
+    .replace(/[^\p{L}\p{N}\p{Sc}\s.,!?;:«»"“”„'’@/%+\-–—_]/gu, " ")
+    // A letter o typed for a zero inside a number: 5ooo, 1o 000.
+    .replace(/(?<![\p{L}\p{N}])(?=[\do]*\d)[\do]+(?![\p{L}])/gu, (n) => n.replaceAll("o", "0"))
+    .replace(/\s+/gu, " ").trim();
+}
+
+// Sources are lowercase plain text; `‹`/`›` mark word starts/ends (\b is ASCII-only).
+const re = (source: string, flags = "iu") => new RegExp(glyphs(source)
+  .replaceAll("‹", "(?<![\\p{L}\\p{N}])").replaceAll("›", "(?![\\p{L}\\p{N}])"), flags);
+const any = (...sources: string[]) => re(sources.join("|"));
+
+// Quoted spans are someone else's words, e.g. a warning that quotes the ad.
+const QUOTED = /«[^»]{8,}»|“[^”]{8,}”|„[^“”]{8,}[“”]|"[^"]{8,}"/gu;
+// "Имя Фамилия: …" is a copied message with its author: the shape of a moderator's repost.
+const ATTRIBUTED = /^\p{Lu}[\p{L}'’-]+(?:\s\p{Lu}[\p{L}'’-]+){1,2}\s?:\s/u;
+const REPORT = any("‹(?:осторожн|остерега|внимани|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|модератор|пример спам)",
+  "‹(?:scam|spam|fake|beware|warning|careful|report|moderator|don'?t (?:reply|respond|answer|click))");
+
+// --- Side-gig recruitment: a work/earnings offer + pay per period + a move-to-DM call. ---
+const GIG = any(
+  "‹(?:подработ|работ[ауые]›|работк|ваканси|заработ|доход|сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощник|упаковщик)",
+  "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн|девочк|мальчик)",
+  "‹(?:требу[ею]тся|набира[ею]м|набор (?:людей|сотрудник|персонал)|ищем (?:людей|сотрудник|человек|помощник|курьер)|приглаша[ею]м (?:на работ|на подработ|людей))",
+  "‹(?:side[ -]?(?:job|gig|hustle|income)|part[ -]?time|job|jobs|work|hiring|vacanc|earn|earning|income|need(?:ed)? (?:\\p{L}+ ){0,2}people|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))›",
+);
+const CUR = "(?:\\p{Sc}|руб\\p{L}*|р\\.|р›|usdt?|eur|долл\\p{L}*|бакс\\p{L}*|грн|гривен\\p{L}*|тг|тенге|сум|byn|dollars?|bucks|euros?)";
+const MULT = "(?:тыс\\p{L}*\\.?|т\\.|т›|k›|к›)";
+// An amount needs a currency, a multiplier or at least three digits, so "1 day" or "2 раза" never count.
+const AMOUNT = `(?:\\p{Sc}\\s?\\d[\\d\\s.,]*\\d|\\p{Sc}\\s?\\d|\\d[\\d.,]*\\s?${MULT}(?:\\s?${CUR})?|\\d[\\d\\s.,]*\\s?${CUR}|\\d{1,3}(?:[\\s.,]\\d{3})+|\\d{3,})`;
+const RANGE = `${AMOUNT}(?:\\s?[-–—]\\s?(?:${AMOUNT}|\\d+))?`;
+const UNIT = "(?:день|сутки|смену|смена|час|неделю|месяц|выходн\\p{L}*|day|hour|hr|shift|week|month|weekend)›";
+// "от 5 тысяч в день", "$100 a day", "300₽/час", "5-7к за смену", "в день от 5000".
+const PAY = any(
+  `${RANGE}\\s?(?:(?:в|за|/|per|a|an|each|каждый)\\s?)?${UNIT}`,
+  `${RANGE}\\s?(?:daily|ежедневно)›`,
+  `‹(?:в|за|per|a)\\s${UNIT}[^.!?]{0,12}?(?:от|from|до|up to)?\\s?${AMOUNT}`,
+);
+const DM = any(
+  "‹(?:в|во)\\s?(?:лс|л\\.\\s?с\\.?|личк\\p{L}*|личн\\p{L}*|директ|пм)(?![\\p{L}\\p{N}])",
+  "‹(?:пиш(?:и|ите)|напиш(?:и|ите)|писать|стучи(?:те)?|обраща(?:йся|йтесь|ться)) (?:мне|сюда|нам)›",
+  "‹(?:dm|pm|direct message|message me|text me|write (?:to )?me|contact me|inbox me|hit me up)›",
+  "@[a-z][a-z0-9_]{3,}", "t\\.me/", "wa\\.me/", "https?://",
+);
+// The author is the one looking for work, not offering it.
+const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|готова? (?:на любую )?работ)",
+  "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|need (?:a |some )?(?:job|work))›");
+
+// --- Bot testimonial: first-person "I took/tried/passed X in @…bot", then an outcome. ---
+const BOT = "(?:@[a-z][a-z0-9_]*bot|t\\.me/[a-z][a-z0-9_]*bot)›";
+const EXPERIENCE = "(?:прош(?:ла|[её]л)|проходил[аи]?|попробовал[аи]?|пробовал[аи]?|сделал[аи]?|воспользовал(?:ся|ась|ись)|обратил(?:ся|ась)|took|tried|passed|did|used|completed|went through)";
+// The handle follows the experience within one clause: "прошла тест в @…bot".
+const TESTIMONIAL = re(`‹${EXPERIENCE}›[^.!?\\n]{0,40}?${BOT}`, "giu");
+// What the author learned or how it helped, after the handle.
+const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
+  "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
+// The clause before the verb names nobody else: "кто-нибудь проходил…", "ты пробовала…" ask or report.
+const OTHER_SUBJECT = any("‹(?:кто|кто-то|кто-нибудь|кто-либо|ты|вы|тебе|вам|anyone|anybody|someone|somebody|you|has|have|did|does|do)›");
+// Answering someone's request or continuing a discussion is not an unsolicited plug.
+const ADDRESSED = any("‹(?:ты|вы|you) (?:\\p{L}+ ){0,2}(?:просил|спрашивал|интересовал|asked|wanted)",
+  "‹(?:в ответ на|отвечаю|по (?:твоей|вашей) просьбе|продолжая|к нашему обсуждению|since you asked|as you asked|to answer your|replying to)");
+
+// A reply to another member's message (or a quote of it) answers that member,
+// which is how requested job answers and bot recommendations arrive. Replies to
+// the group's channel posts, to the author's own message and to forum-topic
+// roots (no text) are not requests.
+function answersMember(message: ModerationMessage): boolean {
+  return (message.preview ?? []).some((item) => item.sourceKind !== "channel" && item.sourceAuthor !== "same_author"
+    && (item.kind === "external_reply" || Boolean(item.text?.trim())));
+}
+
+export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
+  if (message.mediaOnly || answersMember(message)) return;
+  const raw = message.text.trim();
+  if (!raw || ATTRIBUTED.test(raw)) return;
+  const text = promoText(raw.replace(QUOTED, " "));
+  if (REPORT.test(text)) return;
+  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text)) return "side_gig_offer";
+  if (ADDRESSED.test(text)) return;
+  for (const match of text.matchAll(TESTIMONIAL)) {
+    const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;
+    if (OTHER_SUBJECT.test(text.slice(sentenceStart, match.index))) continue;
+    const [rest, ...next] = text.slice(match.index + match[0].length).split(/(?<=[.!?\n])/u);
+    // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
+    if (rest!.trimEnd().endsWith("?")) continue;
+    if (OUTCOME.test(rest! + " " + (next[0] ?? ""))) return "bot_testimonial";
+  }
+}
