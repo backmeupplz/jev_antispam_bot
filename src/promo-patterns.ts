@@ -290,6 +290,12 @@ const REQUEST = any("\\?", "‹(?:подскаж|посовету|пореком
   "‹(?:need|looking for|recommend|suggest|anyone|anybody|where can|how (?:do|can)|which bot)");
 // The request must be on the rule's topic too: any chat question is no invitation to an ad.
 const BOT_TOPIC = any("‹(?:бот|тест|опрос|квиз|психолог)", "‹(?:bots?›|tests?›|quiz|therap|counsel)", "@[a-z][a-z0-9_]*bot›");
+// An ordinary question about work or pay invites a member's honest answer with its rate and a DM offer:
+// "Кто-нибудь подрабатывал на складе? Сколько там платят?", "Кто работал в Ленте на выкладке?".
+// Pay words are listed whole, so "платье" or "платформа" stays off topic.
+const WORK_TOPIC = any("‹(?:подраб|работ|зарплат|зп›|ваканс|трудоустр|устроит\\p{L}*ся|смен(?:а|у|ы|е|ой|ам|ах)?›)",
+  "‹(?:за|о|до)?плат(?:ят|ит|или|ил[аи]?|ишь|ите|ать|а|у|ы|ой|е)›",
+  "‹(?:jobs?|work\\p{L}*|hiring|hired?|salary|wages?|pay|paid|pays|shifts?)›");
 function answersRequest(message: ModerationMessage, topic: (text: string) => boolean): boolean {
   return (message.preview ?? []).some((item) => {
     if (item.sourceKind === "channel" || item.sourceAuthor === "same_author" || !item.text?.trim()) return false;
@@ -339,7 +345,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
     && !asksAboutPay(text) && !doubtsTheOffer(text)) {
     if (callsItACon(undenied)) return;
-    return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
+    return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source)) ? undefined : "side_gig_offer";
   }
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
