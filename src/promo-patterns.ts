@@ -108,12 +108,12 @@ function callsItACon(text: string): boolean {
 // --- Side-gig recruitment: a work/earnings offer + pay per period + a move-to-DM call. ---
 // The word "работа"/"job" alone is no offer ("электрик сделал всю работу", "did a great job"): the job
 // must be offered, sought for, or be a side gig.
-const ROLE = "(?:сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощни|упаковщик|работник|водител|оператор|менеджер|модератор|администратор)";
+const ROLE = "(?:сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощни|упаковщик|работник|работниц|водител|оператор|менеджер|модератор|администратор)";
 // The author's own move to a job: "Перешла на удалённую работу", "Устроился на работу курьером".
-const MOVED = "(?:взял\\p{L}*|перешл\\p{L}*|перешел|ушл\\p{L}*|ушел|пошл\\p{L}*|пошел|устроил\\p{L}*|вышл\\p{L}*|вышел)";
+const MOVED = "(?:взял\\p{L}*|берут|перешл\\p{L}*|перешел|ушл\\p{L}*|ушел|пошл\\p{L}*|пошел|устроил\\p{L}*|вышл\\p{L}*|вышел)";
 const GIG = any(
   "‹(?:подработ|под работк|работк|ваканси|заработ|доход|занятост)",
-  "‹(?:возьм[уеё]\\p{L}*|бер[её]м|прим[уе]м|принима[ею]м|зов[её]м|зову|устрою|устроим|приглаша\\p{L}*) (?:[\\p{L}-]+ ){0,2}?на (?:[\\p{L}-]+ )?работу›",
+  "‹(?:возьму|возьм[её]м|бер[её]м|прим[уе]м|принима[ею]м|зов[её]м|зову|устрою|устроим|приглаша\\p{L}*) (?:[\\p{L}-]+ ){0,2}?на (?:[\\p{L}-]+ )?работу›",
   "‹(?:предлага\\p{L}*|предложить|дам|да[её]м|есть|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
   // A "Работа:" header, not a sentence about one's job ("Работа на заводе, устал").
   `(?:^|\\n)\\s?работа(?: [\\p{L}-]+)?\\s?(?:[:!\\n—–-]|$)|(?:^|\\n)\\s?работа (?:на|в|для|с|без)›|(?<!${MOVED} на\\s)‹удал[её]нн\\p{L}* работ`,
@@ -184,9 +184,16 @@ const NEEDS_WORK = any("(?<!(?:кому|кого|если|кто|тем|вам|�
   "(?<!(?:who|if|you|anyone)\\s)‹(?:i )?(?:really |urgently )?need (?:a |some )?(?:[\\p{L}-]+ )?(?:job|work)›");
 // "Есть хорошая работа для мужа?", "Может есть подработка для студентки?" ask for work.
 // "Есть желание подработать?" recruits: the work asked for must be a noun.
-const ASKS_FOR_WORK = any("‹(?:есть|найд[её]тся|будет)(?: ли)?(?: у кого(?:-нибудь|-то)?)? (?:(?!желани|врем|возможност|мысл|сил)[\\p{L}-]+ )?(?:подработк\\p{L}*|работ[аыу]|ваканси\\p{L}*)›");
-const seeksWork = (text: string) => SEEKER.test(text)
-  || sentences(text).some((part) => isQuestion(part) ? ASKS_FOR_WORK.test(part) : NEEDS_WORK.test(part));
+const ASKS_FOR_WORK = any("‹(?:есть|найд[её]тся|найдутся|будет)(?: ли)?(?: у кого(?:-нибудь|-то)?)? (?:(?!желани|врем|возможност|мысл|сил)[\\p{L}-]+ )?(?:подработк\\p{L}*|работ[аыу]|ваканси\\p{L}*)›");
+// An ad answers its own question ("Есть работа? Есть! …", "Есть подработка для студентов? Да! …").
+const ANSWERED = any("^\\s?(?:да,? )?есть\\s?(?:[!.]|$)");
+function seeksWork(text: string): boolean {
+  if (SEEKER.test(text)) return true;
+  const parts = sentences(text);
+  return parts.some((part, i) => isQuestion(part)
+    ? ASKS_FOR_WORK.test(part) && !AFFIRM.test(parts[i + 1] ?? "") && !ANSWERED.test(parts[i + 1] ?? "")
+    : NEEDS_WORK.test(part));
+}
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
 const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю|заработал[аи]?|подзаработал[аи]?|получаю)›",
