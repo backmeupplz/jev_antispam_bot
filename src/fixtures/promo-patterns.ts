@@ -24,6 +24,12 @@ export const sideGigParaphrases = [
   // Multi-line ads with no punctuation: each line break ends a sentence.
   "🔥Подработка🔥\nОплата от 5000 в день\nПиши в лс\nКто готов?",
   "Набираем людей на подработку\nОплата 3-5к за смену\nПодробности в ЛС",
+  // Denials in other words, and an earner who recruits.
+  "Подработка, оплата от 5000 в день, никакого обмана, пиши в лс",
+  "Подработка, оплата от 5000 в день. Обмана нет! Пиши в лс",
+  "Подработка, оплата от 5000 в день, без вложений, предоплат и обмана, пиши в лс",
+  "Работаю удаленно, доход от 3000 в день, нужны люди в команду, пиши в лс",
+  "I earn $500 a day with this side job, DM me for details",
 ];
 
 export const botTestimonialParaphrases = [
@@ -37,6 +43,7 @@ export const botTestimonialParaphrases = [
   // Multi-line, with a question or another subject on a neighbouring line.
   "Я прошла тест в @mymindcounselbot и узнала много нового о себе\nА вы пробовали?",
   "Девочки, вы не поверите\nЯ прошла тест в @mymindcounselbot и узнала много нового",
+  "Прошла тест в @calm_mind_bot\nУзнала много нового о себе",
 ];
 
 // Controls: each holds part of a shape but is not an unsolicited ad.
@@ -60,6 +67,7 @@ export const sideGigControls = [
   "Тут кто-то предлагает работу 5000 в день, пишите в лс — это лохотрон",
   "I work part time and earn $20 per hour. DM me if you want tips on finding a job",
   "Работаю курьером, получаю около 4000 в день, если интересно как устроиться — пиши в лс",
+  "Подработка 5000 в день, пишите в лс. Это не работа, а обман",
 ];
 
 export const botTestimonialControls = [
@@ -84,4 +92,16 @@ export const botTestimonialControls = [
   "Сделал опрос в @PollBot, очень помог определиться с датой встречи",
   "I used @QuizBot to make a quiz for my class, it helped a lot",
   "Сделала анкету через @FormBot, помогло собрать заявки, рекомендую",
+  "Сделала тест для учеников в @QuizBot, очень помог, рекомендую",
+  "Сделала опрос в @PollBot для себя, помог определиться с датой встречи",
+  "I did a survey for my class with @SurveyBot, it helped a lot",
+  "I used @QuizBot so my students could take a quiz, it helped a lot",
+  // Everyday words that also turn up in psychology.
+  "I used @TaxBot to file my return, it helped and saved me so much stress",
+  "Сделала стикеры через @StickerBot, столько эмоций, рекомендую",
+  "Воспользовалась @ClinicBot чтобы записаться к терапевту, очень помог",
+  "Воспользовался @GosuslugiBot, помог восстановить удостоверение личности",
+  // A question on the next line.
+  "Проходили тест в @mymindcounselbot\nПомогло?",
+  "Пробовали тест в @mymindcounselbot\nРекомендуете?",
 ];
