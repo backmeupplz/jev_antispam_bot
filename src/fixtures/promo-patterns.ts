@@ -18,6 +18,9 @@ export const sideGigParaphrases = [
   "ВНИМАНИЕ! Срочно нужны люди на подработку, от 4 тысяч в день, пишите в личку",
   "Подработка без обмана и спама: от 3000 за смену, подробности в лс",
   "Вакансия — 150$ за смену. Пиши - @Rabotka_offer",
+  // Calls to action that end in a question.
+  "Есть подработка, от 5000 в день, пиши в лс. Интересно?",
+  "Срочно нужны люди на подработку, оплата от 4 тысяч в день, писать в личку. Кто готов?",
 ];
 
 export const botTestimonialParaphrases = [
@@ -65,4 +68,5 @@ export const botTestimonialControls = [
   "Я пробовал @DrWebBot, помог проверить файл на вирусы, советую",
   "Сделал рассылку через @ControllerBot, рекомендую",
   "I used @GifBot and it helped me find gifs",
+  "I used @CIBot to test my code and it helped",
 ];

@@ -82,8 +82,9 @@ const EXPERIENCE = "(?:прош(?:ла|[её]л)|проходил[аи]?|поп�
 // The handle follows the experience within one clause: "прошла тест в @…bot".
 const TESTIMONIAL = re(`‹${EXPERIENCE}›[^.!?\\n]{0,40}?${BOT}`, "giu");
 // A self-assessment, which is what these bots sell: neutral tool tips ("used @PollBot, it helped") never match.
-const ASSESSMENT = any("‹(?:тест|опрос|квиз|диагностик|гадани|расклад|анкет|консультаци|сесси|гороскоп|натальн|астролог|таро|психолог)",
-  "‹(?:test|quiz|assessment|survey|questionnaire|diagnos|reading|session|horoscope|tarot|astrolog|therap|counsel)");
+// Nouns only: "to test my code" is a tool tip, not an assessment.
+const ASSESSMENT = any("‹(?:тест(?:а|у|ом|ы|ов|е)?›|опрос|квиз|диагностик|гадани|расклад|анкет|консультаци|сесси|гороскоп|натальн|астролог|таро|психолог)",
+  "(?<!to\\s)‹tests?›", "‹(?:quiz|assessment|survey|questionnaire|diagnos|reading|session|horoscope|tarot|astrolog|therap|counsel)");
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
@@ -99,20 +100,32 @@ const ADDRESSED = any("‹(?:ты|вы|you) (?:\\p{L}+ ){0,2}(?:просил|с�
 // or an external source with no text grants nothing.
 const REQUEST = any("\\?", "‹(?:подскаж|посовету|порекоменд|кто (?:знает|может)|есть (?:ли |у )?кого|есть ли|ищу|ищем|нужен|нужна|нужны|нужно|где (?:найти|можно|взять)|как (?:найти|можно))",
   "‹(?:need|looking for|recommend|suggest|anyone|anybody|where can|how (?:do|can)|which bot)");
-function answersRequest(message: ModerationMessage): boolean {
-  return (message.preview ?? []).some((item) => item.sourceKind !== "channel" && item.sourceAuthor !== "same_author"
-    && Boolean(item.text?.trim()) && REQUEST.test(promoText(item.text!)));
+// The request must be on the rule's topic too: any chat question is no invitation to an ad.
+const BOT_TOPIC = any("‹(?:бот|тест|опрос|квиз|психолог)", "‹(?:bots?›|tests?›|quiz|therap|counsel)", "@[a-z][a-z0-9_]*bot›");
+function answersRequest(message: ModerationMessage, topic: (text: string) => boolean): boolean {
+  return (message.preview ?? []).some((item) => {
+    if (item.sourceKind === "channel" || item.sourceAuthor === "same_author" || !item.text?.trim()) return false;
+    const source = promoText(item.text);
+    return REQUEST.test(source) && topic(source);
+  });
+}
+// The sentence that states the pay ends in "?": "…платят 5000 в день, а у тебя?".
+function asksAboutPay(text: string): boolean {
+  const pay = PAY.exec(text);
+  return pay !== null && /^[^.!?\n]*\?/u.test(text.slice(pay.index));
 }
 
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
-  if (message.mediaOnly || answersRequest(message)) return;
+  if (message.mediaOnly) return;
   const raw = message.text.trim();
   if (!raw || ATTRIBUTED.test(raw)) return;
   const text = promoText(raw.replace(QUOTED, " "));
   if (REPORT.test(text.replace(DENIAL, " "))) return;
-  // A question about pay ("…платят 5000 в день, а у тебя?") is conversation, not an offer.
-  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text) && !text.endsWith("?")) return "side_gig_offer";
-  if (ADDRESSED.test(text)) return;
+  // A question about pay is conversation, not an offer.
+  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text) && !asksAboutPay(text)) {
+    return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
+  }
+  if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;
     if (OTHER_SUBJECT.test(text.slice(sentenceStart, match.index))) continue;
