@@ -31,6 +31,7 @@ export const sideGigParaphrases = [
   "Работаю удаленно, доход от 3000 в день, нужны люди в команду, пиши в лс",
   "I earn $500 a day with this side job, DM me for details",
   "Подработка 5000 в день, обман исключен, пиши в лс",
+  "Подработка 5000 в день, никаких разводов и обмана, пиши в лс",
 ];
 
 export const botTestimonialParaphrases = [
@@ -74,6 +75,7 @@ export const sideGigControls = [
   "Зовут в лс на подработку 5000 в день. Не ведусь, это лохотрон",
   "Предлагают работу 5000 в день, пишите в лс. Не соглашайтесь, обман",
   "Кто-то в лс предлагает работу 5000 в день — это не работа, это обман",
+  "Зовут в лс на подработку 5000 в день. Без сомнения, лохотрон.",
 ];
 
 export const botTestimonialControls = [
@@ -110,4 +112,6 @@ export const botTestimonialControls = [
   // A question on the next line.
   "Проходили тест в @mymindcounselbot\nПомогло?",
   "Пробовали тест в @mymindcounselbot\nРекомендуете?",
+  "Прошла тест в @mymindcounselbot. Помогло? Да нет, ерунда какая-то.",
+  "Прошла тест в @mymindcounselbot. Помогло? Да ни капли.",
 ];
