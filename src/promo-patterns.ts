@@ -46,17 +46,13 @@ const REPORT = any("‹(?:осторожн|остерега|предупрежд
 const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|лохотрон|мошен|фейк|кидал|scam|spam|fake|fraud)\\p{L}*", "giu");
 // Calling a job offer a con is a warning. Job offers only: "развод" is also a divorce in a personal story.
 const CON = re("‹(?:обман|лохотрон|развод|fraud)\\p{L}*", "giu");
-// Ads deny it in many more ways than DENIAL lists: "никакого обмана", "обмана нет", "без вложений и обмана".
-const CON_NEGATION = any("‹(?:не|ни|без|никак\\p{L}*|нет|no|not|zero|never|without)›");
+// Ads deny it in more ways than DENIAL lists: "никакого обмана", "обмана нет", "без вложений, предоплат и обмана".
+// The negation must govern the word itself, so a warning's own advice ("не верьте, это обман") stays a warning.
+const CON_DENIED_BEFORE = re("(?:‹(?:без|no|without)\\s(?:\\p{L}+(?:,\\s|\\s(?:и|или|and|or)\\s)){0,3}|‹(?:не|ни|нет|никак\\p{L}*|not|zero)\\s)$");
 const CON_DENIED_AFTER = any("^\\s?(?:нет|нету|исключ\\p{L}*)›");
-const CLAUSE_CUT = re("[.!?\\n]|,?\\s(?:а|но|but)\\s");
 function callsItACon(text: string): boolean {
-  for (const match of text.matchAll(CON)) {
-    // The clause before the word, cut at a sentence end or a contrast ("это не работа, а обман").
-    const before = text.slice(Math.max(0, match.index - 40), match.index).split(CLAUSE_CUT).at(-1)!;
-    if (!CON_NEGATION.test(before) && !CON_DENIED_AFTER.test(text.slice(match.index + match[0].length))) return true;
-  }
-  return false;
+  return [...text.matchAll(CON)].some((match) => !CON_DENIED_BEFORE.test(text.slice(Math.max(0, match.index - 80), match.index))
+    && !CON_DENIED_AFTER.test(text.slice(match.index + match[0].length)));
 }
 
 // --- Side-gig recruitment: a work/earnings offer + pay per period + a move-to-DM call. ---
@@ -120,6 +116,7 @@ const assessment = (text: string) => PSYCH.test(text) || TOOK_TEST.test(text) ||
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
+const AFFIRM = any("^\\s?(?:да|ага|конечно|ещ[её] как|yes|yep|of course|absolutely|definitely)›");
 // The clause before the verb names nobody else: "кто-нибудь проходил…", "ты пробовала…" ask or report.
 const OTHER_SUBJECT = any("‹(?:кто|кто-то|кто-нибудь|кто-либо|ты|вы|тебе|вам|anyone|anybody|someone|somebody|you|has|have|did|does|do)›");
 // Answering someone's request or continuing a discussion is not an unsolicited plug.
@@ -168,7 +165,9 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
     if (rest!.trimEnd().endsWith("?")) continue;
     if (!assessment(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
-    // The outcome must be told, not asked: "Проходили тест в @…bot\nПомогло?" is a question.
-    if (OUTCOME.test([rest!, next[0] ?? ""].filter((part) => !part.trimEnd().endsWith("?")).join(" "))) return "bot_testimonial";
+    // The outcome must be told, not asked ("Проходили тест в @…bot\nПомогло?"), unless the ad answers
+    // its own question ("Помогло? Да, очень!").
+    const told = !next[0]?.trimEnd().endsWith("?") || AFFIRM.test(next[1] ?? "");
+    if (OUTCOME.test(rest! + " " + (told ? next[0] ?? "" : ""))) return "bot_testimonial";
   }
 }
