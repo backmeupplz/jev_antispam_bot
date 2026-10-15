@@ -38,24 +38,33 @@ const any = (...sources: string[]) => re(sources.join("|"));
 // Spans are bounded so unclosed quotes stay linear on long input.
 const QUOTED = /«[^»]{8,600}»|“[^”]{8,600}”|„[^“”]{8,600}[“”]|"[^"]{8,600}"/gu;
 // "Имя Фамилия: …" is a copied message with its author: the shape of a moderator's repost. Only a
-// name counts (capitalised, then lowercase), so "СРОЧНО НУЖНЫ ЛЮДИ:" or "Hiring Now:" stays an ad header.
-const ATTRIBUTED = /^\p{Lu}\p{Ll}[\p{Ll}'’-]*(?:\s\p{Lu}\p{Ll}[\p{Ll}'’-]*){1,2}(?=\s?:\s)/u;
+// name counts (capitalised, then lowercase: "Анна-Мария", "О'Нил", "McDonald"), so "СРОЧНО НУЖНЫ ЛЮДИ:"
+// stays an ad header, and so does a capitalised header word ("Hiring Now:", "Легкие Деньги:").
+const NAME = "(?=\\p{Lu}['’]?\\p{Lu}?\\p{Ll})\\p{Lu}['’]?\\p{Ll}*(?:\\p{Lu}\\p{Ll}+)?(?:-\\p{Lu}?\\p{Ll}+)?";
+const ATTRIBUTED = new RegExp(`^${NAME}(?:\\s${NAME}){1,2}(?=\\s?:\\s)`, "u");
 const JOB_WORD = re("‹(?:работ|jobs?›|work)");
-const HEADER = any("‹(?:срочно|внимание|важно|новост|объявлени|акци|набор|urgent|attention|important|now|today|new|hot|alert|news|offer|info|update)›");
+const HEADER = any("‹(?:срочн|внимани|важн|новост|объявлени|акци|набор|деньг|легк|быстр|бонус|оплат|зарплат|ежедневн|удал[её]нн|онлайн|urgent|attention|important|now›|today|new›|hot›|alert|news|offer|info|update|money|cash|easy|fast|quick|bonus|pay›|daily|remote|online)");
 // "Внимание!" and "warning" open ads as often as warnings, so they are not report words on their own.
-// Ads recruit moderators and admins too, so those count only when addressed ("Админ, удали…").
+const RECEIVED = "(?:приходят|приходит|приходили|пришл[оаи]›|пришел›|присылают|присылали|прислали|прислал[аи]?|написали|написал[аи]?|пишут|получил[аи]?)";
 const REPORT = any("‹(?:осторожн|остерега|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|пример спам)",
   // Recruiting into crime: "Это вербовка в закладчики!".
   "‹(?:вербов|вербу[юе]т|закладчик|закладк|наркот|дропп|дроповод)",
-  // Messages someone received: "Детям приходят сообщения: …", "мне пришло такое предложение".
-  "‹(?:приход|пришл|присыла|присла|получа[ею]|получил)\\p{L}* (?:[\\p{L}-]+ ){0,2}?(?:сообщени|смс|sms|письм|предложени|рассылк|спам)",
-  // An admin addressed or asked to act: "Админ, удали пожалуйста: …", "забаньте его".
-  "‹(?:админ|модер)\\p{L}{0,6}\\s?[,!:]|‹(?:удали(?:те)?|забан\\p{L}*|кикни(?:те)?|заблокируйте)›|‹(?:сообщил|написал|пожаловал)\\p{L}* (?:[\\p{L}-]+ )?(?:админ|модер)",
-  "‹(?:scam|spam|fake|beware|careful|report|don'?t (?:reply|respond|answer|click)|drug|money mule|trafficking)",
-  "‹(?:admins?|mods?|moderators?)\\s?[,!:]|‹(?:please|pls|plz) (?:remove|delete|ban)›|‹ban (?:this|him|her|them|the)›",
+  // A message someone received, reported to the chat: "Детям приходят сообщения: …", "Вот такое пришло:",
+  // "Ребенку написали: …", "мне пришло такое предложение". An ad telling readers what they will get
+  // ("получаешь сообщение с заданием", "пришлите сообщение") is no report.
+  `‹${RECEIVED}(?: [\\p{L}-]+){0,2}?\\s?:`,
+  `‹(?:мне|нам|детям|ребенк\\p{L}*|сыну|дочк\\p{L}*|дочер\\p{L}*|жене|мужу|маме|папе|многим|всем нам) (?:[\\p{L}-]+ )?${RECEIVED}`,
+  `‹(?:такое|такие|это|подобн\\p{L}*|странн\\p{L}*|очередн\\p{L}*) (?:[\\p{L}-]+ )?(?:сообщени|смс|sms|письм|предложени|рассылк)\\p{L}* (?:[\\p{L}-]+ )?${RECEIVED}`,
+  `‹${RECEIVED} (?:[\\p{L}-]+ )?(?:такое|такие|это|подобн\\p{L}*|странн\\p{L}*|очередн\\p{L}*)›`,
+  // An admin addressed at the start of a sentence or asked to act: "Админ, удали пожалуйста: …", "забаньте его".
+  // Ads recruit admins and moderators ("Нужен админ, …", "We need mods!"), so a mention alone is no report.
+  "(?:^|[.!?\\n]\\s?)(?:уважаем\\p{L}* )?(?:админ|модер)\\p{L}{0,6}\\s?[,!]|‹(?:удали(?:те)?|забан\\p{L}*|кикни(?:те)?|заблокируйте) (?:пожалуйста|плиз|это|этого|эту|его|е[её]|их|сообщени\\p{L}*|пост\\p{L}*|спам\\p{L}*|бот\\p{L}*)›|‹(?:сообщил|написал|пожаловал)\\p{L}* (?:[\\p{L}-]+ )?(?:админ|модер)",
+  "‹(?:видел[аи]?|увидел[аи]?|наткнул\\p{L}*) (?:[\\p{L}-]+ )?(?:объявлени|реклам|пост)",
+  "‹(?:scam|spam|fake|beware|careful|report|don'?t (?:reply|respond|answer|click)|drugs?›(?!-free)|money mule|trafficking)",
+  "(?:^|[.!?\\n]\\s?)(?:admins?|mods?|moderators?)\\s?[,!]|‹(?:will|can|could|would|please|pls|plz|should) (?:the )?(?:admins?|mods?|moderators?) (?:\\p{L}+ ){0,2}?(?:delete|remove|ban)›|‹(?:please|pls|plz) (?:remove|delete|ban)›|(?:^|[.!?\\n]\\s?)(?:ban|delete|remove) (?:this|him|her|them)›",
   "‹(?:got|getting|received|receiving) (?:[\\p{L}-]+ ){0,2}?(?:messages|texts|emails|offers) (?:like|saying|about|from)›");
-// Ads deny being what they are ("не развод", "без обмана и спама"); a denial is no report.
-const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|лохотрон|мошен|фейк|кидал|наркот|заклад|криминал|scam|spam|fake|fraud|drugs?›)\\p{L}*", "giu");
+// Ads deny being what they are ("не развод", "без обмана и спама", "никаких наркотиков"); a denial is no report.
+const DENIAL = re("‹(?:не|ни|без|никак\\p{L}*|no|not(?: a)?|zero)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|лохотрон|мошен|фейк|кидал|наркот|заклад|криминал|scam|spam|fake|fraud|drugs?›)\\p{L}*", "giu");
 // Calling a job offer a con is a warning. Job offers only: "развод" is also a divorce in a personal story.
 const CON = re("‹(?:обман|лохотрон|развод|fraud)\\p{L}*", "giu");
 // Ads deny it in more ways than DENIAL lists: "никакого обмана", "обмана нет", "без вложений, предоплат и обмана".
@@ -73,14 +82,18 @@ function callsItACon(text: string): boolean {
 // must be offered, sought for, or be a side gig.
 const ROLE = "(?:сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощни|упаковщик|работник|водител|оператор|менеджер|модератор|администратор)";
 const GIG = any(
-  "‹(?:подработ|под работ|работк|ваканси|заработ|доход|занятост)",
-  "‹(?:на|предлага\\p{L}*|предложить|дам|да[её]м|есть|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
-  "(?:^|\\n)\\s?работа›",
+  "‹(?:подработ|под работк|работк|ваканси|заработ|доход|занятост)",
+  "‹на (?:[\\p{L}-]+ ){0,2}?работу›|‹(?:предлага\\p{L}*|предложить|дам|да[её]м|есть|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
+  // A "Работа:" header, not a sentence about one's job ("Работа на заводе, устал").
+  "(?:^|\\n)\\s?работа(?: [\\p{L}-]+)?\\s?(?:[:!\\n—–-]|$)|(?:^|\\n)\\s?работа (?:на|в|для|с|без)›|‹удал[её]нн\\p{L}* работ",
+  `‹работ[ауые]? (?:[\\p{L}-]+ )?${ROLE}`,
   "‹(?:нужн[аы]|ищет|ищете|ищешь) (?:\\p{L}+ ){0,2}?работ[ауые]?›",
   "‹работ[ауые]? (?:онлайн|на дому|из дома|удал[её]нн\\p{L}*|в интернете|с телефона|для (?:всех|студент|девуш|мам|школьник))",
-  `‹(?:нуж(?:е|н)н?|требу|ищем|ищу|набира|набор|приглаша|возьму|возьм[её]м)\\p{L}* (?:[\\p{L}\\d]+ ){0,3}?${ROLE}`,
+  // A role counts only when hired at scale: "требуется водитель", "нужны модераторы", "набираем курьеров".
+  // "Нужен водитель на свадьбу" or "ищу помощницу по хозяйству" is a member's one-off hire.
+  `‹(?:нужны|требу\\p{L}*|ищем|набира\\p{L}*|набор|приглаша\\p{L}*|возьм[её]м) (?:[\\p{L}\\d]+ ){0,3}?${ROLE}`,
   "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн|девочк|мальчик)",
-  "‹(?:требу[ею]тся|набира[ею]м|набор (?:людей|сотрудник|персонал)|ищем (?:людей|сотрудник|человек|помощник|курьер|ребят|девуш|парн)|приглаша[ею]м (?:на работ|на подработ|людей))",
+  "‹(?:требу[ею]тся|набира(?:ю|ем|ют)›|набор (?:людей|сотрудник|персонал)|ищем (?:людей|сотрудник|человек|ребят|девуш|парн)|приглаша[ею]м (?:на работ|на подработ|людей))",
   "‹(?:side[ -]?(?:job|gig|hustle|income)|part[ -]?time|full[ -]?time|hiring|vacanc|earn|earning|income|need(?:ed)? (?:\\p{L}+ ){0,2}(?:people|workers|staff|helpers?)|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))›",
   "‹(?:remote|online|easy|simple|home|daily|flexible|extra|paid) (?:[\\p{L}-]+ )?(?:jobs?|work|gigs?)›|‹(?:jobs?|work) (?:from home|online|remotely|opportunit\\p{L}*|offers?|available)›|‹(?:offering|offer you|we have) (?:a |some )?(?:jobs?|work)›",
   "‹(?:need|want|looking for) (?:a |some )?(?:[\\p{L}-]+ )?(?:jobs?|work)›",
@@ -125,20 +138,25 @@ function callsToDm(text: string): boolean {
   });
 }
 // The author is the one looking for work, not offering it.
-const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|в поиске (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|готова? (?:на любую )?работ)",
+const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|в поиске (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|(?<!(?:кто|если|тот|те)\\s)готова? (?:на любую )?работ)",
   "‹(?:кто (?:может|сможет|готов) (?:\\p{L}+ )?предложить|предложите (?:мне )?(?:\\p{L}+ )?(?:подработ|работ|вариант)|рассмотрю (?:\\p{L}+ )?(?:предложени|вариант))",
   "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|available for (?:[\\p{L}-]+ ){0,2}(?:work|jobs?|gigs?|hire|projects?)|open to (?:[\\p{L}-]+ ){0,2}(?:work|jobs?|offers|opportunit\\p{L}*)|seeking (?:a |some )?(?:[\\p{L}-]+ )?(?:job|work)|hire me)›",
 );
 // "Нужна подработка", "need a job" stated by the author seeks work; asked ("Нужна подработка?") or said of
 // readers ("кому нужна работа") it recruits.
-const NEEDS_WORK = any("(?<!(?:кому|кого|если|кто|тем|вам|тебе|всем)\\s)‹(?:очень |срочно )?нужн[аы] (?:мне )?(?:очень |срочно )?(?:\\p{L}+ )?(?:подработ|работ)",
+// "Хочу подработку", "Готов на подработку", "Подработку ищу" too, but not "Хочу предложить подработку".
+const NEEDS_WORK = any("(?<!(?:кому|кого|если|кто|тем|вам|тебе|всем)\\s)‹(?:(?:очень |срочно )?нужн[аы] (?:мне )?(?:очень |срочно )?(?:\\p{L}+ )?(?:подработ|работ)"
+    // "Нужна подработка — пиши в лс" is a conditional call: need work? write me.
+    + "(?!\\p{L}*\\s?[—–-]\\s?(?:пиш|напиш|обращ|звон|в лс|в личк))"
+    + "|(?:очень |срочно )?хочу (?:\\p{L}+(?:ую|юю) )?(?:подработ|работ)|готова? (?:на|к) (?:\\p{L}+ )?(?:подработ|работ)|рассмотрю (?:\\p{L}+ )?(?:подработ|работ)"
+    + "|(?:подработ|работ)\\p{L}* (?:\\p{L}+ )?ищу›)",
   "(?<!(?:who|if|you|anyone)\\s)‹(?:i )?(?:really |urgently )?need (?:a |some )?(?:[\\p{L}-]+ )?(?:job|work)›");
 const seeksWork = (text: string) => SEEKER.test(text) || sentences(text).some((part) => !isQuestion(part) && NEEDS_WORK.test(part));
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
 const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю|заработал[аи]?|подзаработал[аи]?|получаю)›",
   "‹i(?: also| currently| now| just)? (?:work|earn|make|worked|earned|made)›", "‹i'?m (?:working|earning|making)›");
-const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение|кому интересно|хоч(?:ешь|ете) (?:так же|также|тоже))",
+const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение|кому интересно|хоч(?:ешь|ете|ет) (?:так же|также|тоже))",
   "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн)",
   "‹(?:side[ -]?(?:job|gig|hustle|income)|hiring|vacanc|join|team|teach you|show you|opportunit|need(?:ed)? (?:\\p{L}+ ){0,2}people|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))");
 
