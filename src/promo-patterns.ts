@@ -178,8 +178,10 @@ const SOUGHT = `(?:людей|люди|человек|ребят|девуш|па
 const SEEKS = `(?:(?:для [\\p{L}-]+|(?!${SOUGHT})\\p{L}+) ){0,2}(?<!‹(?:на|в|для) )`;
 // A seeker in one person, for themselves or someone close: "Сын ищет подработку", "Ищем подработку для сына".
 // It is told, never asked ("Ваш ребенок ищет подработку?"), and not of readers ("Кто из вас ищет…", "Ваш ребенок
-// ищет подработку. Мы платим…"), so it is judged per sentence. Crowds ("Студенты часто ищут…") open ads.
-const SEEKS_FOR = any(`(?<!‹(?:кто(?:-то|-нибудь|-либо)?|если|котор\\p{L}*|ваш\\p{L}*|тво[йяеи]\\p{L}*)\\s(?:\\p{L}+\\s){0,2})‹ищ(?:ет|ем) ${SEEKS}(?:подработк|работу›|ваканси|заработ|место›)`);
+// ищет подработку. Мы платим…") or crowds ("Студенты часто ищут…", "Каждая мама в декрете ищет…"), so it is judged
+// per sentence, and an employer's voice in the message ("Мы платим", "У нас 5000 в день") makes it an ad's opener.
+const SEEKS_FOR = any(`(?<!‹(?:кто(?:-то|-нибудь|-либо)?|если|котор\\p{L}*|ваш\\p{L}*|тво[йяеи]\\p{L}*|кажд\\p{L}*|люб(?:ой|ая|ое|ые)|многие)\\s(?:\\p{L}+\\s){0,3})‹ищ(?:ет|ем) ${SEEKS}(?:подработк|работу›|ваканси|заработ|место›)`);
+const EMPLOYER = any("‹(?:мы )?(?:платим|предлагаем|выплачиваем|обучаем)›|‹у нас (?:от )?(?:\\d|оплата|зп|зарплата|доход|заработ|работа|подработ|ваканси)");
 const SEEKER = any(`‹ищу ${SEEKS}(?:подработ|работ|вакан|заработ|место)`,
   "‹(?:в поисках (?:\\p{L}+ )?(?:подработ|работ)|в поиске (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|(?<!(?:кто|если|тот|те)\\s)готова? (?:на любую )?работ)",
   "‹(?:кто (?:может|сможет|готов) (?:\\p{L}+ )?предложить|предложите (?:мне )?(?:\\p{L}+ )?(?:подработ|работ|вариант)|рассмотрю (?:\\p{L}+ )?(?:предложени|вариант)|(?:меня|мне) (?:устроит|устраивает|подойд[её]т)›|рассмотрю (?:вс[её]|все варианты)(?=\\s?(?:[,.!?\\n]|$))|могу (?:работать )?(?:за |от )?\\d[\\d\\s.,]{0,8}(?:\\s?(?:к|тыс\\p{L}*|р|руб\\p{L}*))?\\s?(?:в|за) (?:день|час|смену|сутки)›)",
@@ -231,7 +233,7 @@ function seeksWork(text: string): boolean {
   const parts = sentences(text);
   return parts.some((part, i) => isQuestion(part)
     ? ASKS_FOR_WORK.test(part) && (!AFFIRM.test(parts[i + 1] ?? "") && !ANSWERED.test(parts[i + 1] ?? "") || SEEKER_YES.test(parts[i + 1] ?? ""))
-    : NEEDS_WORK.test(part) || HOPES.test(part) || SEEKS_FOR.test(part));
+    : NEEDS_WORK.test(part) || HOPES.test(part) || SEEKS_FOR.test(part) && !EMPLOYER.test(text));
 }
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
