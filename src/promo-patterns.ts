@@ -110,11 +110,11 @@ function callsItACon(text: string): boolean {
 // must be offered, sought for, or be a side gig.
 const ROLE = "(?:сотрудник|персонал|исполнител|курьер|грузчик|промоутер|помощни|упаковщик|работник|работниц|водител|оператор|менеджер|модератор|администратор)";
 // The author's own move to a job: "Перешла на удалённую работу", "Устроился на работу курьером".
-const MOVED = "(?:взял\\p{L}*|берут|перешл\\p{L}*|перешел|ушл\\p{L}*|ушел|пошл\\p{L}*|пошел|устроил\\p{L}*|вышл\\p{L}*|вышел)";
+const MOVED = "(?:взял\\p{L}*|(?:меня|сына|дочь|дочку|мужа|жену|брата|сестру|его|е[её]|нас|их|не) (?:берут|возьмут|примут)|перешл\\p{L}*|перешел|ушл\\p{L}*|ушел|пошл\\p{L}*|пошел|устроил\\p{L}*|вышл\\p{L}*|вышел)";
 const GIG = any(
   "‹(?:подработ|под работк|работк|ваканси|заработ|доход|занятост)",
   "‹(?:возьму|возьм[её]м|бер[её]м|прим[уе]м|принима[ею]м|зов[её]м|зову|устрою|устроим|приглаша\\p{L}*) (?:[\\p{L}-]+ ){0,2}?на (?:[\\p{L}-]+ )?работу›",
-  "‹(?:предлага\\p{L}*|предложить|дам|да[её]м|есть|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
+  "‹(?:предлага\\p{L}*|предложить|дам|да[её]м|есть|найд[её]тся|найдутся|появилась) (?:[\\p{L}-]+ ){0,2}?работ[ауые]?›",
   // A "Работа:" header, not a sentence about one's job ("Работа на заводе, устал").
   `(?:^|\\n)\\s?работа(?: [\\p{L}-]+)?\\s?(?:[:!\\n—–-]|$)|(?:^|\\n)\\s?работа (?:на|в|для|с|без)›|(?<!${MOVED} на\\s)‹удал[её]нн\\p{L}* работ`,
   `(?<!${MOVED} на\\s)‹работ[ауые]? (?:[\\p{L}-]+ )?${ROLE}`,
@@ -186,12 +186,19 @@ const NEEDS_WORK = any("(?<!(?:кому|кого|если|кто|тем|вам|�
 // "Есть желание подработать?" recruits: the work asked for must be a noun.
 const ASKS_FOR_WORK = any("‹(?:есть|найд[её]тся|найдутся|будет)(?: ли)?(?: у кого(?:-нибудь|-то)?)? (?:(?!желани|врем|возможност|мысл|сил)[\\p{L}-]+ )?(?:подработк\\p{L}*|работ[аыу]|ваканси\\p{L}*)›");
 // An ad answers its own question ("Есть работа? Есть! …", "Есть подработка для студентов? Да! …").
-const ANSWERED = any("^\\s?(?:да,? )?есть\\s?(?:[!.]|$)");
+const ANSWERED = any("^\\s?[—–-]?\\s?(?:да,? |конечно,? )?(?:есть|найд[её]тся|найдутся|будет|будут)\\s?(?:[!.,]|$)");
+// …but a seeker's own "Да, очень нужно" or "Конечно, любая подойдёт" is no answer.
+const SEEKER_YES = any("^\\s?(?:да|конечно|ага)[,!.]?\\s?(?:очень |срочно |хоть )?(?:нужн|подойд|люб|хоть|какая|готов)");
+// "Возьмут на работу даже без опыта", "Берут на работу курьеров" promise a job. Asked ("Берут на работу без
+// опыта?"), negated or said of someone ("Сына берут…", "Кто возьмёт…") it is a member's situation.
+const HIRES = any("(?<!(?:кто|не|меня|сына|дочь|дочку|мужа|жену|брата|сестру|его|е[её]|нас|их)\\s)‹(?:возьмут|примут|берут|принимают|устроят) (?:[\\p{L}-]+ ){0,2}?на (?:[\\p{L}-]+ )?работу›");
+const hires = (text: string) => sentences(text).some((part) => !isQuestion(part) && HIRES.test(part));
+
 function seeksWork(text: string): boolean {
   if (SEEKER.test(text)) return true;
   const parts = sentences(text);
   return parts.some((part, i) => isQuestion(part)
-    ? ASKS_FOR_WORK.test(part) && !AFFIRM.test(parts[i + 1] ?? "") && !ANSWERED.test(parts[i + 1] ?? "")
+    ? ASKS_FOR_WORK.test(part) && (!AFFIRM.test(parts[i + 1] ?? "") && !ANSWERED.test(parts[i + 1] ?? "") || SEEKER_YES.test(parts[i + 1] ?? ""))
     : NEEDS_WORK.test(part));
 }
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
@@ -287,7 +294,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   const undenied = text.replace(DENIAL, " ");
   if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied)) return;
   // A question about pay, or about whether the offer is real, is conversation, not an offer.
-  if (GIG.test(text) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
+  if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
     && !asksAboutPay(text) && !doubtsTheOffer(text)) {
     if (callsItACon(undenied)) return;
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
