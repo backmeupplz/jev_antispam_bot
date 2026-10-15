@@ -84,13 +84,29 @@ const DM = any(
   // so addressing someone or sharing an article is not a DM call.
   "‹(?:пиш|напиш|писать|контакт|связ|обращ|подробн|детал|инф|звон|тел|ватсап|whatsapp|телеграм|тг|tg|сюда|тут|здесь|ниже|ссылк|переход|жми|details|info|contact|apply|join|write|message|text|dm|here|link)[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)",
 );
+const DM_ALL = new RegExp(DM.source, "giu");
+// A DM someone else sent the author is a report, not a call: "мне написали в лс", "в лс писали", "got a DM".
+const DM_SENDER = "(?:пишут|пишет|писали|писал[аи]?|написал[аи]?|зовут|звали|позвали|зов[её]т|предлага[ею]т|предложил[аи]?|приглаша[ею]т|пригласил[аи]?|прислал[аи]?|скинул[аи]?|кидают|got|get|getting|received|receive|sent me)";
+const DM_REPORTED_BEFORE = re(`‹${DM_SENDER}›(?:\\s[\\p{L}-]+){0,2}\\s?(?:a |an |some |this |the )?$`);
+const DM_REPORTED_AFTER = re(`^\\s?(?:[\\p{L}-]+\\s){0,1}${DM_SENDER}›`);
+function callsToDm(text: string): boolean {
+  return [...text.matchAll(DM_ALL)].some((match) => {
+    const end = match.index + match[0].length;
+    const after = text.slice(end, end + 40);
+    // "someone DM'd me" is a DM received.
+    if (match[0].endsWith("dm") && /^'?d(?![\p{L}\p{N}])/u.test(after)) return false;
+    const start = Math.max(0, ...[".", "!", "?", "\n", ","].map((mark) => text.lastIndexOf(mark, match.index - 1) + 1));
+    return !DM_REPORTED_BEFORE.test(text.slice(Math.max(start, match.index - 40), match.index)) && !DM_REPORTED_AFTER.test(after);
+  });
+}
 // The author is the one looking for work, not offering it.
 const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|готова? (?:на любую )?работ)",
   "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|need (?:a |some )?(?:job|work))›",
 );
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
-const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю)›", "‹i(?: also| currently| now)? (?:work|earn|make)›", "‹i'?m (?:working|earning|making)›");
+const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю|заработал[аи]?|подзаработал[аи]?|получаю)›",
+  "‹i(?: also| currently| now| just)? (?:work|earn|make|worked|earned|made)›", "‹i'?m (?:working|earning|making)›");
 const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение)",
   "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн)",
   "‹(?:side[ -]?(?:job|gig|hustle|income)|hiring|vacanc|join|team|teach you|show you|opportunit|need(?:ed)? (?:\\p{L}+ ){0,2}people|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))");
@@ -149,6 +165,20 @@ function asksAboutPay(text: string): boolean {
 
 // A sentence whose closing punctuation holds a "?" ("?", "?!", "?..") asks.
 const isQuestion = (sentence: string) => /\?[.!?\s]*$/u.test(sentence);
+const sentences = (text: string) => text.split(/(?<=[.!?\n])(?![.!?\n])/u);
+
+// Asking whether an offer is real or for advice on it: "это нормальная подработка?", "Legit?".
+// Recruiting questions ("Кто готов?", "Интересно?", "Нужна подработка?") ask nothing of the kind.
+const DOUBT = any("‹это (?:[\\p{L}-]+ ){0,2}?(?:нормальн|норм›|правд|реальн|законн|безопасн|честн|ок›|окей)",
+  "‹(?:правда|реально|нормально|серь[её]зно|законно|честно|норм) (?:ли|или)›", "‹(?:правда|реально|серь[её]зно|норм)\\s?\\?",
+  "‹кто(?:-нибудь|-то|-либо)? (?:знает|сталкивал|пробовал|работал|слышал|в курсе)", "‹(?:подскаж|посовету|стоит ли|верить›|доверя|что (?:скажете|думаете)|как (?:думаете|считаете))",
+  "‹(?:legit|legitimate|real|safe|trustworthy|scam)›", "‹(?:is|are) (?:this|that|it|these|they) (?:[\\p{L}-]+ ){0,2}(?:ok|okay|normal|true|for real)›",
+  "‹(?:anyone|anybody|someone|somebody) (?:know|knows|tried|heard|seen|got|worked)›", "‹(?:should i|what do you think|thoughts›)");
+// The doubt is the author's own unless the ad answers it ("Это реально? Да! …").
+function doubtsTheOffer(text: string): boolean {
+  const parts = sentences(text);
+  return parts.some((part, i) => isQuestion(part) && DOUBT.test(part) && !AFFIRM.test(parts[i + 1] ?? ""));
+}
 
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
   if (message.mediaOnly) return;
@@ -157,9 +187,9 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   const text = promoText(raw.replace(QUOTED, " "));
   const undenied = text.replace(DENIAL, " ");
   if (REPORT.test(undenied)) return;
-  // A question about pay is conversation, not an offer.
-  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
-    && !asksAboutPay(text)) {
+  // A question about pay, or about whether the offer is real, is conversation, not an offer.
+  if (GIG.test(text) && PAY.test(text) && callsToDm(text) && !SEEKER.test(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
+    && !asksAboutPay(text) && !doubtsTheOffer(text)) {
     if (callsItACon(undenied)) return;
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
   }
@@ -167,7 +197,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;
     if (OTHER_SUBJECT.test(text.slice(sentenceStart, match.index))) continue;
-    const [rest, ...next] = text.slice(match.index + match[0].length).split(/(?<=[.!?\n])(?![.!?\n])/u);
+    const [rest, ...next] = sentences(text.slice(match.index + match[0].length));
     // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
     if (isQuestion(rest!)) continue;
     if (!assessment(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
