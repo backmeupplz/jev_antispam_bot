@@ -50,6 +50,10 @@ export const botTestimonialParaphrases = [
   "Прошла тест в @mymindcounselbot. Помогло? Да, очень!",
   "Прошла тест в @mymindcounselbot. Помогло? Да не то слово!",
   "Прошла тест в @mymindcounselbot. Помогло? Да, ни разу не пожалела!",
+  // Lines that end in punctuation.
+  "Прошла тест в @mymindcounselbot.\nУзнала много нового о себе",
+  "Прошла тест в @mymindcounselbot!\nПомог разобраться в себе",
+  "Прошла тест в @mymindcounselbot. Помогло?\nДа!",
 ];
 
 // Controls: each holds part of a shape but is not an unsolicited ad.
@@ -123,4 +127,6 @@ export const botTestimonialControls = [
   "Прошла тест в @mymindcounselbot. Помогло? Да не очень, если честно.",
   "Прошла тест в @mymindcounselbot. Помогло? Да нисколько.",
   "Прошла тест в @mymindcounselbot. Помогло? Да, не очень.",
+  "Прошла тест в @mymindcounselbot. Помогло? Да, но не особо.",
+  "Проходили тест в @mymindcounselbot?!\nПомогло?",
 ];
