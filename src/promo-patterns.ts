@@ -117,8 +117,9 @@ const assessment = (text: string) => PSYCH.test(text) || TOOK_TEST.test(text) ||
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
-// "Да нет" and "да ни капли" are a no; "да не то слово" and "да, ни разу не пожалела" are a yes.
-const AFFIRM = any("^\\s?(?:да›(?!,?\\s(?:нет›|ни (?:капли|чуть|сколько|на грамм|на йоту)›))|ага|конечно|ещ[её] как|yes|yep|of course|absolutely|definitely)›");
+// "Да" is a yes on its own ("Да!", "Да, очень", "да, ни разу не пожалела", "да не то слово"), but
+// "да нет", "да не особо", "да нисколько" and "да, не очень" are a no.
+const AFFIRM = any("^\\s?(?:да(?:[.!]|$|,\\s(?!не›|нет›|ни (?:капли|чуть)›|нисколько|ничуть)|\\sне то слово|\\s(?:очень|ещ[её]|реально|правда|сильно|конечно)›)|(?:ага|конечно|ещ[её] как|yes|yep|of course|absolutely|definitely)›)");
 // The clause before the verb names nobody else: "кто-нибудь проходил…", "ты пробовала…" ask or report.
 const OTHER_SUBJECT = any("‹(?:кто|кто-то|кто-нибудь|кто-либо|ты|вы|тебе|вам|anyone|anybody|someone|somebody|you|has|have|did|does|do)›");
 // Answering someone's request or continuing a discussion is not an unsolicited plug.
