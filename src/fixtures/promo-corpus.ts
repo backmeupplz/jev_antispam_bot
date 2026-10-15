@@ -799,3 +799,10 @@ export const corpusKnownMatches = [
   "Есть работа для студентки? Да, я студентка, 300 в час, пишите в лс",
   "Свою маму пристроила: берут на работу, 2000 в день, кто знает — пишите в лс",
 ];
+
+// #128: members' honest answers to an ordinary work question, each replying to it. They carry a rate and a DM
+// offer, so on their own they have the ad's shape; as an answer to another member's question they are none.
+export const corpusRepliedAnswers = [
+  { question: "Кто-нибудь подрабатывал на складе Озон? Сколько там платят?", answer: "Подработка там норм, 3000 за смену. В лс расскажу подробнее" },
+  { question: "Кто работал в Ленте на выкладке?", answer: "Я работала, подработка нормальная, 2500 за смену. Пиши в лс, расскажу" },
+];

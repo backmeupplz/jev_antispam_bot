@@ -3,7 +3,7 @@ import { botTestimonialControls, botTestimonialIncident, botTestimonialParaphras
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
 import { usdtAsk, usdtAskVariants } from "./fixtures/usdt-repeat";
-import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses } from "./fixtures/promo-corpus";
+import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -45,6 +45,9 @@ test("a reply to another member's unrelated message is not a request", () => {
   // A question or request on another topic is no invitation either.
   expect(promoPattern(plain(sideGigIncident, memberReply("Как дела у всех?")))).toBe("side_gig_offer");
   expect(promoPattern(plain(sideGigIncident, memberReply("Нужно купить хлеб")))).toBe("side_gig_offer");
+  // Pay words count whole: a dress or a platform is off topic.
+  expect(promoPattern(plain(sideGigIncident, memberReply("Где купить платье на выпускной?")))).toBe("side_gig_offer");
+  expect(promoPattern(plain(sideGigIncident, memberReply("Какая платформа лучше для курсов?")))).toBe("side_gig_offer");
   expect(promoPattern(plain(botTestimonialIncident, memberReply("Кто знает, где тут хорошая шаурма?")))).toBe("bot_testimonial");
   expect(promoPattern(plain(botTestimonialIncident, memberReply("Ищу подработку, есть варианты?")))).toBe("bot_testimonial");
   // An external reply carries no source text and grants nothing.
@@ -102,4 +105,28 @@ test("normalization folds case, accents, lookalikes, emoji and o-for-zero but ke
 test("the pinned review corpus keeps its exact outcome: no ad lost, no conversation matched", () => {
   expect(corpusAds.filter((text) => promoPattern(plain(text)) !== "side_gig_offer")).toEqual(corpusKnownMisses);
   expect(corpusKeeps.filter((text) => promoPattern(plain(text)))).toEqual(corpusKnownMatches);
+});
+
+test("an answer to an ordinary work question, with its rate and a DM offer, is a requested answer (#128)", () => {
+  for (const { question, answer } of corpusRepliedAnswers) {
+    expect(promoPattern(plain(answer))).toBe("side_gig_offer");
+    expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
+  }
+  const answer = corpusRepliedAnswers[1]!.answer;
+  // Other ways members ask about a job or its pay.
+  for (const question of ["Кто-то устраивался в Магнит?", "Кто-нибудь устроился в Магнит?", "Где можно подзаработать?",
+    "Сколько зарабатывают курьеры?", "Сколько курьеры получают?", "Какая там ставка?", "Кто где работает?", "Сколько там плотят?",
+    "Anyone worked at the Amazon warehouse? How much do they pay?", "Where do you work?", "Кто-нибудь работает на Озоне?",
+    "Кто из вас работает в Ленте?", "Работает кто-нибудь на складе?", "What's the pay like?"]) {
+    expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
+  }
+  // Questions about something that works, paying for things or a schedule are off topic.
+  for (const question of ["Магазин работает сегодня?", "У кого работает интернет?", "Когда смена расписания?",
+    "Does the elevator work?", "Can I pay by card here?", "What should I make for dinner?"]) {
+    expect(promoPattern(plain(answer, memberReply(question)))).toBe("side_gig_offer");
+  }
+  // The question must be another member's request: the same text not asked, or the author's own, exempts nothing.
+  expect(promoPattern(plain(answer, memberReply("Работала в Ленте на выкладке")))).toBe("side_gig_offer");
+  expect(promoPattern(plain(answer, { preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user",
+    sourceAuthor: "same_author", isForwarded: false, text: corpusRepliedAnswers[1]!.question, embeddedLinks: [] }] }))).toBe("side_gig_offer");
 });

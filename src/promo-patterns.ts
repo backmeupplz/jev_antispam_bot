@@ -290,6 +290,18 @@ const REQUEST = any("\\?", "‹(?:подскаж|посовету|пореком
   "‹(?:need|looking for|recommend|suggest|anyone|anybody|where can|how (?:do|can)|which bot)");
 // The request must be on the rule's topic too: any chat question is no invitation to an ad.
 const BOT_TOPIC = any("‹(?:бот|тест|опрос|квиз|психолог)", "‹(?:bots?›|tests?›|quiz|therap|counsel)", "@[a-z][a-z0-9_]*bot›");
+// An ordinary question about work or pay invites a member's honest answer with its rate and a DM offer:
+// "Кто-нибудь подрабатывал на складе? Сколько там платят?", "Кто работал в Ленте на выкладке?".
+// Pay words are listed whole, so "платье" or "платформа" stays off topic. "работает" counts only of a person
+// ("Кто-нибудь работает на Озоне?"), so "Магазин работает сегодня?" and "Does the elevator work?" don't, nor do
+// "Can I pay by card?" or "Когда смена расписания?". Close calls still count ("Где работает банкомат?",
+// "Где оплата за газ?"): the request must come from another member, and spam replies to members are rare.
+const WORK_TOPIC = any("‹(?:подраб|(?:под)?зараб|работ(?!ает›|ают›)|зарплат|зп›|ваканс|трудоустр|трудил|устр(?:ои|аива)\\p{L}*с[яь]›|ставк|оклад|смен(?:у|ы|ам|ах|ами)›)",
+  "‹(?:кто(?:-\\p{L}+)?|где) (?:\\p{L}+ ){0,2}?работа(?:ет|ют)›|‹работа(?:ет|ют) кто›",
+  "‹(?:за|о|до|вы)?плат(?:ят|ит|или|ил[аи]?|ишь|ите|ать|а|у|ы|ой|е|ами)›|‹плотят›|‹сколько (?:\\p{L}+ ){0,3}?(?:получа|дают)",
+  "‹(?:jobs?|hiring|hired|salary|salaries|wages?|shifts?|worked|working)›",
+  "‹(?:you|anyone|anybody|someone|somebody|who|they|people) (?:\\p{L}+ ){0,2}?works?›",
+  "‹how much (?:[\\p{L}']+ ){0,3}?(?:pay|pays|paid|earn|earns|make|makes)›|‹what (?:[\\p{L}']+ ){0,3}?(?:pay|pays|earn|earns)›|‹the pay›");
 function answersRequest(message: ModerationMessage, topic: (text: string) => boolean): boolean {
   return (message.preview ?? []).some((item) => {
     if (item.sourceKind === "channel" || item.sourceAuthor === "same_author" || !item.text?.trim()) return false;
@@ -339,7 +351,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
     && !asksAboutPay(text) && !doubtsTheOffer(text)) {
     if (callsItACon(undenied)) return;
-    return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
+    return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source)) ? undefined : "side_gig_offer";
   }
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
