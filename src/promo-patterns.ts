@@ -34,11 +34,15 @@ const re = (source: string, flags = "iu") => new RegExp(glyphs(source)
 const any = (...sources: string[]) => re(sources.join("|"));
 
 // Quoted spans are someone else's words, e.g. a warning that quotes the ad.
-const QUOTED = /«[^»]{8,}»|“[^”]{8,}”|„[^“”]{8,}[“”]|"[^"]{8,}"/gu;
+// Spans are bounded so unclosed quotes stay linear on long input.
+const QUOTED = /«[^»]{8,600}»|“[^”]{8,600}”|„[^“”]{8,600}[“”]|"[^"]{8,600}"/gu;
 // "Имя Фамилия: …" is a copied message with its author: the shape of a moderator's repost.
 const ATTRIBUTED = /^\p{Lu}[\p{L}'’-]+(?:\s\p{Lu}[\p{L}'’-]+){1,2}\s?:\s/u;
-const REPORT = any("‹(?:осторожн|остерега|внимани|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|модератор|пример спам)",
-  "‹(?:scam|spam|fake|beware|warning|careful|report|moderator|don'?t (?:reply|respond|answer|click))");
+// "Внимание!" and "warning" open ads as often as warnings, so they are not report words on their own.
+const REPORT = any("‹(?:осторожн|остерега|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|модератор|пример спам)",
+  "‹(?:scam|spam|fake|beware|careful|report|moderator|don'?t (?:reply|respond|answer|click))");
+// Ads deny being what they are ("не развод", "без обмана и спама"); a denial is no report.
+const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|мошен|фейк|кидал|scam|spam|fake)\\p{L}*", "giu");
 
 // --- Side-gig recruitment: a work/earnings offer + pay per period + a move-to-DM call. ---
 const GIG = any(
@@ -50,8 +54,9 @@ const GIG = any(
 const CUR = "(?:\\p{Sc}|руб\\p{L}*|р\\.|р›|usdt?|eur|долл\\p{L}*|бакс\\p{L}*|грн|гривен\\p{L}*|тг|тенге|сум|byn|dollars?|bucks|euros?)";
 const MULT = "(?:тыс\\p{L}*\\.?|т\\.|т›|k›|к›)";
 // An amount needs a currency, a multiplier or at least three digits, so "1 day" or "2 раза" never count.
-const AMOUNT = `(?:\\p{Sc}\\s?\\d[\\d\\s.,]*\\d|\\p{Sc}\\s?\\d|\\d[\\d.,]*\\s?${MULT}(?:\\s?${CUR})?|\\d[\\d\\s.,]*\\s?${CUR}|\\d{1,3}(?:[\\s.,]\\d{3})+|\\d{3,})`;
-const RANGE = `${AMOUNT}(?:\\s?[-–—]\\s?(?:${AMOUNT}|\\d+))?`;
+// Runs are bounded and start at a number's first digit, so long digit strings stay linear.
+const AMOUNT = `(?<!\\d)(?:\\p{Sc}\\s?\\d[\\d\\s.,]{0,10}\\d|\\p{Sc}\\s?\\d|\\d[\\d.,]{0,8}\\s?${MULT}(?:\\s?${CUR})?|\\d[\\d\\s.,]{0,10}\\s?${CUR}|\\d{1,3}(?:[\\s.,]\\d{3}){1,3}|\\d{3,9})`;
+const RANGE = `${AMOUNT}(?:\\s?[-–—]\\s?(?:${AMOUNT}|\\d{1,9}))?`;
 const UNIT = "(?:день|сутки|смену|смена|час|неделю|месяц|выходн\\p{L}*|day|hour|hr|shift|week|month|weekend)›";
 // "от 5 тысяч в день", "$100 a day", "300₽/час", "5-7к за смену", "в день от 5000".
 const PAY = any(
@@ -63,17 +68,22 @@ const DM = any(
   "‹(?:в|во)\\s?(?:лс|л\\.\\s?с\\.?|личк\\p{L}*|личн\\p{L}*|директ|пм)(?![\\p{L}\\p{N}])",
   "‹(?:пиш(?:и|ите)|напиш(?:и|ите)|писать|стучи(?:те)?|обраща(?:йся|йтесь|ться)) (?:мне|сюда|нам)›",
   "‹(?:dm|pm|direct message|message me|text me|write (?:to )?me|contact me|inbox me|hit me up)›",
-  "@[a-z][a-z0-9_]{3,}", "t\\.me/", "wa\\.me/", "https?://",
+  // A handle or link is a contact only when introduced as one ("пиши - @…", "подробнее 👉 http…"),
+  // so addressing someone or sharing an article is not a DM call.
+  "‹(?:пиш|напиш|писать|контакт|связ|обращ|подробн|детал|инф|звон|тел|ватсап|whatsapp|телеграм|тг|tg|сюда|тут|здесь|ниже|ссылк|переход|жми|details|info|contact|apply|join|write|message|text|dm|here|link)[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)",
 );
 // The author is the one looking for work, not offering it.
 const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|готова? (?:на любую )?работ)",
   "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|need (?:a |some )?(?:job|work))›");
 
-// --- Bot testimonial: first-person "I took/tried/passed X in @…bot", then an outcome. ---
+// --- Bot testimonial: first-person "I took/tried/passed a test in @…bot", then an outcome. ---
 const BOT = "(?:@[a-z][a-z0-9_]*bot|t\\.me/[a-z][a-z0-9_]*bot)›";
 const EXPERIENCE = "(?:прош(?:ла|[её]л)|проходил[аи]?|попробовал[аи]?|пробовал[аи]?|сделал[аи]?|воспользовал(?:ся|ась|ись)|обратил(?:ся|ась)|took|tried|passed|did|used|completed|went through)";
 // The handle follows the experience within one clause: "прошла тест в @…bot".
 const TESTIMONIAL = re(`‹${EXPERIENCE}›[^.!?\\n]{0,40}?${BOT}`, "giu");
+// A self-assessment, which is what these bots sell: neutral tool tips ("used @PollBot, it helped") never match.
+const ASSESSMENT = any("‹(?:тест|опрос|квиз|диагностик|гадани|расклад|анкет|консультаци|сесси|гороскоп|натальн|астролог|таро|психолог)",
+  "‹(?:test|quiz|assessment|survey|questionnaire|diagnos|reading|session|horoscope|tarot|astrolog|therap|counsel)");
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
@@ -83,22 +93,25 @@ const OTHER_SUBJECT = any("‹(?:кто|кто-то|кто-нибудь|кто-�
 const ADDRESSED = any("‹(?:ты|вы|you) (?:\\p{L}+ ){0,2}(?:просил|спрашивал|интересовал|asked|wanted)",
   "‹(?:в ответ на|отвечаю|по (?:твоей|вашей) просьбе|продолжая|к нашему обсуждению|since you asked|as you asked|to answer your|replying to)");
 
-// A reply to another member's message (or a quote of it) answers that member,
-// which is how requested job answers and bot recommendations arrive. Replies to
-// the group's channel posts, to the author's own message and to forum-topic
-// roots (no text) are not requests.
-function answersMember(message: ModerationMessage): boolean {
+// A reply to (or a quote of) another member's request answers that request, which
+// is how requested job answers and bot recommendations arrive. A reply to an
+// unrelated message, a channel post, the author's own message, a forum-topic root
+// or an external source with no text grants nothing.
+const REQUEST = any("\\?", "‹(?:подскаж|посовету|порекоменд|кто (?:знает|может)|есть (?:ли |у )?кого|есть ли|ищу|ищем|нужен|нужна|нужны|нужно|где (?:найти|можно|взять)|как (?:найти|можно))",
+  "‹(?:need|looking for|recommend|suggest|anyone|anybody|where can|how (?:do|can)|which bot)");
+function answersRequest(message: ModerationMessage): boolean {
   return (message.preview ?? []).some((item) => item.sourceKind !== "channel" && item.sourceAuthor !== "same_author"
-    && (item.kind === "external_reply" || Boolean(item.text?.trim())));
+    && Boolean(item.text?.trim()) && REQUEST.test(promoText(item.text!)));
 }
 
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
-  if (message.mediaOnly || answersMember(message)) return;
+  if (message.mediaOnly || answersRequest(message)) return;
   const raw = message.text.trim();
   if (!raw || ATTRIBUTED.test(raw)) return;
   const text = promoText(raw.replace(QUOTED, " "));
-  if (REPORT.test(text)) return;
-  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text)) return "side_gig_offer";
+  if (REPORT.test(text.replace(DENIAL, " "))) return;
+  // A question about pay ("…платят 5000 в день, а у тебя?") is conversation, not an offer.
+  if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text) && !text.endsWith("?")) return "side_gig_offer";
   if (ADDRESSED.test(text)) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;
@@ -106,6 +119,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     const [rest, ...next] = text.slice(match.index + match[0].length).split(/(?<=[.!?\n])/u);
     // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
     if (rest!.trimEnd().endsWith("?")) continue;
+    if (!ASSESSMENT.test(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
     if (OUTCOME.test(rest! + " " + (next[0] ?? ""))) return "bot_testimonial";
   }
 }

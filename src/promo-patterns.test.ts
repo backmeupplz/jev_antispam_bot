@@ -38,6 +38,24 @@ test("controls never match: seekers, discussion, warnings, quoted reports, reque
   expect(controls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
 });
 
+test("a reply to another member's unrelated message is not a request", () => {
+  expect(promoPattern(plain(sideGigIncident, memberReply("Сегодня отличная погода, гуляли весь день")))).toBe("side_gig_offer");
+  expect(promoPattern(plain(botTestimonialIncident, memberReply("Вчера на трассе была авария, все живы")))).toBe("bot_testimonial");
+  // An external reply carries no source text and grants nothing.
+  expect(promoPattern(plain(sideGigIncident, { preview: [{ kind: "external_reply", origin: "external", sourceKind: "user",
+    sourceAuthor: "other_author", isForwarded: false, embeddedLinks: [] }] }))).toBe("side_gig_offer");
+});
+
+test("matching stays linear on long adversarial input", () => {
+  const inputs = ["job " + "1".repeat(4092), "работа " + "1,000 ".repeat(680), "подработка " + "1 ".repeat(2040) + "в лс",
+    "«".repeat(4096), '"'.repeat(4096), "прошла " + "a".repeat(4000) + " @xbot", "нужны " + "люди ".repeat(800)];
+  for (const text of inputs) {
+    const started = performance.now();
+    promoPattern(plain(text));
+    expect(performance.now() - started).toBeLessThan(50);
+  }
+});
+
 test("a reply that answers another member is a requested answer, not an ad", () => {
   expect(promoPattern(plain("У нас на складе как раз нужны люди на выходные, платят от 4 тысяч в день, напиши мне в лс",
     memberReply("Ищу подработку на выходные со свободным графиком, может кто знает?")))).toBeUndefined();
