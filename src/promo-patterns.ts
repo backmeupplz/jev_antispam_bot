@@ -97,7 +97,7 @@ function callsToDm(text: string): boolean {
     const after = text.slice(end, end + 60);
     // "someone DM'd me" is a DM received.
     if (match[0].endsWith("dm") && /^'?d(?![\p{L}\p{N}])/u.test(after)) return false;
-    const start = Math.max(0, ...[".", "!", "?", "\n", ","].map((mark) => text.lastIndexOf(mark, match.index - 1) + 1));
+    const start = Math.max(0, ...[".", "!", "?", "\n", ",", ":", ";"].map((mark) => text.lastIndexOf(mark, match.index - 1) + 1));
     const before = text.slice(Math.max(start, match.index - 40), match.index);
     return WILLING.test(before) || !DM_REPORTED_BEFORE.test(before) && !DM_REPORTED_AFTER.test(after);
   });
@@ -110,7 +110,7 @@ const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
 const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю|заработал[аи]?|подзаработал[аи]?|получаю)›",
   "‹i(?: also| currently| now| just)? (?:work|earn|make|worked|earned|made)›", "‹i'?m (?:working|earning|making)›");
-const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение|кому (?:интересно|надо|нужно)|хоч(?:ешь|ете) (?:так же|также|тоже))",
+const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение|кому интересно|хоч(?:ешь|ете) (?:так же|также|тоже))",
   "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн)",
   "‹(?:side[ -]?(?:job|gig|hustle|income)|hiring|vacanc|join|team|teach you|show you|opportunit|need(?:ed)? (?:\\p{L}+ ){0,2}people|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))");
 
