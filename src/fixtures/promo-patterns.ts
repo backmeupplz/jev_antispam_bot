@@ -129,4 +129,8 @@ export const botTestimonialControls = [
   "Прошла тест в @mymindcounselbot. Помогло? Да, не очень.",
   "Прошла тест в @mymindcounselbot. Помогло? Да, но не особо.",
   "Проходили тест в @mymindcounselbot?!\nПомогло?",
+  "Проходили тест в @mymindcounselbot?! Говорят, помогает разобраться в себе.",
+  "Пробовали тест в @mymindcounselbot?!\nПомогло?!",
+  "Прошла тест в @mymindcounselbot. Помогло?!",
+  "Прошла тест в @mymindcounselbot. Помогло?..",
 ];

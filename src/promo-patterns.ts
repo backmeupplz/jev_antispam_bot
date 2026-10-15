@@ -147,6 +147,9 @@ function asksAboutPay(text: string): boolean {
   return pay !== null && /^[^.!?\n]*\?/u.test(text.slice(pay.index));
 }
 
+// A sentence whose closing punctuation holds a "?" ("?", "?!", "?..") asks.
+const isQuestion = (sentence: string) => /\?[.!?\s]*$/u.test(sentence);
+
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
   if (message.mediaOnly) return;
   const raw = message.text.trim();
@@ -166,11 +169,11 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     if (OTHER_SUBJECT.test(text.slice(sentenceStart, match.index))) continue;
     const [rest, ...next] = text.slice(match.index + match[0].length).split(/(?<=[.!?\n])(?![.!?\n])/u);
     // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
-    if (rest!.trimEnd().endsWith("?")) continue;
+    if (isQuestion(rest!)) continue;
     if (!assessment(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
     // The outcome must be told, not asked ("Проходили тест в @…bot\nПомогло?"), unless the ad answers
     // its own question ("Помогло? Да, очень!").
-    const told = !next[0]?.trimEnd().endsWith("?") || AFFIRM.test(next[1] ?? "");
+    const told = !isQuestion(next[0] ?? "") || AFFIRM.test(next[1] ?? "");
     if (OUTCOME.test(rest! + " " + (told ? next[0] ?? "" : ""))) return "bot_testimonial";
   }
 }
