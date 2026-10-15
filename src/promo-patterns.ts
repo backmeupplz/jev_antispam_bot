@@ -25,7 +25,8 @@ export function promoText(text: string): string {
     .replace(/[^\p{L}\p{N}\p{Sc}\s.,!?;:«»"“”„'’@/%+\-–—_]/gu, " ")
     // A letter o typed for a zero inside a number: 5ooo, 1o 000.
     .replace(/(?<![\p{L}\p{N}])(?=[\do]*\d)[\do]+(?![\p{L}])/gu, (n) => n.replaceAll("o", "0"))
-    .replace(/\s+/gu, " ").trim();
+    // A line break ends a sentence (multi-line ads rarely punctuate), so only horizontal space collapses.
+    .replace(/\s*[\n\r\u2028\u2029]\s*/gu, "\n").replace(/[^\S\n]+/gu, " ").trim();
 }
 
 // Sources are lowercase plain text; `‹`/`›` mark word starts/ends (\b is ASCII-only).
@@ -42,7 +43,9 @@ const ATTRIBUTED = /^\p{Lu}[\p{L}'’-]+(?:\s\p{Lu}[\p{L}'’-]+){1,2}\s?:\s/u;
 const REPORT = any("‹(?:осторожн|остерега|предупрежд|развод›|разводил|разводят|мошен|кидал|скам|спам|фейк|не ведит|не отвечайт|не пишит|не переходит|жалоб|модератор|пример спам)",
   "‹(?:scam|spam|fake|beware|careful|report|moderator|don'?t (?:reply|respond|answer|click))");
 // Ads deny being what they are ("не развод", "без обмана и спама"); a denial is no report.
-const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|мошен|фейк|кидал|scam|spam|fake)\\p{L}*", "giu");
+const DENIAL = re("‹(?:не|ни|без|no|not(?: a)?)\\s(?:\\p{L}+\\s(?:и|или|and|or)\\s)?(?:развод|скам|спам|обман|лохотрон|мошен|фейк|кидал|scam|spam|fake|fraud)\\p{L}*", "giu");
+// Calling a job offer a con is a warning. Job offers only: "развод" is also a divorce in a personal story.
+const GIG_REPORT = any("‹(?:обман|лохотрон|развод|fraud)");
 
 // --- Side-gig recruitment: a work/earnings offer + pay per period + a move-to-DM call. ---
 const GIG = any(
@@ -74,17 +77,27 @@ const DM = any(
 );
 // The author is the one looking for work, not offering it.
 const SEEKER = any("‹(?:ищу (?:\\p{L}+ ){0,2}(?:подработ|работ|вакан|заработ|место)|в поисках (?:\\p{L}+ )?(?:подработ|работ)|возьмусь за|готова? (?:на любую )?работ)",
-  "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|need (?:a |some )?(?:job|work))›");
+  "‹(?:(?:looking|searching) for (?:[\\p{L}-]+ ){0,3}(?:job|work|gig)|need (?:a |some )?(?:job|work))›",
+  // Talk about the author's own job: "работаю курьером, получаю 4000 в день", "I work part time and earn $20 per hour".
+  "‹(?:работаю|подрабатываю|зарабатываю)›", "‹i(?: also| currently| now)? (?:work|earn|make)›", "‹i'?m (?:working|earning|making)›");
 
 // --- Bot testimonial: first-person "I took/tried/passed a test in @…bot", then an outcome. ---
 const BOT = "(?:@[a-z][a-z0-9_]*bot|t\\.me/[a-z][a-z0-9_]*bot)›";
 const EXPERIENCE = "(?:прош(?:ла|[её]л)|проходил[аи]?|попробовал[аи]?|пробовал[аи]?|сделал[аи]?|воспользовал(?:ся|ась|ись)|обратил(?:ся|ась)|took|tried|passed|did|used|completed|went through)";
 // The handle follows the experience within one clause: "прошла тест в @…bot".
 const TESTIMONIAL = re(`‹${EXPERIENCE}›[^.!?\\n]{0,40}?${BOT}`, "giu");
-// A self-assessment, which is what these bots sell: neutral tool tips ("used @PollBot, it helped") never match.
+// A self-assessment, which is what these bots sell. Neutral tool tips ("сделал опрос в @PollBot, помог",
+// "used @QuizBot to make a quiz for my class") never match: a test or quiz counts only when the author
+// took it ("прошла тест", "tried the quiz") or it was about themselves ("о себе", "about myself").
+// Psychology, therapy and fortune-telling words count on their own.
+const PSYCH = any("‹(?:психолог|психотерап|терап|тревож|стресс|страх(?:а|е|у|ом|и|ов|ами)?›|депресс|выгоран|травм|эмоци|самооценк|личност|гадани|расклад|таро|гороскоп|натальн|астролог|нумеролог)",
+  "‹(?:psych|therap|counsel|anxi|stress|fears?›|depress|burnout|trauma|emotion|self-esteem|personality|tarot|horoscope|astrolog|numerolog)");
 // Nouns only: "to test my code" is a tool tip, not an assessment.
-const ASSESSMENT = any("‹(?:тест(?:а|у|ом|ы|ов|е)?›|опрос|квиз|диагностик|гадани|расклад|анкет|консультаци|сесси|гороскоп|натальн|астролог|таро|психолог)",
-  "(?<!to\\s)‹tests?›", "‹(?:quiz|assessment|survey|questionnaire|diagnos|reading|session|horoscope|tarot|astrolog|therap|counsel)");
+const TEST_NOUN = "(?:тест(?:а|у|ом|ы|ов|е)?›|опрос|квиз|анкет|диагностик|(?<!to\\s)tests?›|quiz|survey|questionnaire|assessment|diagnos)";
+const TOOK_TEST = any(`‹(?:прош(?:ла|[её]л|ли)|проход(?:ил[аи]?|ить)|пройти|пройд\\p{L}*|сдал[аи]?|(?:по)?пробовал[аи]?|took|take|taking|passed|completed|went through|tried|did)›\\s(?:[\\p{L}'’-]+\\s){0,2}?‹${TEST_NOUN}`,
+  "‹сделал[аи]?\\s(?:\\p{L}+\\s)?тест");
+const SELF_TEST = any(`‹${TEST_NOUN}[^]{0,80}?‹(?:о себе|про себя|в себе|себя›|about (?:me|myself)›|myself›)`);
+const assessment = (text: string) => PSYCH.test(text) || TOOK_TEST.test(text) || SELF_TEST.test(text);
 // What the author learned or how it helped, after the handle.
 const OUTCOME = re("(?<!(?:не|ни|not|never|didn'?t|hasn'?t|wasn'?t)\\s)(?:" + ["‹(?:узнал|понял|осознал|разобрал|помог|изменил|стало (?:легче|проще|лучше)|открыл|рекоменд|советую)",
   "‹(?:realiz|learn|understood|helped|changed|figured|discovered|recommend|life[- ]changing)"].join("|") + ")");
@@ -120,9 +133,11 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   const raw = message.text.trim();
   if (!raw || ATTRIBUTED.test(raw)) return;
   const text = promoText(raw.replace(QUOTED, " "));
-  if (REPORT.test(text.replace(DENIAL, " "))) return;
+  const undenied = text.replace(DENIAL, " ");
+  if (REPORT.test(undenied)) return;
   // A question about pay is conversation, not an offer.
   if (GIG.test(text) && PAY.test(text) && DM.test(text) && !SEEKER.test(text) && !asksAboutPay(text)) {
+    if (GIG_REPORT.test(undenied)) return;
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source)) ? undefined : "side_gig_offer";
   }
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
@@ -132,7 +147,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     const [rest, ...next] = text.slice(match.index + match[0].length).split(/(?<=[.!?\n])/u);
     // A question ("Кто-нибудь проходил тест в @…bot?") is not an endorsement.
     if (rest!.trimEnd().endsWith("?")) continue;
-    if (!ASSESSMENT.test(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
+    if (!assessment(text.slice(sentenceStart, match.index + match[0].length) + rest!)) continue;
     if (OUTCOME.test(rest! + " " + (next[0] ?? ""))) return "bot_testimonial";
   }
 }

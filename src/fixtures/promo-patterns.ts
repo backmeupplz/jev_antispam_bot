@@ -21,6 +21,9 @@ export const sideGigParaphrases = [
   // Calls to action that end in a question.
   "Есть подработка, от 5000 в день, пиши в лс. Интересно?",
   "Срочно нужны люди на подработку, оплата от 4 тысяч в день, писать в личку. Кто готов?",
+  // Multi-line ads with no punctuation: each line break ends a sentence.
+  "🔥Подработка🔥\nОплата от 5000 в день\nПиши в лс\nКто готов?",
+  "Набираем людей на подработку\nОплата 3-5к за смену\nПодробности в ЛС",
 ];
 
 export const botTestimonialParaphrases = [
@@ -31,6 +34,9 @@ export const botTestimonialParaphrases = [
   // Latin lookalikes inside Russian words.
   "Пpoшлa тecт в @CalmMindHelpBot и пoнялa, чтo нужнo дeйcтвoвaть",
   "Тоже было тяжело после переезда. Воспользовалась ботом @dushevny_pomoshnik_bot, прошла его тест и он реально помог разобраться в себе.",
+  // Multi-line, with a question or another subject on a neighbouring line.
+  "Я прошла тест в @mymindcounselbot и узнала много нового о себе\nА вы пробовали?",
+  "Девочки, вы не поверите\nЯ прошла тест в @mymindcounselbot и узнала много нового",
 ];
 
 // Controls: each holds part of a shape but is not an unsolicited ad.
@@ -49,6 +55,11 @@ export const sideGigControls = [
   "Нужны 2 человека помочь с переездом в субботу, за 1 день управимся, напишите мне",
   "@ivan_petrov у меня на работе платят 5000 в день, а у тебя?",
   "Курьеры в Москве получают от 3000 за смену, вот статья https://habr.com/x",
+  // Warnings that call the offer a con, and talk about the author's own job.
+  "Опять в лс зовут на подработку 5000 в день. Обман чистой воды.",
+  "Тут кто-то предлагает работу 5000 в день, пишите в лс — это лохотрон",
+  "I work part time and earn $20 per hour. DM me if you want tips on finding a job",
+  "Работаю курьером, получаю около 4000 в день, если интересно как устроиться — пиши в лс",
 ];
 
 export const botTestimonialControls = [
@@ -69,4 +80,8 @@ export const botTestimonialControls = [
   "Сделал рассылку через @ControllerBot, рекомендую",
   "I used @GifBot and it helped me find gifs",
   "I used @CIBot to test my code and it helped",
+  // Poll, form and quiz bots used as tools, not taken as a self-assessment.
+  "Сделал опрос в @PollBot, очень помог определиться с датой встречи",
+  "I used @QuizBot to make a quiz for my class, it helped a lot",
+  "Сделала анкету через @FormBot, помогло собрать заявки, рекомендую",
 ];

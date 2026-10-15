@@ -81,7 +81,8 @@ test("uncaptioned media and empty text never match", () => {
   expect(promoPattern(plain("   "))).toBeUndefined();
 });
 
-test("normalization folds case, accents, lookalikes, emoji and o-for-zero but keeps й", () => {
+test("normalization folds case, accents, lookalikes, emoji and o-for-zero but keeps й and line breaks", () => {
+  expect(promoText("Подработка  \r\n\n  от 5000\t в день")).toBe("пoдpaбotka\not 5000 b дehь");
   expect(promoText("Зaрплaтa 5ООО₽ в ДЕНЬ 🔥 пиши!")).toBe("зapплata 5000₽ b дehь пиши!");
   expect(promoText("Райский")).toBe(promoText("райский"));
   expect(promoText("Райский")).not.toBe(promoText("раиский"));
