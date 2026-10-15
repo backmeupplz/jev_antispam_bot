@@ -292,10 +292,15 @@ const REQUEST = any("\\?", "‹(?:подскаж|посовету|пореком
 const BOT_TOPIC = any("‹(?:бот|тест|опрос|квиз|психолог)", "‹(?:bots?›|tests?›|quiz|therap|counsel)", "@[a-z][a-z0-9_]*bot›");
 // An ordinary question about work or pay invites a member's honest answer with its rate and a DM offer:
 // "Кто-нибудь подрабатывал на складе? Сколько там платят?", "Кто работал в Ленте на выкладке?".
-// Pay words are listed whole, so "платье" or "платформа" stays off topic.
-const WORK_TOPIC = any("‹(?:подраб|работ|зарплат|зп›|ваканс|трудоустр|устроит\\p{L}*ся|смен(?:а|у|ы|е|ой|ам|ах)?›)",
-  "‹(?:за|о|до)?плат(?:ят|ит|или|ил[аи]?|ишь|ите|ать|а|у|ы|ой|е)›",
-  "‹(?:jobs?|work\\p{L}*|hiring|hired?|salary|wages?|pay|paid|pays|shifts?)›");
+// Pay words are listed whole, so "платье" or "платформа" stays off topic. Something that works ("Магазин работает
+// сегодня?", "Does the elevator work?"), paying for things ("Can I pay by card?") or a schedule change
+// ("Когда смена расписания?") is not about a job.
+const WORK_TOPIC = any("‹(?:подраб|(?:под)?зараб|работ(?!ает›|ают›)|зарплат|зп›|ваканс|трудоустр|трудил|устр(?:ои|аива)\\p{L}*с[яь]›|ставк|оклад|смен(?:у|ы|ам|ах|ами)›)",
+  "‹(?:кто|где) (?:\\p{L}+ )?работа(?:ет|ют)›",
+  "‹(?:за|о|до|вы)?плат(?:ят|ит|или|ил[аи]?|ишь|ите|ать|а|у|ы|ой|е|ами)›|‹плотят›|‹сколько (?:\\p{L}+ ){0,3}?(?:получа|дают)",
+  "‹(?:jobs?|hiring|hired|salary|salaries|wages?|shifts?|worked|working)›",
+  "‹(?:you|anyone|anybody|someone|somebody|who|they|people) (?:\\p{L}+ ){0,2}?works?›",
+  "‹(?:how much|what) (?:[\\p{L}']+ ){0,3}?(?:pay|pays|paid|earn|earns|make|makes)›");
 function answersRequest(message: ModerationMessage, topic: (text: string) => boolean): boolean {
   return (message.preview ?? []).some((item) => {
     if (item.sourceKind === "channel" || item.sourceAuthor === "same_author" || !item.text?.trim()) return false;

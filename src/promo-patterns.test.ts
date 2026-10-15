@@ -104,6 +104,20 @@ test("an answer to an ordinary work question, with its rate and a DM offer, is a
     expect(promoPattern(plain(answer))).toBe("side_gig_offer");
     expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
   }
+  const answer = corpusRepliedAnswers[1]!.answer;
+  // Other ways members ask about a job or its pay.
+  for (const question of ["Кто-то устраивался в Магнит?", "Кто-нибудь устроился в Магнит?", "Где можно подзаработать?",
+    "Сколько зарабатывают курьеры?", "Сколько курьеры получают?", "Какая там ставка?", "Кто где работает?", "Сколько там плотят?",
+    "Anyone worked at the Amazon warehouse? How much do they pay?", "Where do you work?"]) {
+    expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
+  }
+  // Questions about something that works, paying for things or a schedule are off topic.
+  for (const question of ["Магазин работает сегодня?", "У кого работает интернет?", "Когда смена расписания?",
+    "Does the elevator work?", "Can I pay by card here?"]) {
+    expect(promoPattern(plain(answer, memberReply(question)))).toBe("side_gig_offer");
+  }
   // The question must be another member's request: the same text not asked, or the author's own, exempts nothing.
-  expect(promoPattern(plain(corpusRepliedAnswers[1]!.answer, memberReply("Работала в Ленте на выкладке")))).toBe("side_gig_offer");
+  expect(promoPattern(plain(answer, memberReply("Работала в Ленте на выкладке")))).toBe("side_gig_offer");
+  expect(promoPattern(plain(answer, { preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user",
+    sourceAuthor: "same_author", isForwarded: false, text: corpusRepliedAnswers[1]!.question, embeddedLinks: [] }] }))).toBe("side_gig_offer");
 });
