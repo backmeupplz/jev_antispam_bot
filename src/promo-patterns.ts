@@ -292,15 +292,16 @@ const REQUEST = any("\\?", "‹(?:подскаж|посовету|пореком
 const BOT_TOPIC = any("‹(?:бот|тест|опрос|квиз|психолог)", "‹(?:bots?›|tests?›|quiz|therap|counsel)", "@[a-z][a-z0-9_]*bot›");
 // An ordinary question about work or pay invites a member's honest answer with its rate and a DM offer:
 // "Кто-нибудь подрабатывал на складе? Сколько там платят?", "Кто работал в Ленте на выкладке?".
-// Pay words are listed whole, so "платье" or "платформа" stays off topic. Something that works ("Магазин работает
-// сегодня?", "Does the elevator work?"), paying for things ("Can I pay by card?") or a schedule change
-// ("Когда смена расписания?") is not about a job.
+// Pay words are listed whole, so "платье" or "платформа" stays off topic. "работает" counts only of a person
+// ("Кто-нибудь работает на Озоне?"), so "Магазин работает сегодня?" and "Does the elevator work?" don't, nor do
+// "Can I pay by card?" or "Когда смена расписания?". Close calls still count ("Где работает банкомат?",
+// "Где оплата за газ?"): the request must come from another member, and spam replies to members are rare.
 const WORK_TOPIC = any("‹(?:подраб|(?:под)?зараб|работ(?!ает›|ают›)|зарплат|зп›|ваканс|трудоустр|трудил|устр(?:ои|аива)\\p{L}*с[яь]›|ставк|оклад|смен(?:у|ы|ам|ах|ами)›)",
-  "‹(?:кто|где) (?:\\p{L}+ )?работа(?:ет|ют)›",
+  "‹(?:кто(?:-\\p{L}+)?|где) (?:\\p{L}+ ){0,2}?работа(?:ет|ют)›|‹работа(?:ет|ют) кто›",
   "‹(?:за|о|до|вы)?плат(?:ят|ит|или|ил[аи]?|ишь|ите|ать|а|у|ы|ой|е|ами)›|‹плотят›|‹сколько (?:\\p{L}+ ){0,3}?(?:получа|дают)",
   "‹(?:jobs?|hiring|hired|salary|salaries|wages?|shifts?|worked|working)›",
   "‹(?:you|anyone|anybody|someone|somebody|who|they|people) (?:\\p{L}+ ){0,2}?works?›",
-  "‹(?:how much|what) (?:[\\p{L}']+ ){0,3}?(?:pay|pays|paid|earn|earns|make|makes)›");
+  "‹how much (?:[\\p{L}']+ ){0,3}?(?:pay|pays|paid|earn|earns|make|makes)›|‹what (?:[\\p{L}']+ ){0,3}?(?:pay|pays|earn|earns)›|‹the pay›");
 function answersRequest(message: ModerationMessage, topic: (text: string) => boolean): boolean {
   return (message.preview ?? []).some((item) => {
     if (item.sourceKind === "channel" || item.sourceAuthor === "same_author" || !item.text?.trim()) return false;

@@ -108,12 +108,13 @@ test("an answer to an ordinary work question, with its rate and a DM offer, is a
   // Other ways members ask about a job or its pay.
   for (const question of ["Кто-то устраивался в Магнит?", "Кто-нибудь устроился в Магнит?", "Где можно подзаработать?",
     "Сколько зарабатывают курьеры?", "Сколько курьеры получают?", "Какая там ставка?", "Кто где работает?", "Сколько там плотят?",
-    "Anyone worked at the Amazon warehouse? How much do they pay?", "Where do you work?"]) {
+    "Anyone worked at the Amazon warehouse? How much do they pay?", "Where do you work?", "Кто-нибудь работает на Озоне?",
+    "Кто из вас работает в Ленте?", "Работает кто-нибудь на складе?", "What's the pay like?"]) {
     expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
   }
   // Questions about something that works, paying for things or a schedule are off topic.
   for (const question of ["Магазин работает сегодня?", "У кого работает интернет?", "Когда смена расписания?",
-    "Does the elevator work?", "Can I pay by card here?"]) {
+    "Does the elevator work?", "Can I pay by card here?", "What should I make for dinner?"]) {
     expect(promoPattern(plain(answer, memberReply(question)))).toBe("side_gig_offer");
   }
   // The question must be another member's request: the same text not asked, or the author's own, exempts nothing.
