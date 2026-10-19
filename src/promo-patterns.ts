@@ -554,7 +554,8 @@ const VENUE_USER = re("‹(?:покупаю|меняю|обмениваю|бер
 // market ("на Bybit P2P") is, and so is a rate compared to one ("дешевле, чем на бирже").
 const EXCHANGE_PLACE = re("(?<!‹(?:чем|than)\\s)‹(?:через|via|on|at|на|в) (?:[\\p{L}-]+ )?(?:binance|bybit|okx|kraken|htx|huobi|kucoin|mexc|bitget|coinbase|бирж\\p{L}*)›(?! (?:p2p|п2п)›)");
 // Where the money or coins go ("оплата на Сбер", "перевожу на Binance", "отправлю на любую биржу") is how a deal settles.
-const PAID_VIA = re("‹(?:оплат|перев[оеё][дж]|отправ|принима|зачисл|вывод|вывож|payment|transfer|pay›|send)[^,.;!?\\n]*", "giu");
+// Only the settlement phrase itself, up to its destination: "Сделал вывод: покупаю … через Тинькофф" keeps the member's venue.
+const PAID_VIA = re("‹(?:оплат|перев[оеё][дж]|отправ|принима|зачисл|вывод|вывож|payment|transfer|pay›|send)\\p{L}*(?: [\\p{L}\\p{N}-]+){0,2}? (?:на|в|во|через|to|via|on|into)›(?: [\\p{L}-]+)? [\\p{L}\\p{N}-]+", "giu");
 const HABIT = re("‹(?:обычно|всегда|регулярно|постоянно|каждую неделю|каждый месяц|каждый день|usually|always|regularly|every (?:week|month|day))›");
 const ownVenue = (text: string) => HABIT.test(text)
   || sentences(text).some((part) => {
