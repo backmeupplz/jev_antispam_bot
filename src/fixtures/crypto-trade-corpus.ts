@@ -1,4 +1,4 @@
-// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 7), pinned with their exact outcome.
+// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 8), pinned with their exact outcome.
 // A rule change that fixes one side and opens a hole on the other fails the corpus test.
 export const cryptoCorpusAds = [
   "Всем привет, есть кто продаёт усдт? Напишите, договоримся.",
@@ -758,6 +758,10 @@ export const cryptoCorpusAds = [
   "Buying USDT, let's talk terms",
   "Продам USDT, обсудим в телеге",
   "Selling USDT, best rate, via Binance P2P",
+  // Round 8: rates compared to a bank, exchanger or exchange.
+  "Продаю USDT за наличные. Курс лучше, чем в банке",
+  "Продаю USDT по хорошему курсу, лучше чем в обменнике",
+  "Продам USDT дешевле, чем на бирже, пишите",
 ];
 
 // Questions, market talk, goods priced in crypto, warnings, reports, doubts, mentions and news.
@@ -1554,6 +1558,12 @@ export const cryptoCorpusKeeps = [
   "Нужен совет: хочу купить USDT, пишите в лс",
   // Round 7: a leading "Обсудим," that opens a chat question.
   "Обсудим, кто продаёт USDT дешевле всех?",
+  // Round 8: members selling on an exchange, or judging its rates.
+  "Сейчас хороший курс на бирже, продаю свои USDT",
+  "На Bybit сейчас хороший курс, продаю немного BTC",
+  "Продаю BTC на Binance по хорошему курсу, наконец-то в плюсе",
+  "Selling my BTC on Coinbase, best rates I've seen",
+  "I sell my USDT on Binance P2P, good rates there",
 ];
 
 // Known residuals: ads left to the model (no deal cue, a cash-only ask, a far-off asset, an ad that opens with a warning,
