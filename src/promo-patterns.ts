@@ -553,10 +553,14 @@ const VENUE_USER = re("‹(?:покупаю|меняю|обмениваю|бер
 // Selling on an exchange's order book ("продаю свои USDT на бирже", "Selling my BTC on Coinbase") is no P2P deal; its P2P
 // market ("на Bybit P2P") is, and so is a rate compared to one ("дешевле, чем на бирже").
 const EXCHANGE_PLACE = re("(?<!‹(?:чем|than)\\s)‹(?:через|via|on|at|на|в) (?:[\\p{L}-]+ )?(?:binance|bybit|okx|kraken|htx|huobi|kucoin|mexc|bitget|coinbase|бирж\\p{L}*)›(?! (?:p2p|п2п)›)");
-const PAID_VIA = /(?<![\p{L}\p{N}])(?:оплат|перевод|payment|transfer|pay(?![\p{L}]))[^,.;!?\n]*/giu;
+// Where the money or coins go ("оплата на Сбер", "перевожу на Binance", "отправлю на любую биржу") is how a deal settles.
+const PAID_VIA = re("‹(?:оплат|перев[оеё][дж]|отправ|принима|зачисл|вывод|вывож|payment|transfer|pay›|send)[^,.;!?\\n]*", "giu");
 const HABIT = re("‹(?:обычно|всегда|регулярно|постоянно|каждую неделю|каждый месяц|каждый день|usually|always|regularly|every (?:week|month|day))›");
 const ownVenue = (text: string) => HABIT.test(text)
-  || sentences(text).some((part) => (VENUE_USER.test(part) || EXCHANGE_PLACE.test(part)) && VENUE_PLACE.test(part.replace(PAID_VIA, " ")));
+  || sentences(text).some((part) => {
+    const place = part.replace(PAID_VIA, " ");
+    return (VENUE_USER.test(part) || EXCHANGE_PLACE.test(place)) && VENUE_PLACE.test(place);
+  });
 const HELPER = any("‹кто(?:-нибудь| нибудь)? (?:может|сможет|готов)\\s?(?:[—–,-]|$)|‹кто(?:-нибудь| нибудь)? (?:может |сможет |готов )?помо(?:жет|чь)›(?! (?:разобраться|советом|понять))|‹(?:who|anyone|someone) (?:can |could )?help (?:me )?(?:with (?:it|this|that)›|›(?! (?:me )?(?:understand|figure)))");
 // A DM call, a contact or negotiation makes any intent an ad, and a bare "напишите" any but a wish. Good-rate or volume terms
 // do for an offer and for a question seeking a trader ("есть кто может продать юстд по адекватному курсу?").

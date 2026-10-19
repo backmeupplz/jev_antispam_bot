@@ -1,4 +1,4 @@
-// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 8), pinned with their exact outcome.
+// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 9), pinned with their exact outcome.
 // A rule change that fixes one side and opens a hole on the other fails the corpus test.
 export const cryptoCorpusAds = [
   "Всем привет, есть кто продаёт усдт? Напишите, договоримся.",
@@ -762,6 +762,12 @@ export const cryptoCorpusAds = [
   "Продаю USDT за наличные. Курс лучше, чем в банке",
   "Продаю USDT по хорошему курсу, лучше чем в обменнике",
   "Продам USDT дешевле, чем на бирже, пишите",
+  // Round 9: where an ad pays or sends, an exchange included.
+  "Куплю USDT дорого, перевожу на Binance",
+  "Продаю USDT по хорошему курсу, отправлю на любую биржу. Если есть вопросы — пишите в лс",
+  "Продаю USDT по хорошему курсу, оплата на Bybit",
+  "Куплю USDT, отправлять на Binance. Если есть вопросы — пишите в лс",
+  "Покупаю USDT дорого, оплата на Сбер",
 ];
 
 // Questions, market talk, goods priced in crypto, warnings, reports, doubts, mentions and news.
