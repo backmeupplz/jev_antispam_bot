@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { botTestimonialControls, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
-import { usdtAsk, usdtAskVariants } from "./fixtures/usdt-repeat";
+import { usdtAsk, usdtAskVariants, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
+import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
+import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
@@ -35,7 +37,7 @@ test("existing synthetic @…bot testimonial fixture matches; non-bot promotions
 
 test("controls never match: seekers, discussion, warnings, quoted reports, requests and questions", () => {
   const controls = [...sideGigControls, ...botTestimonialControls, ...testimonialControls.map((c) => c.text),
-    ...vagueRecruitmentControls, ...Object.values(reportedRecruitment), ...vagueRecruitmentVariants, usdtAsk, ...usdtAskVariants];
+    ...vagueRecruitmentControls, ...Object.values(reportedRecruitment), ...vagueRecruitmentVariants];
   expect(controls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
 });
 
@@ -59,7 +61,10 @@ test("matching stays linear on long adversarial input", () => {
   const inputs = ["job " + "1".repeat(4092), "работа " + "1,000 ".repeat(680), "подработка " + "1 ".repeat(2040) + "в лс",
     "«".repeat(4096), '"'.repeat(4096), "прошла " + "a".repeat(4000) + " @xbot", "нужны " + "люди ".repeat(800),
     "прошла @abot ".repeat(315), "ищем " + "людей ".repeat(800), "ищет " + "а ".repeat(2040) + "работу",
-    "люди ищут ".repeat(400), "подработка нужна ".repeat(240), "возьму " + "любую ".repeat(680)];
+    "люди ищут ".repeat(400), "подработка нужна ".repeat(240), "возьму " + "любую ".repeat(680),
+    "кто " + "а ".repeat(2040) + "продать usdt", "куплю " + "usdt ".repeat(800), "куплю " + "1".repeat(4000) + " usdt",
+    "who " + "x ".repeat(2040) + "sells btc", "@aaaa ".repeat(800), "куплю usdt по " + "хорошему ".repeat(400) + "курсу",
+    "кто продаст usdt?" + " 1.5".repeat(1000)];
   // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI
   // runner can exceed the bound once, while backtracking is slow on every run.
   // The bound allows for the slower Easypanel build host (55 ms best warm run
@@ -129,4 +134,35 @@ test("an answer to an ordinary work question, with its rate and a DM offer, is a
   expect(promoPattern(plain(answer, memberReply("Работала в Ленте на выкладке")))).toBe("side_gig_offer");
   expect(promoPattern(plain(answer, { preview: [{ kind: "reply", origin: "same_chat", sourceKind: "user",
     sourceAuthor: "same_author", isForwarded: false, text: corpusRepliedAnswers[1]!.question, embeddedLinks: [] }] }))).toBe("side_gig_offer");
+});
+
+const crypto = "crypto_trade_ask";
+test("#142 and #124 single-send USDT asks match, standalone, as channel-post comments and forwarded", () => {
+  for (const text of [cryptoTradeIncident, usdtAsk, ...usdtAskVariants, directCryptoTradeOffer]) {
+    for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(text, patch))).toBe(crypto);
+  }
+});
+
+test.each(cryptoTradeParaphrases)("held-out crypto trade paraphrase matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(crypto);
+});
+
+test("crypto trade controls never match: questions, market talk, goods paid in crypto, warnings, reports and doubts", () => {
+  const controls = [...cryptoTradeControls, ...usdtControls, ...directCryptoTradeControls];
+  expect(controls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("the #124 ask without its rate terms has no deal cue and is left to the model and the repeat rule", () => {
+  expect([usdtBareAsk, ...usdtBareAskVariants].filter((text) => promoPattern(plain(text)))).toEqual([]);
+});
+
+test("a crypto trade answer to another member's trade question is a requested answer", () => {
+  for (const { question, answer } of cryptoTradeRepliedAnswers) {
+    expect(promoPattern(plain(answer))).toBe(crypto);
+    expect(promoPattern(plain(answer, memberReply(question)))).toBeUndefined();
+    // A reply to an off-topic member message or a channel post grants nothing.
+    expect(promoPattern(plain(answer, memberReply("Как дела у всех?")))).toBe(crypto);
+    expect(promoPattern(plain(answer, channelReply))).toBe(crypto);
+  }
+  expect(promoPattern(plain(cryptoTradeIncident, memberReply("Сегодня отличная погода, гуляли весь день")))).toBe(crypto);
 });
