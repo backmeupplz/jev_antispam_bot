@@ -5,6 +5,7 @@ import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants
 import { usdtAsk, usdtAskVariants, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
+import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
@@ -165,4 +166,9 @@ test("a crypto trade answer to another member's trade question is a requested an
     expect(promoPattern(plain(answer, channelReply))).toBe(crypto);
   }
   expect(promoPattern(plain(cryptoTradeIncident, memberReply("Сегодня отличная погода, гуляли весь день")))).toBe(crypto);
+});
+
+test("the pinned crypto review corpus keeps its exact outcome", () => {
+  expect(cryptoCorpusAds.filter((text) => promoPattern(plain(text)) !== crypto)).toEqual(cryptoCorpusKnownMisses);
+  expect(cryptoCorpusKeeps.filter((text) => promoPattern(plain(text)))).toEqual(cryptoCorpusKnownMatches);
 });

@@ -21,6 +21,11 @@ export const cryptoTradeParaphrases = [
   "Hi all, who sells tether here? Text me",
   "Who wants to buy ETH? I have 2 ETH, hit me up",
   "I can exchange your dollars to USDT at the best rate, contact @fastswap_ex",
+  "Всем привет, продаст кто-нибудь усдт? Напишите, договоримся.",
+  "Ребята привет, есть кто может продать юстд по адекватной цене?",
+  "Buying USDT, DM me",
+  "Who has USDT for sale? DM me",
+  "Купим USDT по лучшему курсу, обращайтесь в лс",
 ];
 
 export const cryptoTradeControls = [
@@ -39,8 +44,22 @@ export const cryptoTradeControls = [
   "I'd rather buy BTC on the dip than chase the pump",
   "BTC sellers look exhausted, buyers are stepping in at $78K",
   "Сбер с 1 декабря позволит покупать и продавать BTC и USDT прямо в приложении",
-  // Goods paid in crypto are a classified ad for the goods, not a crypto trade.
+  // A wish to trade with a venue or advice question in another sentence (Astra round 1).
+  "Мне нужно купить 500 usdt для оплаты. Где это лучше сделать?",
+  "Хочу продать usdt по хорошему курсу. Где лучше: bybit или p2p?",
+  "I need to buy 200 USDT. Which exchange is best?",
+  "Хочу продать 1000 usdt, подскажите как лучше",
+  // Advice to whoever trades, and a question about a cash deal's risk.
+  "Кто продаёт usdt за наличку при встрече — будьте аккуратны",
+  "Who sells USDT for cash in person? Asking because it seems risky",
+  // Goods paid or priced in crypto, and crypto-themed goods, are a classified ad for the goods, not a crypto trade.
   "Продам iPhone 13, можно оплату в USDT, пишите в лс",
+  "Продам iPhone 13 за 450 usdt, пишите в лс",
+  "Меняю iPhone на usdt, пишите",
+  "Продам курс по крипте, пишите в лс",
+  // A reference rate or a bare amount is no deal term.
+  "Я всегда продаю usdt по курсу биржи, на p2p не связываюсь",
+  "I will buy 0.1 BTC this week, wish me luck",
   "Куплю ноутбук за USDT, пишите в личку",
   "Selling my bike, accept BTC or cash, DM me",
   // Warnings, reports and doubts about such asks.
