@@ -68,7 +68,10 @@ test("matching stays linear on long adversarial input", () => {
     "кто продаст usdt?" + " 1.5".repeat(1000),
     // Word-by-word gap checks: a run of digits, dots or underscores before a non-gap word stays linear (#142 round 2).
     "куплю " + "_".repeat(70) + "ж usdt", "нужен " + "_".repeat(4000) + "ж usdt, пишите", "кто продаст " + "1.".repeat(2000) + "x usdt?",
-    "кто продаёт usdt? " + "напишите, кто ".repeat(280), "по " + "аааому ".repeat(580) + "курсу", "подробнее " + "@aaaa ".repeat(600)];
+    "кто продаёт usdt? " + "напишите, кто ".repeat(280), "по " + "аааому ".repeat(580) + "курсу", "подробнее " + "@aaaa ".repeat(600),
+    // Round 6: many question sentences, conditional calls, refused DMs and venues.
+    "a?".repeat(2048), "кто продаёт usdt? где?".repeat(180), "куплю usdt. " + "если есть вопрос ".repeat(240) + "пишите",
+    "куплю usdt, " + "в лс не ".repeat(500) + "торгую", "i buy btc " + "on the ".repeat(580) + "binance, best rates"];
   // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI
   // runner can exceed the bound once, while backtracking is slow on every run.
   // The bound allows for the slower Easypanel build host (55 ms best warm run

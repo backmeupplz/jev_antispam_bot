@@ -1,4 +1,4 @@
-// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 5), pinned with their exact outcome.
+// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 6), pinned with their exact outcome.
 // A rule change that fixes one side and opens a hole on the other fails the corpus test.
 export const cryptoCorpusAds = [
   "Всем привет, есть кто продаёт усдт? Напишите, договоримся.",
@@ -722,6 +722,25 @@ export const cryptoCorpusAds = [
   "Куплю USDT, пишите админу @obmen_admin",
   "Обмен USDT, пишите нашему админу в лс",
   "Selling USDT, DM the admin @usdt_desk",
+  // Round 6: held-out asks around the round-6 fixes.
+  "Куплю USDT за наличные, пишите",
+  "Покупаю usdt за наличку, пишите в лс",
+  "Продам USDT, обсудим",
+  "Есть кто продаст биткоин? Обсудим в лс",
+  "Куплю крипту по хорошему курсу, в лс",
+  "Buying USDT, DM me, let's discuss",
+  "Продам USDT. Если интересно — пишите",
+  "Will buy usdt, any amount. Let's talk",
+  "Покупаю USDT без комиссии, пишите в лс",
+  "Продаю BTC, торг",
+  "Куплю USDT-TRC20, пишите в лс",
+  "Куплю криптовалюту за наличные, пишите",
+  "Продам биткоины, торг",
+  "Продам эфириум, договоримся",
+  "Куплю USDT, обсудим в лс",
+  "Продаю TON, let's talk.",
+  "Selling USDT, not via DM, only in person",
+  "Кто продаёт usdt? Пишите, договоримся",
 ];
 
 // Questions, market talk, goods priced in crypto, warnings, reports, doubts, mentions and news.
@@ -1500,6 +1519,22 @@ export const cryptoCorpusKeeps = [
   "Обмен USDT на наличные с рук, это лотерея",
   "Покупка юсдт за кэш на улице, слишком стрёмно",
   "Продажа USDT за наличные незнакомцам, так и до беды недалеко",
+  // Round 6 review: market talk, habits, refused DMs, help offers and crypto-prefixed goods.
+  "Anyone buying BTC on this dip? Let's discuss",
+  "Кто покупает TON на этих уровнях? Обсудим в чате",
+  "Покупаю usdt за наличку у обменника возле дома, всё чисто",
+  "I buy USDT on Binance P2P, best rates there",
+  "Покупаю usdt без комиссии через Тинькофф",
+  "Покупаю USDT только на Binance, в личке не торгую",
+  "I buy BTC every week on Kraken, never via DM",
+  "Покупаю BTC на Bybit. Если нужна инструкция — пишите",
+  "Покупаю BTC на Bybit, пишите, если нужна инструкция",
+  "Кто хочет купить USDT, лучше через Bybit P2P. Если будут вопросы — пишите",
+  "I buy BTC on Bybit. If you have questions, DM me",
+  "Продам криптокошелёк Ledger Nano X, новый, пишите в лс",
+  "Продам биткоин-кошелёк Trezor, пишите",
+  "Продаю BTC-майнер, торг",
+  "Нужен совет: хочу купить USDT, пишите в лс",
 ];
 
 // Known residuals: ads left to the model (no deal cue, a cash-only ask, a far-off asset, an ad that opens with a warning,
@@ -1599,7 +1634,6 @@ export const cryptoCorpusKnownMatches = [
   "Кто знает, кто продаёт usdt в Ереване? Пишите",
   "Подскажите, есть кто продаёт usdt в Ереване? Напишите в лс",
   "Ребята, кто предлагает купить usdt в личке — пишите мне, забаню",
-  "Покупаю usdt только на бирже, в личке не связываюсь",
   "Кто продаёт usdt по адекватному курсу? Таких не бывает",
   "Кто-нибудь продаёт usdt по нормальному курсу? Я не нашёл, все задрали",
   "Обменник USDT возле метро закрылся. Пишите в лс, дам другой",
@@ -1620,7 +1654,6 @@ export const cryptoCorpusKnownMatches = [
   "Обмен USDT на наличные в Анталии лучше всего делать в обменниках на Ататюрк, пишите если нужны адреса",
   "Покупка USDT за наличные у незнакомцев на улице плохая идея. Напишите, если нужен проверенный обменник",
   "Exchange USDT to cash at the booth near Rustaveli metro, message me if you want the address",
-  "Обмен крипты на наличные в Батуми проще всего через Bybit p2p, пишите подскажу",
   "Buying USDT with cash from strangers in a parking lot, text me if you want to hear how I got robbed",
   "Selling USDT for cash in Bangkok through Superrich or the airport booths, message me for the list",
   "Покупка крипты за наличные в Дубае через официальные обменники безопаснее всего. Пишите, если нужны контакты",
@@ -1630,7 +1663,6 @@ export const cryptoCorpusKnownMatches = [
   "Exchange USDT for cash in person, it's never worth it",
   "Buying USDT with cash from randoms, it's crazy people still do this",
   "Selling BTC for cash in person, it's really not safe",
-  "Buying USDT in cash, it's getting harder every month",
   "Exchange BTC to cash in person, it's too much hassle",
   "Кто продаёт usdt по нормальному курсу? Неужели все задрали цены?",
   "Есть кто продаёт усдт по адекватному курсу? Сколько можно переплачивать?",

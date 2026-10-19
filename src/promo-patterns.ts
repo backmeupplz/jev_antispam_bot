@@ -337,8 +337,10 @@ function doubtsTheOffer(text: string): boolean {
 // --- P2P crypto trade ask (#142): a buy/sell intent for a crypto asset + a deal cue. ---
 // Lookalikes fold first, so "уcдт" with a Latin c is "усдт"; "юстд" is a common transposition.
 const ASSET = "‹(?:(?:u|ю|у)(?:s|с|\\$)(?:d|д)(?:t|т)\\p{L}{0,4}|(?:u|ю|у)(?:s|с)(?:t|т)(?:d|д)|(?:ю|у)сд(?:э|е)|usdc|(?:ю|у)сдц|тезер\\p{L}*|тетер\\p{L}*|tether"
-  + "|крипт\\p{L}*|crypto\\p{L}*|стейбл\\p{L}*|stable ?coins?|btc|биткоин\\p{L}*|биткойн\\p{L}*|битк(?:а|у|ом|и|ов|ами)?|биток|bitcoins?"
-  + "|eth|ethereum|эфириум\\p{L}*|эфир(?:а|у|ом)?|toncoin|тонкоин\\p{L}*|(?<!‹a )ton|trx|tron|bnb|solana|ltc|litecoin|xmr|monero)›";
+  + "|крипт(?:а|ы|у|е|ой|ою|о|о(?:валют|актив|монет)\\p{L}*)|crypto(?:s|currenc\\p{L}*)?|стейбл\\p{L}*|stable ?coins?|btc|биткоин(?:а|у|ом|е|ы|ов|ами)?|биткойн(?:а|у|ом|е|ы|ов|ами)?"
+  + "|битк(?:а|у|ом|и|ов|ами)?|биток|bitcoins?|eth|ethereum|эфириум(?:а|у|ом|е)?|эфир(?:а|у|ом)?|toncoin|тонкоин(?:а|у|ом|ы|ов)?|(?<!‹a )ton|trx|tron|bnb|solana|ltc|litecoin|xmr|monero)›"
+  // Crypto-prefixed goods are no asset: "криптокошелёк", "биткоин-кошелёк", "BTC-майнер"; a network or fiat pair still is ("USDT-TRC20").
+  + "(?!-(?!(?:trc|erc|bep|ton|usdt|usd|rub|руб)\\p{L}*\\p{N}*›)\\p{L})";
 const ASSETS = re(ASSET);
 const TRADE_INF = "(?:продать|купить|обменять|поменять|выкупить|отдать)";
 const TRADE_3RD = "(?:прода[её]т|продаст|продают|купит|покупает|покупают|скупает|обменяет|обменяют|обменивает|поменяет|поменяют|меняет|меняют|отдаст)";
@@ -384,9 +386,12 @@ const VENUE = re("‹(?:где|как|куда|откуда|через что|н
 // "если интересно", "если что", "если у кого есть", "когда удобно" and "if interested" call readers instead.
 const HEDGE = any("‹(?:(?:если|if)(?! (?:что|у кого|удобно|интерес|нужн|надо|кому|кто|вам|тебе|есть|прода|купите|обменяете|interested|you|needed|anyone|someone|any))|когда(?! (?:удобно|угодно|(?:будет )?(?:нужно|надо)))|(?<!хотел\\p{L}{0,2} )бы"
   + "|наверное|думаю|может быть|просадк\\p{L}*|подешевеет|упад[её]т|позже|потом|when(?! (?:ready|convenient|you))|would|rather|maybe|probably|dips?|think|wait|later)›");
+// Market timing makes buying an investment, not a trade with a member: "Anyone buying BTC on this dip?", "Кто покупает TON на
+// этих уровнях?".
+const MARKET = any("‹(?:dips?|просадк\\p{L}*|уровн\\p{L}*|levels?|хаях|лоях|highs|lows|на (?:падении|росте|коррекции)|коррекци\\p{L}*|pump\\p{L}*|dump\\p{L}*|памп\\p{L}*|дамп\\p{L}*|hodl\\p{L}*|холд\\p{L}*|bull\\p{L}*|bear\\p{L}*|бычк\\p{L}*|медвеж\\p{L}*)›");
 // Where, how or which, asked: "Хочу купить 500 usdt. Где это лучше сделать?", "Кто меняет usdt на p2p — какие банки не блокируют?".
 const VENUE_QUESTION = any("‹(?:где|куда|откуда|как|каком|какой|какая|какую|какие|каким|сколько|почему|зачем|что делать|where|how|which|what|why)›");
-const ADVICE = any("‹(?:подскажите|посоветуйте|порекомендуйте|подскажи|посоветуй|advise|recommend|suggest|any tips|advice)›|‹which (?:exchange|platform|app|service|site|bank)");
+const ADVICE = any("‹(?:подскажите|посоветуйте|порекомендуйте|подскажи|посоветуй|нужен совет|нужна помощь|нужна подсказка|advise|recommend|suggest|any tips|advice)›|‹which (?:exchange|platform|app|service|site|bank)");
 // The asset is what is traded, right after the verb with only amounts, fiat, owners and connectors between ("куплю USDT TRC20",
 // "кто купит у меня 300 usdt", "обменяю лиры на USDT", "exchange my 2.4k$ in bank to crypto"), or just before it ("USDT куплю").
 // Goods priced or paid in crypto ("Продам iPhone за 450 usdt", "Меняю iPhone на usdt") and crypto-themed goods ("Продам курс
@@ -454,6 +459,9 @@ function tradeIntents(text: string): TradeIntent[] {
   // A wish to trade asked with where, how or for advice anywhere in the message seeks help, not a trader.
   const advice = ADVICE.test(text) || parts.some((part) => isQuestion(part) && VENUE_QUESTION.test(part));
   const deal = hasDeal(text);
+  // Counted once, so a long run of sentences stays linear.
+  const venueQuestionAt = parts.map((part) => isQuestion(part) && LATER_VENUE.test(part));
+  const venueQuestions = venueQuestionAt.filter(Boolean).length;
   return parts.flatMap((part, i) => {
     const beside = words(part) <= 4 && (header(parts[i - 1]) || header(parts[i + 1]));
     const named = (m: RegExpMatchArray) => beside || tradesAsset(part, m.index!, m.index! + m[0].length);
@@ -469,9 +477,10 @@ function tradeIntents(text: string): TradeIntent[] {
     // "есть кто может продать юстд по адекватному курсу" asks without its "?".
     // Terms alone make an ad of a lone ask; "Кто продаёт usdt по адекватному курсу? Где вы таких находите?" or "…? Или все на бирже?"
     // is talk about traders.
-    const lone = parts.every((other, j) => j === i || !isQuestion(other) || !LATER_VENUE.test(other)) && !LATER_TALK.test(parts[i + 1] ?? "");
-    if (asks.length) found.push({ kind: "ask", question: question || asks.some((m) => ASKED.test(m[0]) || ASKED_BEFORE.test(before(m))), rate: rate && lone && !ADVICE.test(text) });
-    if (HEDGE.test(part) || venue) return found;
+    const market = MARKET.test(part);
+    const lone = venueQuestions - (venueQuestionAt[i] ? 1 : 0) === 0 && !LATER_TALK.test(parts[i + 1] ?? "");
+    if (asks.length && !market) found.push({ kind: "ask", question: question || asks.some((m) => ASKED.test(m[0]) || ASKED_BEFORE.test(before(m))), rate: rate && lone && !ADVICE.test(text) });
+    if (HEDGE.test(part) || market || venue) return found;
     if ([...part.matchAll(OFFER_ALL)].some(own) || !question && [...part.matchAll(HEADER_OFFER_ALL)].some((m) => named(m) && isHeader(part.slice(m.index!), parts[i + 1])))
       found.push({ kind: "offer", question, rate });
     if (!advice && [...part.matchAll(WANT_ALL)].some(own)) found.push({ kind: "want", question, rate });
@@ -497,7 +506,9 @@ const ADMIN_CALL = new RegExp(re(`‹${CALL_WORD}(?: (?:в лс|в личку|в
 // A bare call: "Напишите, договоримся", "пишите", "маякните", "кому надо пишите", "text me", "PM".
 const REPLY_CALL = any(`(?:^|[.!?,;:/\\n—–-]\\s?|‹если что )${CALL_WORD}(?: (?:мне|нам|me|us|со мной|с нами))?(?: (?:в|на|on|via|in) (?:ватсап|вотсап|whatsapp|телег\\p{L}*|тг|вайбер|viber|signal|telegram|tg))?(?: (?:пожалуйста|плиз|плз|please|pls))?\\s?(?:[.!,;/\\n]|\\+?\\d|$|(?=(?:если|if|когда|when) ))`,
   "‹кому (?:надо|нужно|интересно)\\s?[—–-]?\\s?(?:пиш|напиш)\\p{L}*|‹(?:пиш|напиш)\\p{L}* кому (?:надо|нужно|интересно)›");
-const NEGOTIATE = any("‹(?:договор(?:имся|иться)|обсудим|торг›|жду (?:ваших )?предложени\\p{L}*|negotiable|let['’]?s (?:talk|discuss|deal))");
+// "Обсудим" or "let's talk" is a deal only standing alone or taken private; "Обсудим в чате" invites talk.
+const NEGOTIATE = any("‹(?:договор(?:имся|иться)|торг›|жду (?:ваших )?предложени\\p{L}*|negotiable|let['’]?s deal)",
+  "‹(?:обсудим|let['’]?s (?:talk|discuss))(?: (?:в лс|в личке|в личных|лично|privately|in (?:dm|pm|private)))?\\s?(?:[.!,;)\\n]|$)");
 // A handle or chat link closing a line after punctuation is a contact ("курс выгодный, @exchanger_x"). After a word it is a
 // mention or a source ("покупаю через @wallet", "Подробнее: t.me/cryptonews_ru", "в канале @crypto_news"), and so is a bot.
 const SOURCE = "(?:подробн\\p{L}*|источник\\p{L}*|details|source|more|via|канал\\p{L}*|channel)";
@@ -520,6 +531,19 @@ const INFO = any("‹(?:хочу|хотел\\p{L}*|хотим) (?:понять|�
   "‹вопрос (?:по|про|о|насч[её]т)›|‹(?:same (?:problem|issue)|та же проблема|такая же проблема|stuck|застрял\\p{L}*|завис\\p{L}*)›");
 // Where they trade, not a call: "Кто продаёт usdt в лс — сразу в бан".
 const TRADES_IN_DM = new RegExp(re(`‹${TRADE_3RD}(?: (?!${CALL_WORD}›)[\\p{L}-]+){0,2}? (?:в|во) (?:лс|личк\\p{L}*|личн\\p{L}*|директ)›`).source, "giu");
+// A condition before the call asks for replies too: "Если нужна инструкция — пишите", "If you need help, DM me". Questions are
+// an ad's own call ("Куплю USDT. Если есть вопросы — пишите в лс") unless the author tells where they trade ("I buy BTC on
+// Bybit. If you have questions, DM me").
+const ifCall = (topic: string) => new RegExp(re(`‹(?:если|if) (?:[\\p{L}-]+ ){0,3}?(?:${topic})\\p{L}*\\s?[,:—–-]?\\s?`
+  + `(?:${CALL_WORD}|обраща\\p{L}*)(?: (?:мне|нам|me|us))?(?: (?:в лс|в личку|в личные|in dm|in pm|privately))?›`).source, "giu");
+const IF_HELP_CALL = ifCall("инструкц|помощ|совет|подсказ|help›|advice›|tips›|instructions?›");
+const IF_QUESTION_CALL = ifCall("вопрос|questions?›");
+// A DM refused is no call: "в личке не торгую", "never via DM", "no DMs".
+const NO_DM = new RegExp(re("‹(?:(?:в|во) (?:лс|личк\\p{L}*|личн\\p{L}*|директ) (?:не|никогда не) [\\p{L}-]+|(?:не|никогда не) (?:[\\p{L}-]+ )?(?:в|во|через) (?:лс|личк\\p{L}*|личн\\p{L}*|директ)"
+  + "|(?:never|not|don['’]?t|do not|won['’]?t) (?:[\\p{L}-]+ )?(?:via|in|through|over|by) (?:dms?|pms?|private)|no (?:dms?|pms?)›)").source, "giu");
+// Where or how often the author trades describes a habit, not an ad: "Покупаю usdt у обменника возле дома", "I buy USDT on Binance P2P".
+const OWN_VENUE = any("‹(?:через|via|on|at|на|в|у|with) (?:[\\p{L}-]+ )?(?:binance|bybit|okx|kraken|htx|huobi|kucoin|mexc|bitget|gate|coinbase|p2p|п2п|бирж\\p{L}*|exchanges?|обменник\\p{L}*|тинькофф\\p{L}*|тиньк\\p{L}*|сбер\\p{L}*|банк\\p{L}*|bank|wallet|кошел\\p{L}*|приложени\\p{L}*|app)›",
+  "‹(?:обычно|всегда|регулярно|постоянно|каждую неделю|каждый месяц|каждый день|usually|always|regularly|every (?:week|month|day))›");
 const HELPER = any("‹кто(?:-нибудь| нибудь)? (?:может|сможет|готов)\\s?(?:[—–,-]|$)|‹кто(?:-нибудь| нибудь)? (?:может |сможет |готов )?помо(?:жет|чь)›(?! (?:разобраться|советом|понять))|‹(?:who|anyone|someone) (?:can |could )?help (?:me )?(?:with (?:it|this|that)›|›(?! (?:me )?(?:understand|figure)))");
 // A DM call, a contact or negotiation makes any intent an ad, and a bare "напишите" any but a wish. Good-rate or volume terms
 // do for an offer and for a question seeking a trader ("есть кто может продать юстд по адекватному курсу?").
@@ -528,13 +552,14 @@ function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
   const intents = tradeIntents(text);
   if (!intents.length) return false;
   if (INFO.test(text)) return false;
-  const calls = text.replace(ADMIN_CALL, " ").replace(ASKS_REPLIES, " ").replace(SOURCE_LINK, " ").replace(TRADES_IN_DM, " ");
+  const ownVenue = OWN_VENUE.test(text);
+  const calls = text.replace(ADMIN_CALL, " ").replace(IF_HELP_CALL, " ").replace(ownVenue ? IF_QUESTION_CALL : /(?!)/u, " ").replace(ASKS_REPLIES, " ").replace(SOURCE_LINK, " ").replace(TRADES_IN_DM, " ").replace(NO_DM, " ");
   const dm = callsToDm(calls.replace(WEB_LINK, " ")) || CONTACT.test(calls) || NEGOTIATE.test(calls);
   // "Нужно поменять юсдт на рубли, кто поможет — пишите" seeks a trader, so a wish takes a bare call too.
   const reply = REPLY_CALL.test(calls);
   const helper = HELPER.test(text);
   const terms = sentences(text).filter((part) => !(isQuestion(part) && VENUE_QUESTION.test(part)));
-  const offerTerms = terms.some((part) => OFFER_TERMS.test(part) || RATE.test(part));
+  const offerTerms = !ownVenue && terms.some((part) => OFFER_TERMS.test(part) || RATE.test(part));
   if (!intents.some(({ kind, question, rate }) => dm || (kind !== "want" || helper) && reply
     || kind === "ask" && question && rate || kind === "offer" && offerTerms)) return false;
   if (sentences(text).some((part) => isQuestion(part) && TRADE_DOUBT.test(part))) return false;
