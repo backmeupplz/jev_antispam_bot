@@ -1,5 +1,5 @@
 // #124: the kept RU buy request (scored 0.6407, posted twice in one group) and
-// close variants. Controls are the #124 harness cohort; each is sent once.
+// close variants. #142's crypto_trade_ask pattern deletes these on a single send. Controls are the #124 harness cohort; each is sent once.
 export const usdtAsk = "Ребята привет , есть кто может продать юстд по адекватному курсу ?";
 
 export const usdtAskVariants = [
@@ -7,6 +7,16 @@ export const usdtAskVariants = [
   "РЕБЯТА ПРИВЕТ!!! есть кто может продать юстд по адекватному курсу??? 💵💵",
   // Latin lookalikes and a zero-width space inside a word.
   "Peбятa привет, есть кто может прo​дать юстд по адекватному курсу?",
+];
+
+// The same ask without its rate terms has no deal cue, so the #142 pattern leaves it to the model and the
+// repeat rule; the #124 repeat tests use it so its first copy stays kept.
+export const usdtBareAsk = "Ребята привет , есть кто может продать юстд ?";
+
+export const usdtBareAskVariants = [
+  "ребята привет есть кто может продать юстд",
+  "РЕБЯТА ПРИВЕТ!!! есть кто может продать юстд??? 💵💵",
+  "Peбятa привет, есть кто может прoдать юстд?",
 ];
 
 export const usdtControls = [

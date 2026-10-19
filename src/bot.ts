@@ -289,8 +289,8 @@ export function registerBotHandlers(bot: Bot, {
       }
       const effective = escalatedScore(probability ?? 0, copies.length);
       const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
-      // Ad shapes Laya keeps under the gate (#126): side-gig recruitment and
-      // first-person @…bot testimonials, unless the model is confident it is benign.
+      // Ad shapes Laya keeps under the gate (#126, #142): side-gig recruitment,
+      // first-person @…bot testimonials and P2P crypto trade asks, unless the model is confident it is benign.
       const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined : promoPattern(message);
       const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
       if (pattern) logger.info(JSON.stringify({

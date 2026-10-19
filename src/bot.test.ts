@@ -24,9 +24,10 @@ import { heartFixtures, heartTitle, heartSource } from "./fixtures/heart-profile
 import { mediaFixtures, mediaMessage, mediaUpdate, mediaProfile, mediaCampaign } from "./fixtures/media-profile";
 import { channelPosts, repeatControls, repeatedOffer } from "./fixtures/repeat-campaign";
 import { directCryptoTradeControls } from "./fixtures/crypto-trade-courier";
-import { shortRepeats, usdtAsk, usdtAskVariants, usdtControls } from "./fixtures/usdt-repeat";
+import { shortRepeats, usdtAsk, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
 import { botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
+import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -2181,11 +2182,11 @@ const deleted = (h: { calls: { method: string; payload: Record<string, unknown> 
 test("repeat sends of the #124 ask escalate across groups and delete the earlier copies", async () => {
   const h = auditHarness();
   h.setAnswer(keepAt(0.6407));
-  await h.send({ text: usdtAsk });
+  await h.send({ text: usdtBareAsk });
   expect(deleted(h)).toEqual([]);
-  await h.send({ chat: groupB, text: usdtAskVariants[1] });
+  await h.send({ chat: groupB, text: usdtBareAskVariants[1] });
   expect(deleted(h)).toEqual([[groupB.id, 2], [group.id, 1]]);
-  await h.send({ chat: groupC, text: usdtAskVariants[2] });
+  await h.send({ chat: groupC, text: usdtBareAskVariants[2] });
   // Handled copies are never retried; the third copy goes on arrival.
   expect(deleted(h)).toEqual([[groupB.id, 2], [group.id, 1], [groupC.id, 3]]);
   expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep", "keep"]);
@@ -2201,8 +2202,8 @@ test("repeat sends of the #124 ask escalate across groups and delete the earlier
   ]);
   // Each copy is reported with its own content and counted like any other deletion.
   expect(h.confirmed).toEqual(["2", "1", "3"]);
-  expect(h.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAsk + "</pre>");
-  expect(h.prepared.get("2")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAskVariants[1] + "</pre>");
+  expect(h.prepared.get("1")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtBareAsk + "</pre>");
+  expect(h.prepared.get("2")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtBareAskVariants[1] + "</pre>");
   await h.stats.flush();
   expect(h.batches.flatMap((batch) => batch.deletions).map((d) => [d.chatId, d.messageId, d.source])).toEqual([
     [String(groupB.id), "2", "jev"], [String(group.id), "1", "jev"], [String(groupC.id), "3", "jev"]]);
@@ -2213,15 +2214,15 @@ test("repeat sends of the #124 ask escalate across groups and delete the earlier
 test("the #124 incident posted twice in one group deletes both copies; a model delete takes earlier copies too", async () => {
   const h = harness();
   h.setAnswer(keepAt(0.6407));
-  await h.send({ text: usdtAsk });
+  await h.send({ text: usdtBareAsk });
   await h.send({ text: "в другой теме обсуждаем совсем другое и довольно долго" });
-  await h.send({ text: usdtAsk });
+  await h.send({ text: usdtBareAsk });
   expect(deleted(h)).toEqual([[group.id, 1], [group.id, 3]]);
   const m = harness();
   m.setAnswer(keepAt(0.7));
-  await m.send({ text: usdtAsk });
+  await m.send({ text: usdtBareAsk });
   m.setAnswer(assessment(true));
-  await m.send({ chat: groupB, text: usdtAsk });
+  await m.send({ chat: groupB, text: usdtBareAsk });
   expect(deleted(m)).toEqual([[groupB.id, 2], [group.id, 1]]);
   expect(m.logs.find((log) => log.event === "repeat_send_detected")?.decision).toBe("delete");
   expect(m.logs.find((log) => log.event === "spam_deleted")?.rule).toBe("repeat_send");
@@ -2232,12 +2233,12 @@ test("controls sent once, short repeats, benign-scored repeats and other account
   const h = harness();
   h.setAnswer(keepAt(0.79));
   // One account sends each control once, spread over three groups.
-  for (const [index, text] of [...usdtControls, ...directCryptoTradeControls, usdtAsk].entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  for (const [index, text] of [...usdtControls, ...directCryptoTradeControls, usdtBareAsk].entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
   for (const text of shortRepeats) for (const chat of [group, groupB, groupC, group]) await h.send({ chat, text });
   // Different accounts sending the same text are not one account repeating it.
-  for (const [index, chat] of [group, groupB, groupC].entries()) await h.send({ chat, from: { ...user, id: 300 + index }, text: usdtAsk });
+  for (const [index, chat] of [group, groupB, groupC].entries()) await h.send({ chat, from: { ...user, id: 300 + index }, text: usdtBareAsk });
   h.setAnswer(keepAt(0.4999));
-  for (const chat of [group, groupB, groupC, group, groupB]) await h.send({ chat, text: usdtAskVariants[0] + " и ещё раз" });
+  for (const chat of [group, groupB, groupC, group, groupB]) await h.send({ chat, text: usdtBareAskVariants[0] + " и ещё раз" });
   expect(deleted(h)).toEqual([]);
   expect(h.logs.filter((log) => log.event === "repeat_send_detected")).toEqual([]);
   await h.stats.stop();
@@ -2246,19 +2247,19 @@ test("controls sent once, short repeats, benign-scored repeats and other account
 test("failed classifications and copies edited away never count; edits keep their copy", async () => {
   const h = harness();
   h.setClassifyError();
-  await h.send({ text: usdtAsk });
+  await h.send({ text: usdtBareAsk });
   const ok = harness();
   ok.setAnswer(keepAt(0.6407));
-  await ok.send({ text: usdtAsk });
+  await ok.send({ text: usdtBareAsk });
   ok.setAnswer(keepAt(0.3));
   await ok.send({ message_id: 1, text: "извините, ошибся чатом, уже не актуально, всем спасибо" }, true);
   ok.setAnswer(keepAt(0.6407));
-  const second = await ok.send({ chat: groupB, text: usdtAsk });
+  const second = await ok.send({ chat: groupB, text: usdtBareAsk });
   expect(deleted(ok)).toEqual([]);
   // An unchanged edit is the same copy, not a second send.
-  await ok.send({ chat: groupB, message_id: second, text: usdtAsk }, true);
+  await ok.send({ chat: groupB, message_id: second, text: usdtBareAsk }, true);
   expect(deleted(ok)).toEqual([]);
-  const third = await ok.send({ chat: groupC, text: usdtAsk });
+  const third = await ok.send({ chat: groupC, text: usdtBareAsk });
   expect(deleted(ok)).toEqual([[groupC.id, third], [groupB.id, second]]);
   await h.stats.stop(); await ok.stats.stop();
 });
@@ -2267,13 +2268,13 @@ test("copies recorded before a restart still count and are reported with the mat
   const repeats = new MemoryRepeatStore();
   const before = auditHarness(undefined, repeats);
   before.setAnswer(keepAt(0.6407));
-  await before.send({ message_id: 40, text: usdtAsk });
+  await before.send({ message_id: 40, text: usdtBareAsk });
   await before.stats.stop();
   const after = auditHarness(undefined, repeats);
   after.setAnswer(keepAt(0.6407));
-  await after.send({ chat: groupB, message_id: 41, text: usdtAskVariants[0] });
+  await after.send({ chat: groupB, message_id: 41, text: usdtBareAskVariants[0] });
   expect(deleted(after)).toEqual([[groupB.id, 41], [group.id, 40]]);
-  expect(after.prepared.get("40")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtAskVariants[0] + "</pre>");
+  expect(after.prepared.get("40")).toBe('<a href="tg://user?id=12">private sender name</a>\n<pre>' + usdtBareAskVariants[0] + "</pre>");
   expect(after.confirmed).toEqual(["41", "40"]);
   await after.stats.stop();
 });
@@ -2281,19 +2282,19 @@ test("copies recorded before a restart still count and are reported with the mat
 test("repeat deletes are keyed by chat and message; a failed delete elsewhere is never retried", async () => {
   const h = harness();
   h.setAnswer(keepAt(0.6407));
-  await h.send({ message_id: 7, text: usdtAsk });
+  await h.send({ message_id: 7, text: usdtBareAsk });
   await h.send({ chat: groupB, message_id: 7, text: "совсем другой вопрос про аренду квартиры на месяц, кто сдаёт?" });
   h.failedDeletes.add(8);
   await h.send({ chat: groupB, message_id: 8, text: "и ещё совсем другой вопрос про то, где поесть недорого" });
-  await h.send({ chat: groupC, message_id: 9, text: usdtAsk });
+  await h.send({ chat: groupC, message_id: 9, text: usdtBareAsk });
   expect(deleted(h)).toEqual([[groupC.id, 9], [group.id, 7]]);
   const f = harness();
   f.setAnswer(keepAt(0.6407));
-  const first = await f.send({ text: usdtAsk });
+  const first = await f.send({ text: usdtBareAsk });
   f.failedDeletes.add(first);
-  const second = await f.send({ chat: groupB, text: usdtAsk });
+  const second = await f.send({ chat: groupB, text: usdtBareAsk });
   expect(f.logs.filter((log) => log.event === "delete_failed")).toEqual([expect.objectContaining({ chatId: group.id, messageId: first })]);
-  const third = await f.send({ chat: groupC, text: usdtAsk });
+  const third = await f.send({ chat: groupC, text: usdtBareAsk });
   expect(deleted(f)).toEqual([[groupB.id, second], [group.id, first], [groupC.id, third]]);
   await h.stats.stop(); await f.stats.stop();
 });
@@ -2301,19 +2302,19 @@ test("repeat deletes are keyed by chat and message; a failed delete elsewhere is
 test("an edit that is no longer moderated forgets its copy; senders exempt elsewhere keep their copies there", async () => {
   const h = harness();
   h.setAnswer(keepAt(0.6407));
-  const first = await h.send({ text: usdtAsk });
+  const first = await h.send({ text: usdtBareAsk });
   await h.send({ message_id: first, text: undefined, location: { latitude: 1, longitude: 2 } }, true);
   expect(h.skipped().map((log) => log.reason)).toEqual(["no_text_or_caption"]);
-  await h.send({ chat: groupB, text: usdtAsk });
+  await h.send({ chat: groupB, text: usdtBareAsk });
   expect(deleted(h)).toEqual([]);
   const a = harness();
   a.setAnswer(keepAt(0.6407));
-  const earlier = await a.send({ text: usdtAsk });
+  const earlier = await a.send({ text: usdtBareAsk });
   // Promoted in the first group after posting (Telegram reports it): that copy stays.
   a.setMemberStatusIn(group.id, "administrator");
   await a.bot.handleUpdate({ update_id: 900, chat_member: { chat: group, from: user, date: 1,
     old_chat_member: { status: "member", user }, new_chat_member: { status: "administrator", user } } } as unknown as Update);
-  const later = await a.send({ chat: groupB, text: usdtAsk });
+  const later = await a.send({ chat: groupB, text: usdtBareAsk });
   expect(deleted(a)).toEqual([[groupB.id, later]]);
   expect(a.logs.find((log) => log.event === "repeat_copy_skipped")).toEqual({ event: "repeat_copy_skipped", chatId: group.id, reason: "exempt_sender" });
   expect(earlier).toBe(1);
@@ -2376,5 +2377,45 @@ test("a pattern delete also removes the account's earlier kept copy of the same 
   expect(deleted(h)).toEqual([[group.id, 2], [groupB.id, 1]]);
   expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.chatId, log.rule, log.deletedMessageCount, log.otherChatCount]))
     .toEqual([[group.id, "side_gig_offer", 2, 1]]);
+  await h.stats.stop();
+});
+
+// #142: single-send P2P crypto trade asks (incident texts, SYNTHETIC routing).
+test("the single-send USDT asks at 0.7404 and 0.6407 and an edit into one are deleted by the crypto trade pattern", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.7404));
+  await h.send({ text: cryptoTradeIncident });
+  h.setAnswer(keepAt(0.6407));
+  await h.send({ chat: groupB, text: usdtAsk });
+  const edited = await h.send({ text: "Всем привет" });
+  // A new text: neither a spam-cache hit nor a repeat of the earlier asks.
+  h.setAnswer(keepAt(0.7404));
+  await h.send({ message_id: edited, text: cryptoTradeParaphrases[0] }, true);
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2], [group.id, 3]]);
+  expect(h.logs.filter((log) => log.event === "message_analyzed").map((log) => log.decision)).toEqual(["keep", "keep", "keep", "keep"]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.7404, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: groupB.id, messageId: 2, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.6407, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 3, isEdited: true, pattern: "crypto_trade_ask", confidence: 0.7404, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "repeat_send_detected")).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount]))
+    .toEqual([[1, "crypto_trade_ask", 1], [2, "crypto_trade_ask", 1], [3, "crypto_trade_ask", 1]]);
+  expect(h.confirmed).toEqual(["1", "2", "3"]);
+  expect(JSON.stringify(h.logs)).not.toContain("усдт");
+  await h.stats.stop();
+});
+
+test("crypto trade controls at 0.79 and requested answers stay kept; an ask under the floor only logs", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of [...cryptoTradeControls, ...usdtControls, ...directCryptoTradeControls].entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  for (const { question, answer } of cryptoTradeRepliedAnswers) await h.send({ text: answer, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: question } });
+  h.setAnswer(keepAt(0.29));
+  const floor = await h.send({ text: cryptoTradeIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.29, decision: "keep" },
+  ]);
   await h.stats.stop();
 });
