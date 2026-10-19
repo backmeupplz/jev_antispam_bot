@@ -337,9 +337,9 @@ function doubtsTheOffer(text: string): boolean {
 // --- P2P crypto trade ask (#142): a buy/sell intent for a crypto asset + a deal cue. ---
 // A token that is also a common word ("5 ton truck", "TRX тренажер", "эфир на радио", "Solana beach towel") is the asset only
 // before the end of a clause, an amount, a connector, a network, terms, a trade verb or a call; a connector may not lead to media.
-const AMBIGUOUS_NEXT = "(?=\\s?(?:[.,!?;:)/—–\\n-]|$)|\\s(?:\\d|\\p{Sc}"
+const AMBIGUOUS_NEXT = "(?=\\s?(?:[.,!?;:)/&+—–\\n-]|$)|\\s(?:\\d|\\p{Sc}"
   + "|(?:на|в|за|по|у|с|и|или|через|from|for|at|to|into|in|on|via|and|or)\\s(?!(?:[\\p{L}-]+\\s)?(?:радио|тв›|телевид|телеканал|реклам|ютуб|youtube|стрим|канал))"
-  + "|(?:срочно|быстро|дешево|дешевле|дорого|недорого|ниже|выше|оптом|любы\\p{L}*|любой|сегодня|сейчас|bulk|cheap|fast|quick|below|above|any›|today|now|asap|sol›|coins?›|монет|токен|tokens?›|network|сет[ьи]›|trc|erc|bep"
+  + "|(?:срочно|быстро|дешево|дешевле|дорого|недорого|выгодн|налич|нал›|кэш|cash|крупн|больш|много|лично|моментальн|мгновенн|instant|right now|tonight|при встреч|от \\d|до \\d|без (?:комисс|накрут|посредник|переплат|kyc|верифик)|with (?:no|zero|low)›|no fees?›|ниже|выше|оптом|любы\\p{L}*|любой|сегодня|сейчас|bulk|cheap|fast|quick|below|above|any›|today|now|asap|sol›|coins?›|монет|токен|tokens?›|network|сет[ьи]›|trc|erc|bep"
   + "|кто|куп|прод|обмен|поменя|меня|скуп|выкуп|sell|buy|wtb|wts|exchang|swap|договор|торг|пиш|напиш|отпиш|стучи|маякни|dm›|pm›|write|text|message|msg|contact|hmu|inbox)))";
 // Lookalikes fold first, so "уcдт" with a Latin c is "усдт"; "юстд" is a common transposition.
 const ASSET = "‹(?:(?:u|ю|у)(?:s|с|\\$)(?:d|д)(?:t|т)\\p{L}{0,4}|(?:u|ю|у)(?:s|с)(?:t|т)(?:d|д)|(?:ю|у)сд(?:э|е)|usdc|(?:ю|у)сдц|тезер\\p{L}*|тетер\\p{L}*|tether"
@@ -348,7 +348,7 @@ const ASSET = "‹(?:(?:u|ю|у)(?:s|с|\\$)(?:d|д)(?:t|т)\\p{L}{0,4}|(?:u|ю|
   + `|(?:эфир(?:а|у|ом)?|(?<!‹a )ton|trx|tron|solana)›${AMBIGUOUS_NEXT})›`
   // Crypto-themed goods are no asset, hyphenated or not: "криптокошелёк", "биткоин-кошелёк", "BTC майнер", "crypto wallet Ledger";
   // a network or fiat pair still is ("USDT-TRC20").
-  + "(?!-(?!(?:trc|erc|bep|ton|usdt|usd|rub|руб)\\p{L}*\\p{N}*›)\\p{L})(?!\\s(?:кошел|майнер|майнинг|асик|ферм|wallet|miner|mining|rigs?›|asics?›))";
+  + "(?!-(?!(?:trc|erc|bep|ton|usdt|usd|rub|руб)\\p{L}*\\p{N}*›)\\p{L})(?!\\s(?:(?:кошел|wallet)(?![\\p{L}\\s-]{0,4}(?:в|на|to|-)\\s?(?:кошел|wallet))|майнер|майнинг|асик|ферм|miner|mining|rigs?›|asics?›))";
 const ASSETS = re(ASSET);
 const TRADE_INF = "(?:продать|купить|обменять|поменять|выкупить|отдать)";
 const TRADE_3RD = "(?:прода[её]т|продаст|продают|купит|покупает|покупают|скупает|обменяет|обменяют|обменивает|поменяет|поменяют|меняет|меняют|отдаст)";
@@ -529,15 +529,19 @@ const WEB_LINK = /https?:\/\/(?!(?:www\.)?(?:t|wa|telegram)\.me\/)\S+/gu;
 // The ad's handle closes it; addressing someone opens the message: "@vasya, продашь usdt?".
 const ADDRESS = /^@[a-z][a-z0-9_]{3,}/u;
 // Warnings about such asks: "не продавайте usdt тем, кто пишет в лс", "never buy crypto from DMs".
-// Rule reminders and reports quoting an ad, quoted or not: "Объявления типа «куплю usdt, пишите в лс» здесь запрещены", "…— бан",
-// "Этот тип опять пишет 'кто продаст usdt, пишите'", "Posts like 'selling USDT, DM me' are not allowed".
+// Reports of a repeat poster quoting the ad: "Этот тип опять пишет 'кто продаст usdt, пишите'".
 const TRADE_WARNING = any("‹(?:не|никогда не) (?:покупайте|продавайте|меняйте|обменивайте|переводите|отправляйте|соглашайтесь)›",
   "‹(?:never|don['’]?t|do not) (?:buy|sell|send|trade|exchange|swap)›",
-  // An ad's plea ("не забаньте", "не запрещено") is no rule.
+  "‹(?:опять|снова|постоянно|вечно|again|keeps?) (?:[\\p{L}-]+ ){0,2}?(?:пишет|пишут|постит|постят|кидает|кидают|рассылает|рассылают|спамит|спамят|posting|posts|spamming)›");
+// Rule reminders quoting an ad, quoted or not: "Объявления типа «куплю usdt, пишите в лс» здесь запрещены", "…— бан", "Posts like
+// 'selling USDT, DM me' are not allowed". An ad's plea ("не забаньте", "не запрещено") is no rule.
+const TRADE_RULE = any(
   "(?<!‹не )‹(?:запрещ\\p{L}*|против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются|ться|ет)|удалим|бан|в бан|забан\\p{L}*|баним|банят|банить)›"
   + "|‹нельзя (?:[\\p{L}-]+ )?(?:писать|продавать|покупать|размещать|рекламировать|публиковать|предлагать|постить|торговать)›|‹(?:здесь|тут) нельзя›",
-  "‹(?:опять|снова|постоянно|вечно|again|keeps?) (?:[\\p{L}-]+ ){0,2}?(?:пишет|пишут|постит|постят|кидает|кидают|рассылает|рассылают|спамит|спамят|posting|posts|spamming)›",
   "‹(?:(?:is|are)(?:n['’]?t| not) allowed|not allowed|banned|prohibited|forbidden|against (?:the )?rules|will be (?:deleted|removed|banned))›");
+// …but a deal's own terms forbid things too: "Оплата от третьих лиц запрещена", "Third-party payments are not allowed".
+const DEAL_RULE = re("‹(?:оплат|плат[её]ж|перевод|третьи\\p{L}* лиц|чужи\\p{L}* карт|payments?›|transfers?›|third[- ]part)");
+const tradeRule = (text: string) => sentences(text).some((part) => TRADE_RULE.test(part) && !DEAL_RULE.test(part));
 // The asker's doubt about a trade offer, not an offer: "это нормальный курс?", "Is this legit?".
 const TRADE_DOUBT = any("‹это (?:[\\p{L}-]+ ){0,2}?(?:нормальн|норм›|правд|реальн|законн|безопасн|честн)",
   "‹(?:стоит ли|можно ли довер|доверя)", "‹(?:legit|legitimate|safe|a scam|trustworthy)\\s?\\?", "‹(?:is|are) (?:this|that|it|these|they) (?:[\\p{L}-]+ ){0,2}(?:ok|okay|normal|legit|real|safe|a scam)›");
@@ -581,7 +585,7 @@ const HELPER = any("‹кто(?:-нибудь| нибудь)? (?:может|см
 // A DM call, a contact or negotiation makes any intent an ad, and a bare "напишите" any but a wish. Good-rate or volume terms
 // do for an offer and for a question seeking a trader ("есть кто может продать юстд по адекватному курсу?").
 function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
-  if (TRADE_WARNING.test(text) || ADDRESSED.test(text) || ADDRESS.test(text)) return false;
+  if (TRADE_WARNING.test(text) || tradeRule(text) || ADDRESSED.test(text) || ADDRESS.test(text)) return false;
   const intents = tradeIntents(text);
   if (!intents.length) return false;
   if (INFO.test(text)) return false;

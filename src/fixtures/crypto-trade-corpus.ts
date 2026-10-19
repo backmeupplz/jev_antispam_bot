@@ -1,4 +1,4 @@
-// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 11 and the fe81e3b review), pinned with their exact outcome.
+// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 11 and the fe81e3b and e7df6ab reviews), pinned with their exact outcome.
 // A rule change that fixes one side and opens a hole on the other fails the corpus test.
 export const cryptoCorpusAds = [
   "Всем привет, есть кто продаёт усдт? Напишите, договоримся.",
@@ -808,6 +808,20 @@ export const cryptoCorpusAds = [
   "Куплю USDT, пишите в лс, админ в курсе",
   "Продам usdt, пишите в лс, не забаньте пж",
   "Обмен USDT на рубли, пишите, удаляю вечером",
+  // e7df6ab review: terms after an ambiguous token, wallet-to-wallet and a deal's own rules.
+  "Продам TRX выгодно, пишите",
+  "Продам TON без комиссии, пишите в лс",
+  "Продам TON крупными суммами, пишите",
+  "Продам TON от 100$, пишите в лс",
+  "Selling TON with no fees, DM me",
+  "Selling Solana instantly, DM me",
+  "Продам TON + USDT, пишите в лс",
+  "Selling USDT wallet to wallet, DM me",
+  "Куплю USDT кошелёк на кошелёк, пишите",
+  "Продам USDT по хорошему курсу, пишите в лс. Оплата от третьих лиц запрещена",
+  "Куплю USDT дорого, пишите в лс. Платежи с чужих карт запрещены",
+  "Selling USDT at a good rate, DM me. Third-party payments are not allowed",
+  "Buying USDT, any amount, DM me. Third party payments not allowed",
 ];
 
 // Questions, market talk, goods priced in crypto, warnings, reports, doubts, mentions and news.
@@ -1661,6 +1675,9 @@ export const cryptoCorpusKeeps = [
   "Рекламные посты вроде «продам usdt пишите в лс» удаляем без предупреждения",
   "Такие сообщения как куплю usdt пишите в лс — нарушение правил",
   "Продажа USDT в чате запрещена, пишите админу если видите",
+  // e7df6ab review: terms after an ambiguous token, wallet-to-wallet and a deal's own rules.
+  "Продам TRX без коробки, пишите",
+  "Selling 5 ton truck with crane, DM me",
 ];
 
 // Known residuals: ads left to the model (no deal cue, a cash-only ask, a far-off asset, an ad that opens with a warning,
