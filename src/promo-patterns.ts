@@ -37,7 +37,7 @@ const any = (...sources: string[]) => re(sources.join("|"));
 
 // Quoted spans are someone else's words, e.g. a warning that quotes the ad.
 // Spans are bounded so unclosed quotes stay linear on long input.
-const QUOTED = /«[^»]{8,600}»|“[^”]{8,600}”|„[^“”]{8,600}[“”]|"[^"]{8,600}"/gu;
+const QUOTED = /«[^»]{8,600}»|“[^”]{8,600}”|„[^“”]{8,600}[“”]|‘[^’]{8,600}’|"[^"]{8,600}"/gu;
 // "Имя Фамилия: …" is a copied message with its author: the shape of a moderator's repost. Only a
 // name counts (capitalised, then lowercase: "Анна-Мария", "О'Нил", "McDonald"), so "СРОЧНО НУЖНЫ ЛЮДИ:"
 // stays an ad header, and so does a capitalised header word ("Hiring Now:", "Легкие Деньги:").
@@ -335,12 +335,20 @@ function doubtsTheOffer(text: string): boolean {
 }
 
 // --- P2P crypto trade ask (#142): a buy/sell intent for a crypto asset + a deal cue. ---
+// A token that is also a common word ("5 ton truck", "TRX тренажер", "эфир на радио", "Solana beach towel") is the asset only
+// before the end of a clause, an amount, a connector, a network, terms, a trade verb or a call; a connector may not lead to media.
+const AMBIGUOUS_NEXT = "(?=\\s?(?:[.,!?;:)/—–\\n-]|$)|\\s(?:\\d|\\p{Sc}"
+  + "|(?:на|в|за|по|у|с|и|или|через|from|for|at|to|into|in|on|via|and|or)\\s(?!(?:[\\p{L}-]+\\s)?(?:радио|тв›|телевид|телеканал|реклам|ютуб|youtube|стрим|канал))"
+  + "|(?:срочно|быстро|дешево|дешевле|дорого|недорого|ниже|выше|оптом|любы\\p{L}*|любой|сегодня|сейчас|bulk|cheap|fast|quick|below|above|any›|today|now|asap|sol›|coins?›|монет|токен|tokens?›|network|сет[ьи]›|trc|erc|bep"
+  + "|кто|куп|прод|обмен|поменя|меня|скуп|выкуп|sell|buy|wtb|wts|exchang|swap|договор|торг|пиш|напиш|отпиш|стучи|маякни|dm›|pm›|write|text|message|msg|contact|hmu|inbox)))";
 // Lookalikes fold first, so "уcдт" with a Latin c is "усдт"; "юстд" is a common transposition.
 const ASSET = "‹(?:(?:u|ю|у)(?:s|с|\\$)(?:d|д)(?:t|т)\\p{L}{0,4}|(?:u|ю|у)(?:s|с)(?:t|т)(?:d|д)|(?:ю|у)сд(?:э|е)|usdc|(?:ю|у)сдц|тезер\\p{L}*|тетер\\p{L}*|tether"
   + "|крипт(?:а|ы|у|е|ой|ою|о|о(?:валют|актив|монет)\\p{L}*)|crypto(?:s|currenc\\p{L}*)?|стейбл\\p{L}*|stable ?coins?|btc|биткоин(?:а|у|ом|е|ы|ов|ами)?|биткойн(?:а|у|ом|е|ы|ов|ами)?"
-  + "|битк(?:а|у|ом|и|ов|ами)?|биток|bitcoins?|eth|ethereum|эфириум(?:а|у|ом|е)?|эфир(?:а|у|ом)?|toncoin|тонкоин(?:а|у|ом|ы|ов)?|(?<!‹a )ton|trx|tron|bnb|solana|ltc|litecoin|xmr|monero)›"
-  // Crypto-prefixed goods are no asset: "криптокошелёк", "биткоин-кошелёк", "BTC-майнер"; a network or fiat pair still is ("USDT-TRC20").
-  + "(?!-(?!(?:trc|erc|bep|ton|usdt|usd|rub|руб)\\p{L}*\\p{N}*›)\\p{L})";
+  + "|битк(?:а|у|ом|и|ов|ами)?|биток|bitcoins?|eth|ethereum|эфириум(?:а|у|ом|е)?|toncoin|тонкоин(?:а|у|ом|ы|ов)?|bnb|ltc|litecoin|xmr|monero"
+  + `|(?:эфир(?:а|у|ом)?|(?<!‹a )ton|trx|tron|solana)›${AMBIGUOUS_NEXT})›`
+  // Crypto-themed goods are no asset, hyphenated or not: "криптокошелёк", "биткоин-кошелёк", "BTC майнер", "crypto wallet Ledger";
+  // a network or fiat pair still is ("USDT-TRC20").
+  + "(?!-(?!(?:trc|erc|bep|ton|usdt|usd|rub|руб)\\p{L}*\\p{N}*›)\\p{L})(?!\\s(?:кошел|майнер|майнинг|асик|ферм|wallet|miner|mining|rigs?›|asics?›))";
 const ASSETS = re(ASSET);
 const TRADE_INF = "(?:продать|купить|обменять|поменять|выкупить|отдать)";
 const TRADE_3RD = "(?:прода[её]т|продаст|продают|купит|покупает|покупают|скупает|обменяет|обменяют|обменивает|поменяет|поменяют|меняет|меняют|отдаст)";
@@ -521,8 +529,15 @@ const WEB_LINK = /https?:\/\/(?!(?:www\.)?(?:t|wa|telegram)\.me\/)\S+/gu;
 // The ad's handle closes it; addressing someone opens the message: "@vasya, продашь usdt?".
 const ADDRESS = /^@[a-z][a-z0-9_]{3,}/u;
 // Warnings about such asks: "не продавайте usdt тем, кто пишет в лс", "never buy crypto from DMs".
+// Rule reminders and reports quoting an ad, quoted or not: "Объявления типа «куплю usdt, пишите в лс» здесь запрещены", "…— бан",
+// "Этот тип опять пишет 'кто продаст usdt, пишите'", "Posts like 'selling USDT, DM me' are not allowed".
 const TRADE_WARNING = any("‹(?:не|никогда не) (?:покупайте|продавайте|меняйте|обменивайте|переводите|отправляйте|соглашайтесь)›",
-  "‹(?:never|don['’]?t|do not) (?:buy|sell|send|trade|exchange|swap)›");
+  "‹(?:never|don['’]?t|do not) (?:buy|sell|send|trade|exchange|swap)›",
+  // An ad's plea ("не забаньте", "не запрещено") is no rule.
+  "(?<!‹не )‹(?:запрещ\\p{L}*|против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются|ться|ет)|удалим|бан|в бан|забан\\p{L}*|баним|банят|банить)›"
+  + "|‹нельзя (?:[\\p{L}-]+ )?(?:писать|продавать|покупать|размещать|рекламировать|публиковать|предлагать|постить|торговать)›|‹(?:здесь|тут) нельзя›",
+  "‹(?:опять|снова|постоянно|вечно|again|keeps?) (?:[\\p{L}-]+ ){0,2}?(?:пишет|пишут|постит|постят|кидает|кидают|рассылает|рассылают|спамит|спамят|posting|posts|spamming)›",
+  "‹(?:(?:is|are)(?:n['’]?t| not) allowed|not allowed|banned|prohibited|forbidden|against (?:the )?rules|will be (?:deleted|removed|banned))›");
 // The asker's doubt about a trade offer, not an offer: "это нормальный курс?", "Is this legit?".
 const TRADE_DOUBT = any("‹это (?:[\\p{L}-]+ ){0,2}?(?:нормальн|норм›|правд|реальн|законн|безопасн|честн)",
   "‹(?:стоит ли|можно ли довер|доверя)", "‹(?:legit|legitimate|safe|a scam|trustworthy)\\s?\\?", "‹(?:is|are) (?:this|that|it|these|they) (?:[\\p{L}-]+ ){0,2}(?:ok|okay|normal|legit|real|safe|a scam)›");
