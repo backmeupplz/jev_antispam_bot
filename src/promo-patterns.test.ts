@@ -3,7 +3,7 @@ import { botTestimonialControls, botTestimonialIncident, botTestimonialParaphras
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
 import { usdtAsk, usdtAskVariants, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
-import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
+import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers, cryptoTradeReviewAds } from "./fixtures/crypto-trade-asks";
 import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
 import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
@@ -65,7 +65,10 @@ test("matching stays linear on long adversarial input", () => {
     "люди ищут ".repeat(400), "подработка нужна ".repeat(240), "возьму " + "любую ".repeat(680),
     "кто " + "а ".repeat(2040) + "продать usdt", "куплю " + "usdt ".repeat(800), "куплю " + "1".repeat(4000) + " usdt",
     "who " + "x ".repeat(2040) + "sells btc", "@aaaa ".repeat(800), "куплю usdt по " + "хорошему ".repeat(400) + "курсу",
-    "кто продаст usdt?" + " 1.5".repeat(1000)];
+    "кто продаст usdt?" + " 1.5".repeat(1000),
+    // Word-by-word gap checks: a run of digits, dots or underscores before a non-gap word stays linear (#142 round 2).
+    "куплю " + "_".repeat(70) + "ж usdt", "нужен " + "_".repeat(4000) + "ж usdt, пишите", "кто продаст " + "1.".repeat(2000) + "x usdt?",
+    "кто продаёт usdt? " + "напишите, кто ".repeat(280), "по " + "аааому ".repeat(580) + "курсу", "подробнее " + "@aaaa ".repeat(600)];
   // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI
   // runner can exceed the bound once, while backtracking is slow on every run.
   // The bound allows for the slower Easypanel build host (55 ms best warm run
@@ -139,7 +142,7 @@ test("an answer to an ordinary work question, with its rate and a DM offer, is a
 
 const crypto = "crypto_trade_ask";
 test("#142 and #124 single-send USDT asks match, standalone, as channel-post comments and forwarded", () => {
-  for (const text of [cryptoTradeIncident, usdtAsk, ...usdtAskVariants, directCryptoTradeOffer]) {
+  for (const text of [cryptoTradeIncident, usdtAsk, ...usdtAskVariants, directCryptoTradeOffer, ...cryptoTradeReviewAds]) {
     for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(text, patch))).toBe(crypto);
   }
 });

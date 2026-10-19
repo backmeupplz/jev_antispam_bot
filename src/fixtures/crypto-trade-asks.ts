@@ -21,8 +21,14 @@ export const cryptoTradeParaphrases = [
   "Hi all, who sells tether here? Text me",
   "Who wants to buy ETH? I have 2 ETH, hit me up",
   "I can exchange your dollars to USDT at the best rate, contact @fastswap_ex",
+];
+
+// Ads the reviews found missed, which the rule was then fixed for: not held out.
+export const cryptoTradeReviewAds = [
   "Всем привет, продаст кто-нибудь усдт? Напишите, договоримся.",
   "Ребята привет, есть кто может продать юстд по адекватной цене?",
+  "Ребята привет, есть кто может продать юсдт по приемлемому курсу?",
+  "Доброе утро, есть желающие продать усдт? Пишите, договоримся",
   "Buying USDT, DM me",
   "Who has USDT for sale? DM me",
   "Купим USDT по лучшему курсу, обращайтесь в лс",
