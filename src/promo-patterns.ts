@@ -508,7 +508,10 @@ const REPLY_CALL = any(`(?:^|[.!?,;:/\\n—–-]\\s?|‹если что )${CALL_
   "‹кому (?:надо|нужно|интересно)\\s?[—–-]?\\s?(?:пиш|напиш)\\p{L}*|‹(?:пиш|напиш)\\p{L}* кому (?:надо|нужно|интересно)›");
 // "Обсудим" or "let's talk" is a deal only standing alone or taken private; "Обсудим в чате" invites talk.
 const NEGOTIATE = any("‹(?:договор(?:имся|иться)|торг›|жду (?:ваших )?предложени\\p{L}*|negotiable|let['’]?s deal)",
-  "‹(?:обсудим|let['’]?s (?:talk|discuss))(?: (?:в лс|в личке|в личных|лично|privately|in (?:dm|pm|private)))?\\s?(?:[.!,;)\\n]|$)");
+  "‹(?:обсудим|let['’]?s (?:talk|discuss))(?: (?:детали|цену|условия|курс|сумму|объ[её]м|the (?:price|terms|details|rate)|price|terms|details|rate|numbers))?"
+  + "(?: (?:в лс|в личке|в личных|лично|в (?:телег\\p{L}*|тг|tg|whatsapp|ватсап\\p{L}*|вотсап\\p{L}*|telegram)|privately|in (?:dm|pm|private)|on (?:telegram|whatsapp|tg)))?"
+  // A leading "Обсудим, кто продаёт дешевле?" opens a chat question.
+  + "\\s?(?:[.!;)\\n]|,(?!\\s?(?:кто|где|как|какой|какие|почему|что|who|where|how|which|what|why)›)|$)");
 // A handle or chat link closing a line after punctuation is a contact ("курс выгодный, @exchanger_x"). After a word it is a
 // mention or a source ("покупаю через @wallet", "Подробнее: t.me/cryptonews_ru", "в канале @crypto_news"), and so is a bot.
 const SOURCE = "(?:подробн\\p{L}*|источник\\p{L}*|details|source|more|via|канал\\p{L}*|channel)";
@@ -541,9 +544,15 @@ const IF_QUESTION_CALL = ifCall("вопрос|questions?›");
 // A DM refused is no call: "в личке не торгую", "never via DM", "no DMs".
 const NO_DM = new RegExp(re("‹(?:(?:в|во) (?:лс|личк\\p{L}*|личн\\p{L}*|директ) (?:не|никогда не) [\\p{L}-]+|(?:не|никогда не) (?:[\\p{L}-]+ )?(?:в|во|через) (?:лс|личк\\p{L}*|личн\\p{L}*|директ)"
   + "|(?:never|not|don['’]?t|do not|won['’]?t) (?:[\\p{L}-]+ )?(?:via|in|through|over|by) (?:dms?|pms?|private)|no (?:dms?|pms?)›)").source, "giu");
-// Where or how often the author trades describes a habit, not an ad: "Покупаю usdt у обменника возле дома", "I buy USDT on Binance P2P".
-const OWN_VENUE = any("‹(?:через|via|on|at|на|в|у|with) (?:[\\p{L}-]+ )?(?:binance|bybit|okx|kraken|htx|huobi|kucoin|mexc|bitget|gate|coinbase|p2p|п2п|бирж\\p{L}*|exchanges?|обменник\\p{L}*|тинькофф\\p{L}*|тиньк\\p{L}*|сбер\\p{L}*|банк\\p{L}*|bank|wallet|кошел\\p{L}*|приложени\\p{L}*|app)›",
-  "‹(?:обычно|всегда|регулярно|постоянно|каждую неделю|каждый месяц|каждый день|usually|always|regularly|every (?:week|month|day))›");
+// Where a member buys, or advises trading, describes a habit or a tip, not an ad: "Покупаю usdt у обменника возле дома",
+// "I buy USDT on Binance P2P", "лучше через Bybit P2P". A seller naming their platform ("Продаю USDT на Bybit P2P") or how they
+// are paid ("Куплю USDT дорого, оплата на Сбер") still advertises. How often the author trades is a habit too.
+const VENUE_PLACE = re("‹(?:через|via|on|at|на|в|у|with) (?:[\\p{L}-]+ )?(?:binance|bybit|okx|kraken|htx|huobi|kucoin|mexc|bitget|gate|coinbase|p2p|п2п|бирж\\p{L}*|exchanges?|обменник\\p{L}*|тинькофф\\p{L}*|тиньк\\p{L}*|сбер\\p{L}*|банк\\p{L}*|bank|wallet|кошел\\p{L}*|приложени\\p{L}*|app)›");
+const VENUE_USER = re("‹(?:покупаю|меняю|обмениваю|беру|i (?:usually |always )?(?:buy|exchange|swap|get)|лучше|проще|удобнее|безопаснее|надёжнее|надежнее)›|‹(?:better|best|easiest|safest) (?:to|on|via|through|at|use)›");
+const PAID_VIA = /(?<![\p{L}\p{N}])(?:оплат|перевод|payment|transfer|pay(?![\p{L}]))[^,.;!?\n]*/giu;
+const HABIT = re("‹(?:обычно|всегда|регулярно|постоянно|каждую неделю|каждый месяц|каждый день|usually|always|regularly|every (?:week|month|day))›");
+const ownVenue = (text: string) => HABIT.test(text)
+  || sentences(text).some((part) => VENUE_USER.test(part) && VENUE_PLACE.test(part.replace(PAID_VIA, " ")));
 const HELPER = any("‹кто(?:-нибудь| нибудь)? (?:может|сможет|готов)\\s?(?:[—–,-]|$)|‹кто(?:-нибудь| нибудь)? (?:может |сможет |готов )?помо(?:жет|чь)›(?! (?:разобраться|советом|понять))|‹(?:who|anyone|someone) (?:can |could )?help (?:me )?(?:with (?:it|this|that)›|›(?! (?:me )?(?:understand|figure)))");
 // A DM call, a contact or negotiation makes any intent an ad, and a bare "напишите" any but a wish. Good-rate or volume terms
 // do for an offer and for a question seeking a trader ("есть кто может продать юстд по адекватному курсу?").
@@ -552,14 +561,14 @@ function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
   const intents = tradeIntents(text);
   if (!intents.length) return false;
   if (INFO.test(text)) return false;
-  const ownVenue = OWN_VENUE.test(text);
-  const calls = text.replace(ADMIN_CALL, " ").replace(IF_HELP_CALL, " ").replace(ownVenue ? IF_QUESTION_CALL : /(?!)/u, " ").replace(ASKS_REPLIES, " ").replace(SOURCE_LINK, " ").replace(TRADES_IN_DM, " ").replace(NO_DM, " ");
+  const habit = ownVenue(text);
+  const calls = text.replace(ADMIN_CALL, " ").replace(IF_HELP_CALL, " ").replace(habit ? IF_QUESTION_CALL : /(?!)/u, " ").replace(ASKS_REPLIES, " ").replace(SOURCE_LINK, " ").replace(TRADES_IN_DM, " ").replace(NO_DM, " ");
   const dm = callsToDm(calls.replace(WEB_LINK, " ")) || CONTACT.test(calls) || NEGOTIATE.test(calls);
   // "Нужно поменять юсдт на рубли, кто поможет — пишите" seeks a trader, so a wish takes a bare call too.
   const reply = REPLY_CALL.test(calls);
   const helper = HELPER.test(text);
   const terms = sentences(text).filter((part) => !(isQuestion(part) && VENUE_QUESTION.test(part)));
-  const offerTerms = !ownVenue && terms.some((part) => OFFER_TERMS.test(part) || RATE.test(part));
+  const offerTerms = !habit && terms.some((part) => OFFER_TERMS.test(part) || RATE.test(part));
   if (!intents.some(({ kind, question, rate }) => dm || (kind !== "want" || helper) && reply
     || kind === "ask" && question && rate || kind === "offer" && offerTerms)) return false;
   if (sentences(text).some((part) => isQuestion(part) && TRADE_DOUBT.test(part))) return false;

@@ -1,4 +1,4 @@
-// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 6), pinned with their exact outcome.
+// #142: the SYNTHETIC corpora written by the independent reviews (Astra rounds 1 to 7), pinned with their exact outcome.
 // A rule change that fixes one side and opens a hole on the other fails the corpus test.
 export const cryptoCorpusAds = [
   "Всем привет, есть кто продаёт усдт? Напишите, договоримся.",
@@ -741,6 +741,23 @@ export const cryptoCorpusAds = [
   "Продаю TON, let's talk.",
   "Selling USDT, not via DM, only in person",
   "Кто продаёт usdt? Пишите, договоримся",
+  // Round 7: payment methods and platforms in classifieds, "обсудим" with an object.
+  "Куплю USDT дорого, оплата на Сбер",
+  "Продам USDT недорого, через Binance P2P",
+  "Продаю USDT на Bybit P2P по хорошему курсу",
+  "Продам USDT по хорошему курсу, оплата на карту Сбер",
+  "Куплю USDT по выгодному курсу, перевод на Тинькофф",
+  "Продам USDT, любой объём, оплата через банк",
+  "WTB USDT, any amount, via bank transfer",
+  "Продам USDT за наличные, перевод на Тинькофф",
+  "Продам USDT, обсудим детали",
+  "Куплю USDT, обсудим цену",
+  "Продам USDT, обсудим условия",
+  "Куплю USDT, обсудим курс",
+  "Selling USDT, let's talk price",
+  "Buying USDT, let's talk terms",
+  "Продам USDT, обсудим в телеге",
+  "Selling USDT, best rate, via Binance P2P",
 ];
 
 // Questions, market talk, goods priced in crypto, warnings, reports, doubts, mentions and news.
@@ -1535,6 +1552,8 @@ export const cryptoCorpusKeeps = [
   "Продам биткоин-кошелёк Trezor, пишите",
   "Продаю BTC-майнер, торг",
   "Нужен совет: хочу купить USDT, пишите в лс",
+  // Round 7: a leading "Обсудим," that opens a chat question.
+  "Обсудим, кто продаёт USDT дешевле всех?",
 ];
 
 // Known residuals: ads left to the model (no deal cue, a cash-only ask, a far-off asset, an ad that opens with a warning,
