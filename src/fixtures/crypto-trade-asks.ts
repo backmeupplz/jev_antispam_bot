@@ -1,7 +1,7 @@
 // #142: the kept single-send USDT ask (scored 0.7404) and SYNTHETIC held-out paraphrases and controls.
 export const cryptoTradeIncident = "Всем привет, есть кто продаёт усдт? Напишите, договоримся.";
 
-// Wording that is not in the rule text: other assets, slang, lookalike letters, RU and EN.
+// Written before the rule and its reviews, not copied from the incident: other assets, slang, lookalike letters, RU and EN.
 export const cryptoTradeParaphrases = [
   "Добрый вечер! Кто-нибудь продаст тезер? Пишите в личку",
   "Куплю USDT TRC20 в любом объёме, оплата на карту, пишите в лс",

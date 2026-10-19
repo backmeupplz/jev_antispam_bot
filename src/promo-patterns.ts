@@ -347,9 +347,9 @@ const SOMEONE = "(?:-(?:нибудь|то|либо)| (?:нибудь|то))?";
 // "есть продавцы", "anyone selling", "who has USDT for sale". Venue questions ("кто знает, где купить") ask where, not who.
 const ASK = re(`‹кто${SOMEONE}(?: (?!(?:где|как|куда|откуда)›)[\\p{L}-]+){0,3}? (?:${TRADE_3RD}|${TRADE_INF})›|‹${TRADE_3RD} (?:ли )?кто${SOMEONE}›`
   + `|‹(?:есть )?желающи\\p{L}* (?:[\\p{L}-]+ )?${TRADE_INF}›`
-  + `|‹у кого (?:[\\p{L}-]+ ){0,2}?(?:${TRADE_INF}|${TRADE_3RD})›|‹у кого (?:[\\p{L}-]+ ){0,3}?на (?:продажу|обмен)›|‹(?:у кого (?:есть|найд[её]тся|будет)|есть (?:ли )?у кого)›`
+  + `|‹у кого (?:[\\p{L}-]+ ){0,2}?(?:${TRADE_INF}|${TRADE_3RD})›|‹у кого (?:[\\p{L}-]+ ){0,3}?на (?:продажу|обмен)›`
   + "|‹(?:anyone|anybody|someone|somebody|who|who['’]s)(?: here)?(?: (?:can|could|will|would|wants? to|willing to|is|who|that|interested in))?(?: (?:want|wanna|like) to)? (?:sells?|selling|buys?|buying|exchanges?|exchanging|swaps?|swapping)›"
-  + "|‹(?:anyone|anybody|someone|somebody|who)(?: here)? (?:has|have|got) (?:[\\p{L}\\p{N}]+ ){0,3}?(?:for sale|to sell|to spare)›|‹(?:anyone|anybody|who)(?: here)? (?:has|have|got)›"
+  + "|‹(?:anyone|anybody|someone|somebody|who)(?: here)? (?:has|have|got) (?:[\\p{L}\\p{N}]+ ){0,3}?(?:for sale|to sell|to spare)›"
   + "|‹looking for (?:someone|somebody|a person|a trader) to (?:sell|buy|exchange|swap)›"
   + "|‹(?:ищу|ищем|нужен|нужны|есть|looking for|need|any) (?:[\\p{L}-]+ )?(?:продав\\p{L}*|покупател\\p{L}*|обменник\\p{L}*|sellers?|buyers?)");
 // The author's own offer, in a classified's words: "куплю", "скупаем", "могу продать", "WTB", "will buy", "we buy".
@@ -364,6 +364,11 @@ const HEADER_OFFER = re("(?:^|[.!?\\n])\\s?(?:обмен(?:ник)?|продаж
 // The author's wish, which takes a DM call to be an ad: "хочу продать", "нужен юсдт", "интересует USDT", "looking to sell".
 const WANT = re(`‹(?:хочу|хотим|хотел\\p{L}{0,2} бы|нужно|надо|нужн[ао]|желаю) (?:[\\p{L}-]+ )?${TRADE_INF}›|‹(?:нуж(?:ен|на|ны|но)|ищу|ищем|интересует|need|want)›`
   + "|‹(?:i|we) (?:want to|wanna|need to|would like to|['’]d like to|am looking to|['’]m looking to|are looking to|['’]re looking to) (?:buy|sell|exchange|swap)›|‹(?:looking|ready) to (?:buy|sell|exchange|swap)›");
+// Who has the asset is a trade ask only when the message trades ("Есть у кого лишние usdt? Куплю…", "Anyone have USDT? need 500,
+// will pay cash, DM me"); "У кого есть крипта на Binance? Напишите, нужен совет по налогам" is a support question.
+const HAS = re("‹(?:у кого (?:есть|найд[её]тся|будет)|есть (?:ли )?у кого|(?:anyone|anybody|who)(?: here)? (?:has|have|got))›");
+const HAS_ALL = new RegExp(HAS.source, "giu");
+const TRADE_WORD = re("‹(?:куп|покуп|прода|обмен|меня[юе]|возьм|заплач|оплач|buy|sell|pay|paying|exchange|swap|(?:need|нужн[оаы]?|нужен) \\d)");
 const ASK_ALL = new RegExp(ASK.source, "giu");
 const OFFER_ALL = new RegExp(OFFER.source, "giu");
 const HEADER_OFFER_ALL = new RegExp(HEADER_OFFER.source, "giu");
@@ -372,7 +377,7 @@ const NOT_OWN = re("‹(?:не|ни|not|never|won['’]?t|don['’]?t|didn['’]
 const VENUE = re("‹(?:где|как|куда|откуда|через что|на как\\p{L}+|в как\\p{L}+|where|how|which [\\p{L}-]+)\\s(?:[\\p{L}-]+\\s){0,3}?$");
 // The author's own trade in market talk is hedged: "куплю биток, если упадёт", "I'd rather buy BTC on the dip", "куплю позже".
 // "если интересно", "если что", "если у кого есть", "когда удобно" and "if interested" call readers instead.
-const HEDGE = any("‹(?:(?:если|if)(?! (?:что|у кого|удобно|интерес|нужн|надо|кому|кто|вам|тебе|interested|you|needed|anyone|someone|any))|когда(?! (?:удобно|угодно))|(?<!хотел\\p{L}{0,2} )бы"
+const HEDGE = any("‹(?:(?:если|if)(?! (?:что|у кого|удобно|интерес|нужн|надо|кому|кто|вам|тебе|есть|прода|купите|обменяете|interested|you|needed|anyone|someone|any))|когда(?! (?:удобно|угодно|(?:будет )?(?:нужно|надо)))|(?<!хотел\\p{L}{0,2} )бы"
   + "|наверное|думаю|может быть|просадк\\p{L}*|подешевеет|упад[её]т|позже|потом|when(?! (?:ready|convenient|you))|would|rather|maybe|probably|dips?|think|wait|later)›");
 // Where, how or which, asked: "Хочу купить 500 usdt. Где это лучше сделать?", "Кто меняет usdt на p2p — какие банки не блокируют?".
 const VENUE_QUESTION = any("‹(?:где|куда|откуда|как|каком|какой|какая|какую|какие|каким|сколько|почему|зачем|что делать|where|how|which|what|why)›");
@@ -384,31 +389,46 @@ const ADVICE = any("‹(?:подскажите|посоветуйте|порек
 const GAP_WORD = re("^(?:[/&+⇄↔→-]|\\d[\\d_.,]*(?:k|к|тыс\\p{L}*)?\\p{Sc}?|\\p{Sc}[\\d_.,]*|(?:шт\\.?|штук\\p{L}*|руб\\p{L}*|р|доллар\\p{L}*|бакс\\p{L}*|евро|гривн\\p{L}*|тенге"
   + "|лир\\p{L}*|лари|бат\\p{L}*|драм\\p{L}*|донг\\p{L}*|динар\\p{L}*|сом\\p{L}*|рупи\\p{L}*|юан\\p{L}*|злот\\p{L}*|налич\\p{L}*|нал|кэш|деньг\\p{L}*|фиат\\p{L}*"
   + "|usd|eur|rub|uah|inr|aed|thb|try|php|idr|vnd|cny|kzt|gel|amd|dollars?|bucks|euros?|rupees?|baht|lira|dirhams?|pesos?|yuan|cash|money|fiat|funds?"
-  + "|мо[иий]|сво[иий]|ваш\\p{L}*|тво[иий]\\p{L}*|немного|чуть|пару|ещ[её]|my|your|our|some|the|a|an|bank|банк\\p{L}*|карт\\p{L}*|cards?"
+  + "|мо[иий]|сво[иий]|ваш\\p{L}*|тво[иий]\\p{L}*|немного|чуть|пару|ещ[её]|my|your|our|some|the|a|an|bank|банк\\p{L}*"
   + "|покупк\\p{L}*|продаж\\p{L}*|обмен\\p{L}*|валют\\p{L}*|currenc\\p{L}*|лишн\\p{L}*|свободн\\p{L}*|spare|ли|кто-нибудь|кто-то|у|меня|нас|мне|нам|тебе|вам|me|us|you|и|или|and|or|на|в|с|со|to|into|in|from)[.]?)$");
 const ASSET_BEFORE = re(`(?<!‹(?:за|в|во|for|in|with)\\s)${ASSET}\\s?(?:[,—–:-]\\s?)?(?:[\\p{L}-]+\\s)?$`);
+const HOLDS = re("^(?:в|во|с|со|in|with)$");
 function tradesAsset(part: string, start: number, end: number): boolean {
   if (ASSETS.test(part.slice(start, end))) return true;
   const after = part.slice(end, end + 80);
   const asset = ASSETS.exec(after);
   const gap = asset ? after.slice(0, asset.index).trim() : "";
   const gapWords = gap ? gap.split(/[\s/]+/u).filter(Boolean) : [];
-  return asset !== null && !/[,;:()]/u.test(gap) && gapWords.length <= 5 && gapWords.every((word) => GAP_WORD.test(word))
+  // "Продаю в usdt", "Продам карту с usdt": the asset is how it is paid or what something holds.
+  return asset !== null && !/[,;:()]/u.test(gap) && gapWords.length <= 5 && gapWords.every((word) => GAP_WORD.test(word)) && !HOLDS.test(gapWords.at(-1) ?? "")
     || ASSET_BEFORE.test(part.slice(Math.max(0, start - 30), start));
 }
-// A rate or price judged good ("по адекватному курсу", "по приемлемой цене", "по норм курсу", "недорого", "ниже биржи",
-// "at an adequate rate"), never a reference rate ("по курсу", "по такому курсу", "по курсу биржи", "по рыночной цене",
-// "по 95"); or a volume ("любой объём", "any amount", "оптом").
-const REFERENCE = "(?:так|эт|т|текущ|биржев|рыночн|нынешн|сегодняшн|вчерашн|как|люб|сво|мо|тво|ваш|наш|данн|официальн|государственн|банковск|средн|низк|высок)";
-const RATE = any(`‹по (?:(?:очень|самому|самой|более|максимально) )?(?!${REFERENCE}(?:ому|ему|ой|ей)›)\\p{L}+(?:ому|ему|ой|ей) (?:курсу|цене)›|‹по норм (?:курсу|цене)›`,
-  "‹(?:хорош|выгодн|лучш|топов|приятн)\\p{L}* (?:курс|цен)\\p{L}*›|‹(?:недорого|подешевле|ниже (?:рынка|биржи|курса)|выше (?:рынка|биржи|курса)|без (?:накрутк|комисси)\\p{L}*)›",
+// The judgement is the shape: a good, fair or affordable price ("адекватн", "приемлем", "разумн", "справедлив", "доступн", …),
+// never a reference rate ("по курсу", "по такому курсу", "по курсу биржи", "по рыночной цене", "по 95") or a market
+// judgement ("по смешной цене", "по завышенному курсу"). "недорого", "ниже биржи", "at an adequate rate" and a volume
+// ("любой объём", "any amount", "оптом") are terms too.
+const FAIR = "(?:адекватн|хорош|нормальн|норм|выгодн|лучш|приятн|честн|отличн|вкусн|приемлем|разумн|справедлив|достойн|демократичн|бюджетн|доступн|комфортн|сладк|топов|человеческ)";
+const RATE = any(`‹по (?:(?:очень|самому|самой|более|максимально|вполне) )?${FAIR}\\p{L}* (?:курсу|цене)›|‹${FAIR}\\p{L}* (?:курс|цен)\\p{L}*›`,
+  "‹(?:недорого|подешевле|ниже (?:рынка|биржи|курса)|выше (?:рынка|биржи|курса)|без (?:накрутк|комисси)\\p{L}*)›",
   "‹(?:at|for|with) (?:a |an |the )?(?:very )?(?:good|best|fair|great|nice|decent|adequate|reasonable|competitive|top|cheap|low)(?:est)? (?:rates?|prices?)›|‹(?:best|good|fair|top) rates?›|‹(?:below|above) (?:market|binance)›",
   "‹(?:любой|любые|любом|крупн\\p{L}*|больш\\p{L}*) (?:объ[её]м\\p{L}*|сумм\\p{L}*)|‹(?:any|large|big) (?:amount|volume|size)s?›|‹(?:bulk|оптом)›");
 // An offer may also name cash or a meeting, or price itself ("дорого", "выгодно"); a question about who trades for cash may be a
 // member's caution ("Who sells USDT for cash in person? Asking because it seems risky").
 const OFFER_TERMS = any("‹(?:налич\\p{L}*|нал›|кэш|cash›|личн\\p{L}* встреч\\p{L}*|при встрече|f2f|face to face|in person)", "‹(?:дорого|дешево|выгодно|cheap|cheaply)›");
-const ASKED = re("^(?:кто(?:-нибудь| нибудь|-то)|anyone|anybody)›");
+const ASKED = re("^(?:кто(?:-нибудь| нибудь)|anyone|anybody)›");
+const LATER_TALK = re("^\\s?(?:или|or|nobody|no one|никто|ни у кого|но|but)›");
 const ASKED_BEFORE = re("‹(?:есть|есть ли|может|а)\\s$");
+// A header is a short clause with no predicate: "Обмен USDT на рубли", "Exchange USDT to PHP", but not "Покупка USDT через сбер
+// закрыта", "Продажа USDT облагается налогом", "Продажа биткоина Германией обвалила рынок" or "Buying BTC is risky".
+// Russian endings only on a Russian word (one with a letter that has no Latin lookalike), so "market" is no predicate.
+// "Обменник USDT на Руставели норм" and "Selling BTC at a loss hurts" judge; "Sell BTC, buy ETH — that's my plan" tells a plan.
+const PREDICATE = any("‹(?=\\p{L}*[бгджзилпфцчшщъыьэюяй])\\p{L}+(?:ла|ло|ется|ются|ит|ят|ена|ено|ены|ана|ано|ыта|ыто|ята|ято|(?<!вал)(?:ет|ют))›", "‹(?:is|are|was|were|has|have|had|will|got|gets|became|becomes|стал\\p{L}*|теперь|now)›",
+  "‹(?:норм|ок|hurts?|sucks|fine)›(?! (?:курс|цен|rates?|prices?))");
+const TOLD = any("‹(?:that['’]s|it['’]s|this is|my plan|my strategy|мой план|works (?:fine|great|well|ok)|worked|hurts?|sucks)›");
+const isHeader = (clause: string) => {
+  const head = clause.split(/[,;:—–(]|\s-\s/u)[0]!;
+  return head.trim().split(/\s+/u).length <= 6 && !PREDICATE.test(head) && !TOLD.test(clause);
+};
 type TradeIntent = { kind: "ask" | "offer" | "want"; question: boolean; rate: boolean };
 // The asset is named next to the verb, or the verb stands alone beside a header ("💵 USDT 💵\nКуплю / продам").
 function tradeIntents(text: string): TradeIntent[] {
@@ -428,12 +448,16 @@ function tradeIntents(text: string): TradeIntent[] {
     const rate = !venue && RATE.test(part);
     const found: TradeIntent[] = [];
     // "Кто продаёт usdt на p2p — какие банки сейчас не блокируют?" asks traders a question; it seeks none.
-    const asks = [...part.matchAll(ASK_ALL)].filter((m) => named(m) && !VENUE.test(before(m))
+    const asks = [...part.matchAll(ASK_ALL), ...TRADE_WORD.test(text) ? part.matchAll(HAS_ALL) : []].filter((m) => named(m) && !VENUE.test(before(m))
       && !(question && VENUE_QUESTION.test(part.slice(m.index! + m[0].length))));
     // "есть кто может продать юстд по адекватному курсу" asks without its "?".
-    if (asks.length) found.push({ kind: "ask", question: question || asks.some((m) => ASKED.test(m[0]) || ASKED_BEFORE.test(before(m))), rate: rate && !ADVICE.test(text) });
+    // Terms alone make an ad of a lone ask; "Кто продаёт usdt по адекватному курсу? Где вы таких находите?" or "…? Или все на бирже?"
+    // is talk about traders.
+    const lone = parts.every((other, j) => j === i || !isQuestion(other)) && !LATER_TALK.test(parts[i + 1] ?? "");
+    if (asks.length) found.push({ kind: "ask", question: question || asks.some((m) => ASKED.test(m[0]) || ASKED_BEFORE.test(before(m))), rate: rate && lone && !ADVICE.test(text) });
     if (HEDGE.test(part) || venue) return found;
-    if ([...part.matchAll(OFFER_ALL)].some(own) || !question && [...part.matchAll(HEADER_OFFER_ALL)].some(named)) found.push({ kind: "offer", question, rate });
+    if ([...part.matchAll(OFFER_ALL)].some(own) || !question && [...part.matchAll(HEADER_OFFER_ALL)].some((m) => named(m) && isHeader(part.slice(m.index!))))
+      found.push({ kind: "offer", question, rate });
     if (!advice && [...part.matchAll(WANT_ALL)].some(own)) found.push({ kind: "want", question, rate });
     return found;
   });
@@ -441,15 +465,19 @@ function tradeIntents(text: string): TradeIntent[] {
 // A call followed by a question to the chat asks for replies, not a deal: "Пишите, что почитать", "Напишите, кто как меняет",
 // "Пишите, если есть вопросы", "DM me your thoughts", "Message me if you have tips".
 const CALL_WORD = "(?:напиши(?:те)?|пиши(?:те)?|отпиши(?:те)?(?:сь)?|стучи(?:те)?|маякни(?:те)?|звони(?:те)?|обращайтесь|свяжитесь|write|text|message|msg|dm|pm|inbox|contact|hmu|hit me up)";
-const ASKS_REPLIES = new RegExp(re(`‹${CALL_WORD}(?: (?:мне|нам|me|us|в лс|в личку|в личные|в директ|in dm|in pm))?\\s?[,:—–-]?\\s?(?=(?:кто|как|что|где|куда|откуда|как\\p{L}+|сколько|чем|почему|зачем|на что`
-  + "|who|how|what|where|which|why|me (?:your|ваш\\p{L}*)|your thoughts|i have a question|у меня (?:есть )?вопрос"
-  + "|when(?! (?:ready|convenient|you(?:['’]re| are) ready))|когда(?! (?:удобно|угодно))"
+const ASKS_REPLIES = new RegExp(re(`‹${CALL_WORD}(?: (?:мне|нам|me|us|в лс|в личку|в личные|в директ|in dm|in pm))?\\s?[,:—–-]?\\s?(?=(?:кто(?!${SOMEONE} (?:(?!(?:как|где|куда|когда|почему|зачем|сколько)›)[\\p{L}-]+ )?(?:${TRADE_3RD}|${TRADE_INF})›)|как|что|где|куда|откуда|как\\p{L}+(?! (?:объ[её]м|сумм|курс))|сколько(?! (?:у (?:вас|тебя) )?(?:есть|нужно|надо|прода|готов))|чем|почему|зачем|на что|подскажу|расскажу|объясню|поделюсь`
+  + "|who|how(?! much (?:you|do you))|what(?! (?:you|u) (?:have|need|got|want))|where|which|why|me (?:your|ваш\\p{L}*)|your thoughts|i have a question|у меня (?:есть )?вопрос"
+  // Writing to the admins reports someone: "Тут опять кто-то продаёт usdt. Пишите в лс админам".
+  + "|админ\\p{L}*|модер\\p{L}*|an admin|admins?|mods?|moderators?"
+  + "|when(?! (?:ready|convenient|you(?:['’]re| are) ready))|когда(?! (?:удобно|угодно|(?:будет )?(?:нужно|надо)))"
   // "Пишите, если нужна инструкция", "Message me if you want my spreadsheet"; but "пишите, если интересно", "DM me if
   // interested" and "if you need USDT" are an ad's own call.
-  + "|(?:если|if)(?! (?:интерес|нужно›|надо›|нужен (?!совет)|нужны|актуальн|что›|удобно|у кого|кому|interested|needed|you(?:['’]re| are)? interested|you need (?!help|advice|tips|instructions)|you want (?:to (?:buy|sell|trade|exchange|swap)|some))))›)").source, "giu");
+  // "пишите, если есть", "если продаёте" and "if you have any" offer a trade too.
+  + "|(?:если|if)(?! (?:интерес|надо›|нужн\\p{L}*›(?! (?:инструкц|совет|помощ|подсказ))|актуальн|что(?!-)›|удобно|у кого|кому|есть(?! (?:вопрос|опыт|иде|мысл|совет))|прода[её]те|продадите|купите|обменяете"
+  + "|interested|needed|you(?:['’]re| are)? (?:interested|selling|buying)|you (?:sell|buy)|you need (?!help|advice|tips|instructions)|you want (?:to (?:buy|sell|trade|exchange|swap)|some)|you (?:have|got)(?! (?:any )?(?:tips|questions|advice|experience|ideas)))))›)").source, "giu");
 // A bare call: "Напишите, договоримся", "пишите", "маякните", "кому надо пишите", "text me", "PM".
-const REPLY_CALL = any(`(?:^|[.!?,;:/\\n—–-]\\s?|‹если что )${CALL_WORD}(?: (?:мне|нам|me|us|со мной|с нами))?(?: (?:в|на|on|via|in) (?:ватсап|вотсап|whatsapp|телег\\p{L}*|тг|вайбер|viber|signal|telegram|tg))?(?: (?:пожалуйста|плиз|плз|please|pls))?\\s?(?:[.!,;/\\n]|\\+?\\d|$)`,
-  "‹кому (?:надо|нужно|интересно)\\s?[—–-]?\\s?(?:пиш|напиш)\\p{L}*");
+const REPLY_CALL = any(`(?:^|[.!?,;:/\\n—–-]\\s?|‹если что )${CALL_WORD}(?: (?:мне|нам|me|us|со мной|с нами))?(?: (?:в|на|on|via|in) (?:ватсап|вотсап|whatsapp|телег\\p{L}*|тг|вайбер|viber|signal|telegram|tg))?(?: (?:пожалуйста|плиз|плз|please|pls))?\\s?(?:[.!,;/\\n]|\\+?\\d|$|(?=(?:если|if|когда|when) ))`,
+  "‹кому (?:надо|нужно|интересно)\\s?[—–-]?\\s?(?:пиш|напиш)\\p{L}*|‹(?:пиш|напиш)\\p{L}* кому (?:надо|нужно|интересно)›");
 const NEGOTIATE = any("‹(?:договор(?:имся|иться)|обсудим|торг›|жду (?:ваших )?предложени\\p{L}*|negotiable|let['’]?s (?:talk|discuss|deal))");
 // A handle or chat link closing a line after punctuation is a contact ("курс выгодный, @exchanger_x"). After a word it is a
 // mention or a source ("покупаю через @wallet", "Подробнее: t.me/cryptonews_ru", "в канале @crypto_news"), and so is a bot.
@@ -468,9 +496,11 @@ const TRADE_DOUBT = any("‹это (?:[\\p{L}-]+ ){0,2}?(?:нормальн|но
 // A member's question about crypto invites an answer with an offer; "Где купить хлеб?" or "Какой курс в обменнике?" does not.
 const CRYPTO_TOPIC = (source: string) => ASSETS.test(source) || re("‹(?:p2p|п2п)›").test(source);
 // The author wants information, not a trade: "Есть кто продаёт usdt? Хочу понять курс. Напишите", "Text me, I have a question".
-const INFO = any("‹(?:хочу|хотел\\p{L}*|хотим) (?:понять|узнать|спросить|разобраться)›|‹(?:want|wanted) to (?:know|ask|understand)›|‹(?:у меня|i have|i['’]ve got|i got) (?:a |one |пара |есть )?(?:вопрос|question)");
+// A support question: "У кого есть USDT на Bybit, напишите в лс, вопрос по выводу", "Anyone have USDT stuck on Binance? DM me, same problem".
+const INFO = any("‹(?:хочу|хотел\\p{L}*|хотим) (?:понять|узнать|спросить|разобраться)›(?! (?:ваш|твой|ваши|твои)›)|‹i (?:want|wanted|need) to (?:know|ask|understand)›|‹(?:у меня|i have|i['’]ve got|i got) (?:a |one |пара |есть )?(?:вопрос|question)",
+  "‹вопрос (?:по|про|о|насч[её]т)›|‹(?:same (?:problem|issue)|та же проблема|такая же проблема|stuck|застрял\\p{L}*|завис\\p{L}*)›");
 // Where they trade, not a call: "Кто продаёт usdt в лс — сразу в бан".
-const TRADES_IN_DM = new RegExp(re(`‹${TRADE_3RD}(?: [\\p{L}-]+){0,2}? (?:в|во) (?:лс|личк\\p{L}*|личн\\p{L}*|директ)›`).source, "giu");
+const TRADES_IN_DM = new RegExp(re(`‹${TRADE_3RD}(?: (?!${CALL_WORD}›)[\\p{L}-]+){0,2}? (?:в|во) (?:лс|личк\\p{L}*|личн\\p{L}*|директ)›`).source, "giu");
 const HELPER = any("‹кто(?:-нибудь| нибудь)? (?:может|сможет|готов)\\s?(?:[—–,-]|$)|‹кто(?:-нибудь| нибудь)? (?:может |сможет |готов )?помо(?:жет|чь)›(?! (?:разобраться|советом|понять))|‹(?:who|anyone|someone) (?:can |could )?help (?:me )?(?:with (?:it|this|that)›|›(?! (?:me )?(?:understand|figure)))");
 // A DM call, a contact or negotiation makes any intent an ad, and a bare "напишите" any but a wish. Good-rate or volume terms
 // do for an offer and for a question seeking a trader ("есть кто может продать юстд по адекватному курсу?").
