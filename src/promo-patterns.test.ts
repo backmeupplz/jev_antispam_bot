@@ -8,6 +8,7 @@ import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/cr
 import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
+import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -208,6 +209,12 @@ test("explicit terms need a funnel, and URL buttons are one", () => {
   expect(promoPattern(plain("Private rooms · face cam · no blur — tap the button below"))).toBe(adult);
   // A quoted ad inside a moderator's reminder is not the author's offer.
   expect(promoPattern(plain("Posts like «XXX p0rn content, tap a button below» get you removed, please read the pinned message"))).toBeUndefined();
+});
+
+test("the pinned adult review corpus keeps its exact outcome", () => {
+  const withButtons = ([text, buttons]: AdultCorpusItem) => plain(text, buttons ? { inlineButtons: [{ kind: "url", text: "Open", url: "https://example.invalid/x" }] } : {});
+  expect(adultCorpusAds.filter((item) => promoPattern(withButtons(item)) !== adult)).toEqual(adultCorpusKnownMisses);
+  expect(adultCorpusKeeps.filter((item) => promoPattern(withButtons(item)))).toEqual(adultCorpusKnownMatches);
 });
 
 test("adult promo matching stays fast on 4,096-character adversarial input", () => {

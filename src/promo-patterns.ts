@@ -622,7 +622,7 @@ const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
 const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
 // Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно". "Food porn" and other
 // "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad.
-const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|nature|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|фуд) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*", "giu");
+const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|bike|watch|shoe|sneaker|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*", "giu");
 // The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a join or
 // subscribe call, a DM call, a bot handle, a t.me link or URL buttons attached to the message. A plain web link is a shared
 // article or joke, and "зайди в настройки" is settings help.
@@ -634,30 +634,36 @@ const FUNNEL = any(
   "‹(?:жми|нажми|нажимай|кликай|кликни|переходи|перейди|заходи|зайди|подписывайся|подпишись|вступай|вступи|открой|открывай)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
   "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/");
-// Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️.
-const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡→]/u;
+// Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️, or → at a link or handle ("Settings → Privacy" is a path).
+const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/u;
 // Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
 // An ad tells what its model does in the present ("She posts new nudes daily"), so he, she and they report only in the past
 // or progressive ("he was posting porn").
 const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|he|she|they|кто-то|какой-то|этот|эта|он|она|они) (?:[\\p{L}-]+ ){0,2}?(?:posted|posting|sent|sending|shared|sharing|promoting|spamming|dropped|кинул\\p{L}*|скинул\\p{L}*|прислал\\p{L}*|выложил\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|кто-то|какой-то|этот|эта) (?:[\\p{L}-]+ ){0,2}?(?:posts|sends|promotes|spams|постит|кидает|присылает|рассылает|спамит)›",
-  "‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
+  "‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying|adding)|don['’]?t (?:join|click|open|subscribe|tap)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
 // Rules and moderation: "Porn is banned here", "no porn allowed", "за порно бан", "запрещено публиковать порно". An ad's
 // "запрещённое видео", "запрещёнка" or "forbidden content" sells it, and so does "no rules".
 const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
-  "‹(?:против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются)|бан|в бан|забан\\p{L}*|баним|(?:здесь|тут) нельзя)›|‹нельзя (?:[\\p{L}-]+ )?(?:писать|постить|публиковать|кидать|скидывать|размещать|выкладывать|отправлять|рекламировать)›",
-  "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned))›|(?<!‹no )‹rules?›");
+  "‹(?:удал(?:ить|ите|и)|против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются)|бан|в бан|забан\\p{L}*|баним|(?:здесь|тут) нельзя)›|‹нельзя (?:[\\p{L}-]+ )?(?:писать|постить|публиковать|кидать|скидывать|размещать|выкладывать|отправлять|рекламировать)›",
+  "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|ban|kick)›|(?<!‹no )‹rules?›");
 // Health, recovery, education, law, crime and news talk about it: "porn addiction support group, join @…", "закон о блокировке
 // порно", "arrested for distributing porn, details: https://…". Ads never use these words.
 const ADULT_TALK = any("‹(?:addict\\p{L}*|recover\\p{L}*|nofap|quit(?:ting)?›|reboot\\p{L}*|therap\\p{L}*|research\\p{L}*|study|studies|education|parent\\p{L}*|protect\\p{L}*|block\\p{L}*|law›|laws›|bill›|ban on|news|article|report\\p{L}*|survey)",
-  "‹(?:arrest\\p{L}*|police|court|convicted|charged|victims?›|abuse\\p{L}*|crime\\p{L}*|condamn\\p{L}*|enqu[eê]te|victime\\p{L}*|abus›|abus[ée]\\p{L}*|poursuivi\\p{L}*)",
+  "‹(?:arrest\\p{L}*|police|court|scandal\\p{L}*|скандал\\p{L}*|convicted|charged|victims?›|abuse\\p{L}*|crime\\p{L}*|condamn\\p{L}*|enqu[eê]te|victime\\p{L}*|abus›|abus[ée]\\p{L}*|poursuivi\\p{L}*)",
   "‹(?:зависим\\p{L}*|бросить|бросил\\p{L}*|исследован\\p{L}*|образован\\p{L}*|просвещ\\p{L}*|родител\\p{L}*|защит\\p{L}*|блокир\\p{L}*|закон\\p{L}*|новост\\p{L}*|стать(?:я|и|ю|е|ей|ях)›|психолог\\p{L}*|врач\\p{L}*|арест\\p{L}*|полиц\\p{L}*|суд›|суда›|суде›|задерж\\p{L}*|осужд\\p{L}*|преступ\\p{L}*|насили\\p{L}*|жертв\\p{L}*)");
+// A joke or meme shared in chat: "lmao the nudes meme 👇", "lol dm me for nudes 😂 jk". Ads tease (😏 🥵 💦), they don't laugh.
+const ADULT_JOKE = any("‹(?:lol|lmao|rofl|jk|haha\\p{L}*|memes?|jokes?|ахах\\p{L}*|хаха\\p{L}*|мем\\p{L}*|шутк\\p{L}*|прикол\\p{L}*)›");
+const LAUGHING = /[\u{1F602}\u{1F923}]/u;
 function adultPromo(message: ModerationMessage, raw: string, text: string): boolean {
   const undenied = text.replace(ADULT_DENIED, " ");
   if (!ADULT.test(undenied) && new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size < 2) return false;
-  if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)) return false;
-  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(text) || callsToDm(text.replace(WEB_LINK, " "));
+  if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
+    || ADULT_JOKE.test(text) || LAUGHING.test(raw)) return false;
+  // A funnel inside a question asks about it: "My friend wants to join OnlyFans, is it worth it?".
+  const told = sentences(text).filter((part) => !isQuestion(part)).join("");
+  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told) || callsToDm(told.replace(WEB_LINK, " "));
 }
 
 function isAttributed(raw: string): boolean {
