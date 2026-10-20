@@ -560,6 +560,21 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Porn bot @hotporn_bot in comments 👇"],
   ["Porn bot alert 🔥 @newporn_bot free videos"],
   ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
+  ["Слив нюдсов 🥵 бот @nudes_bot в комментах"],
+  ["Нюдсы бесплатно, бот @nudes_bot в комментах"],
+  ["Порно видео бесплатно, ищи бот @porn_bot в комментах"],
+  ["Слив OnlyFans 🔞 в комментах бот @leaks_bot"],
+  ["Our brand new porn bot @x_bot in the comments 🥵"],
+  ["Наш новый секретный порно бот @x_bot в комментах 🥵"],
+  ["Лучший порно бот @hot_bot в комментах 🔥"],
+  ["Best porn bot @hot_bot in the comments 🔥"],
+  ["Хватит кидать нюдсы бесплатно, зарабатывай на них в боте @nudes_money_bot"],
+  ["Хватит слать нюдсы бывшему, продавай их у нас @sell_nudes_bot"],
+  ["Не шли нюдсы бесплатно, продавай их в боте @nudes_cash_bot"],
+  ["Не кидай нюдсы бывшему, продай их в боте @nudes_cash_bot"],
+  ["Перестань присылать нюдсы бесплатно 🥵 зарабатывай с нами @of_agency_bot"],
+  ["Stop sending nudes for free, sell them on OnlyFans 👉 @creator_bot"],
+  ["Do not send nudes for free, earn with OnlyFans 👉 @of_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1355,6 +1370,10 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["There's a porn bot @xxx_bot in the comments"],
   ["Не шлите в лс порно, пожалуйста"],
   ["Перестаньте присылать в личку порно ботов"],
+  ["Хватит слать мне порно в личку!"],
+  ["Don't DM me porn"],
+  ["Не присылайте мне порно в личные сообщения"],
+  ["В комментариях порнобот @xxx_bot"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
