@@ -544,6 +544,22 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Free porn, our bot @freeporn_bot in the comments 👇"],
   ["Наш порно бот @hot_bot в комментах 🥵"],
   ["Porn bot @hotporn_x_bot 🥵 free nudes 24/7"],
+  ["Хватит писать мне в лс, все нюдсы в боте @kate_nudes_bot"],
+  ["Не надо писать мне в лс, нюдсы в боте @nudes_bot"],
+  ["Stop messaging me in DM, all my nudes are in @kate_nudes_bot"],
+  ["Stop texting me in DM babe, my nudes are here 👉 @kate_bot"],
+  ["Хватит писать в лс, пиши в бот @porn_bot"],
+  ["New bot alert: @porn_free_bot free nudes 🥵"],
+  ["Bot alert! @free_nudes_bot 🔥 all OnlyFans leaks"],
+  ["NSFW bot alert 🥵 @nsfw_hot_bot"],
+  ["Our new porn bot @x_bot in the comments"],
+  ["Наш секретный порно бот @nudes_bot в комментах 🥵"],
+  ["В комментах наш порно бот @hot_bot 🥵"],
+  ["Free porn bot @hot_bot in the comments 🔥"],
+  ["Порно бот @hot_bot в комментах 🥵"],
+  ["Porn bot @hotporn_bot in comments 👇"],
+  ["Porn bot alert 🔥 @newporn_bot free videos"],
+  ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1331,6 +1347,14 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Не надо слать мне нюдсы в лс"],
   ["Quit sending me nudes in DM"],
   ["Перестаньте спамить порно в лс"],
+  ["Порнобот @xxx_bot в комментах"],
+  ["В комментариях порно-бот @xxx_bot"],
+  ["Хватит присылать мне порно в лс"],
+  ["Do not message me porn"],
+  ["Порно-бот @xxx_bot в комментах, баньте"],
+  ["There's a porn bot @xxx_bot in the comments"],
+  ["Не шлите в лс порно, пожалуйста"],
+  ["Перестаньте присылать в личку порно ботов"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
@@ -1432,6 +1456,11 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Nudes for sale, DM me what you wrote"],
   ["Porn videos, DM me if you slid here"],
   ["Нюдсы, пиши в лс кидала уже всем"],
+  // #148: read the same as the pinned handle-naming reports or stop requests.
+  ["Порно бот @hot_bot в комментах 🥵"],
+  ["Porn bot @hotporn_bot in comments 👇"],
+  ["Porn bot alert 🔥 @newporn_bot free videos"],
+  ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
