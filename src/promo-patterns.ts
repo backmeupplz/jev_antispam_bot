@@ -725,7 +725,7 @@ const STOP_OBJECT = `(?:${STOP_ADULT}|(?:${STOP_FILLER}|${STOP_POINTER}(?![\\s\\
 // alert: @xxx_bot", also fused ("Порнобот @…", "порно-бот @…"). An ad's "Best porn bot @…bot 🥵", "Bot alert! @…" or "our bot
 // @…bot in the comments" names its own.
 // Selling one's own: "Хватит кидать нюдсы бесплатно, зарабатывай на них в боте @…", "Stop sending nudes for free, get paid".
-const UNSOLD = "(?![^.!?\\n]{0,120}(?:‹(?:sell|earn|monetiz|paid|pay(?:ments?|outs?|pal)?›|money|cash|income|profit|прода[вйёе]|зараб[ао]т|монетиз|ден[еь][гж]|оплат|оплач|плат(?:им|ят)|выплат|доход|бабк|бабл|профит)|[$₽€]))";
+const UNSOLD = "(?![^.!?\\n]{0,120}(?:‹(?:sell|earn|monetiz|paid|pay(?:ments?|outs?|pal)?›|money|cash|income|profit|прода[вйёе]|зараб[ао]т|монетиз|ден[еь][гж]|оплат|оплач|плат(?:им|ят)|выплат|доход(?:[аоуы]|ам|ами|ах|ов|ом|н\\p{L}*)?›|бабк|бабл|профит)|[$₽€]))";
 const REPORTED_BOT = "(?:p[o0]rn|п[o0]рн)\\p{L}*?[- ]?(?:бот\\p{L}*|bots?)";
 const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
   `‹(?:stop|quit|хватит|перестань\\p{L}*|прекрати\\p{L}*|не (?:надо|нужно))${UNSOLD} (?:[\\p{L}-]+ ){0,2}?(?:(?:sending|spamming|слать|кидать|присылать|скидывать|отправлять|спамить) ${STOP_OBJECT}|(?:dming|messaging|texting|писать) ${STOP_ADULT})`,
