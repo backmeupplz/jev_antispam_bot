@@ -157,12 +157,15 @@ const DM = any(
 );
 const DM_ALL = new RegExp(DM.source, "giu");
 // A DM someone else sent the author is a report, not a call: "мне написали в лс", "в лс писали", "got a DM".
-const DM_SENDER = "(?:пишут|пишет|писали|писал[аи]?|написал[аи]?|зовут|звали|позвали|зов[её]т|предлага[ею]т|предложил[аи]?|приглаша[ею]т|пригласил[аи]?|прислал[аи]?|скинул[аи]?|кидают)›";
+const DM_SENDER = "(?:пишут|пишет|писали|писал[аи]?|написал[аи]?|зовут|звали|позвали|зов[её]т|предлага[ею]т|предложил[аи]?|приглаша[ею]т|пригласил[аи]?|прислал[аи]?|скинул[аи]?|кидают|кидает|кинул[аи]?|шл[юе]т|шл[её]т|скидыва[ею]т|присыла[ею]т|пришл[оаи]|пришел|прилета[ею]т|прилетел[аи]?|приход[яи]т|стуч[ия]тся|постучал(?:ся|ась|ись)|ломятся|лезут|спамят)›";
 const DM_REPORTED_BEFORE = re(`‹${DM_SENDER}(?:\\s[\\p{L}-]+){0,2}\\s?$|‹(?:got|received|sent me)\\s(?:a |an |some |this |the |another )?$`);
+// For adult content the author's own DMs are a report ("Porn bots in my DM", "У меня в лс порно бот") unless teased ("Free
+// nudes in my DM 😏"); a gig or trade offer "у меня в лс" still calls.
+const DM_OWN = re(`(?<!‹(?:come|slide|sliding|hop|jump|get)\\s)‹in(?:to)? my\\s$|‹у (?:меня|нас)\\s$`);
 const DM_REPORTED_AFTER = re(`^\\s?(?:[\\p{L}-]+\\s){0,3}${DM_SENDER}`);
 // "Желающие пишут в лс" addresses readers: the verb is a call, not a report.
 const WILLING = any("‹(?:желающ|заинтересован|интересующ|кому (?:интересно|надо|нужно)|кто (?:хочет|готов|заинтересован))");
-function callsToDm(text: string): boolean {
+function callsToDm(text: string, ownDmCalls = true): boolean {
   return [...text.matchAll(DM_ALL)].some((match) => {
     const end = match.index + match[0].length;
     const after = text.slice(end, end + 60);
@@ -170,7 +173,7 @@ function callsToDm(text: string): boolean {
     if (match[0].endsWith("dm") && /^'?d(?![\p{L}\p{N}])/u.test(after)) return false;
     const start = Math.max(0, ...[".", "!", "?", "\n", ",", ":", ";"].map((mark) => text.lastIndexOf(mark, match.index - 1) + 1));
     const before = text.slice(Math.max(start, match.index - 40), match.index);
-    return WILLING.test(before) || !DM_REPORTED_BEFORE.test(before) && !DM_REPORTED_AFTER.test(after);
+    return WILLING.test(before) || !DM_REPORTED_BEFORE.test(before) && (ownDmCalls || !DM_OWN.test(before)) && !DM_REPORTED_AFTER.test(after);
   });
 }
 // The author is the one looking for work, not offering it. People sought ("Ищу людей на подработку",
@@ -647,7 +650,7 @@ const FUNNEL = any(
   "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter) (?:it |them )?(?:now|free|here)›|‹get (?:it |them )?(?:now|free|access)›|‹free (?:preview|access|trial)›",
   "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
-  "@[a-z][a-z0-9_]*bot›|(?:(?<![\\p{L}\\p{N}_.-])|(?<=www\\.))(?:t|telegram)\\.me/");
+  "@[a-z][a-z0-9_]*bot›|(?:(?<![\\p{L}\\p{N}_.-])|(?<=www\\.))(?:t|telegram)\\.me/(?![a-z0-9_]+/\\d)");
 // A join, subscribe or open call is a funnel only in a sentence about the adult content: opening a clause about it
 // ("Subscribe to my OnlyFans"), calling to a channel, bot, site or link ("Новые нюдсы каждый день, вступай в канал", "Leaked
 // OnlyFans, join now https://…"), or as a bare call closing it ("Эротические видео каждый день, подписывайся", "Free porn
@@ -698,14 +701,15 @@ const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|мо
 // "запрещённое видео", "запрещёнка" or "forbidden content" sells it, and so does "no rules".
 const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
   "‹(?:удал(?:ить|ите|и)|против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются)|бан|в бан|забан\\p{L}*|баним|(?:здесь|тут) нельзя|нельзя(?=\\s?(?:[,.!;—–-]|$)))›|‹нельзя (?:[\\p{L}-]+ )?(?:писать|постить|публиковать|кидать|скидывать|размещать|выкладывать|отправлять|рекламировать)›",
-  "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|ban|kick)›|(?<!‹no )‹rules?›");
+  "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|ban|kick)›|(?<!‹no )‹rules?›",
+  "‹(?:удаляет|удаляют|чистит|банит|банят|кикает|блочит|фильтрует|kicks|bans|removes|deletes|filters|blocks)›");
 // Health, recovery, education, settings, security, law, crime, morals and news talk about it: "porn addiction support group, join @…", "закон о блокировке
 // порно", "arrested for distributing porn, details: https://…". Ads never use these words.
 const ADULT_TALK = any("‹(?:addict\\p{L}*|recover\\p{L}*|nofap|quit(?:ting)?›|reboot\\p{L}*|therap\\p{L}*|research\\p{L}*|study|studies|education|parent\\p{L}*|protect\\p{L}*|block\\p{L}*|law›|laws›|bill›|ban on|news|article|report\\p{L}*|survey)",
   "‹(?:settings|sensitive content|malware|virus\\p{L}*|deepfake\\p{L}*|privacy|tax\\p{L}*|evil›|настройк\\p{L}*|вирус\\p{L}*|дипфейк\\p{L}*|налог\\p{L}*|зло›)",
   "‹(?:safety (?:guides?|tips?|advice|rules)|online safety|stay safe|never (?:send|share)|don['’]?t (?:send|share)|не (?:отправляй|скидывай|присылай|пересылай)|безопасност\\p{L}* в (?:сети|интернете)|правила безопасности|podcasts?|documentary|adaptation|экранизаци\\p{L}*|подкаст\\p{L}*|интервью|документальн\\p{L}*)›",
   "‹(?:arrest\\p{L}*|police|court|convicted|charged|victims?›|abuse\\p{L}*|crime\\p{L}*|condamn\\p{L}*|enqu[eê]te|victime\\p{L}*|abus›|abus[ée]\\p{L}*|poursuivi\\p{L}*)",
-  "‹(?:зависим\\p{L}*|бросить|бросил\\p{L}*|исследован\\p{L}*|образован\\p{L}*|просвещ\\p{L}*|родител\\p{L}*|защит\\p{L}*|блокир\\p{L}*|закон\\p{L}*|новост\\p{L}*|стать(?:я|и|ю|е|ей|ях)›|психолог\\p{L}*|врач\\p{L}*|арест\\p{L}*|полиц\\p{L}*|суд›|суда›|суде›|задерж\\p{L}*|осужд\\p{L}*|преступ\\p{L}*|насили\\p{L}*|жертв\\p{L}*)");
+  "‹(?:(?:за)?блокир\\p{L}*|зависим\\p{L}*|бросить|бросил\\p{L}*|исследован\\p{L}*|образован\\p{L}*|просвещ\\p{L}*|родител\\p{L}*|защит\\p{L}*|закон\\p{L}*|новост\\p{L}*|стать(?:я|и|ю|е|ей|ях)›|психолог\\p{L}*|врач\\p{L}*|арест\\p{L}*|полиц\\p{L}*|суд›|суда›|суде›|задерж\\p{L}*|осужд\\p{L}*|преступ\\p{L}*|насили\\p{L}*|жертв\\p{L}*)");
 // Antispam bots members recommend or blame: "Поставьте @combot, он удаляет порно", "porn bots get past @shieldy_bot".
 const MODERATION_BOT = /@(?:combot|shieldy_bot|grouphelpbot|rose_bot|missrose_bot|spambot|banofbot|join_captcha_bot|captcha_bot)(?![\p{L}\p{N}_])/gu;
 // A scandal is news ("Sex tape scandal in parliament, details 👉 …") unless it is a leak being sold ("СКАНДАЛ! Слив интим видео…").
@@ -735,8 +739,10 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   const clauses = toldPart(commaText).replace(ADULT_DENIED, " ").replace(ADULT_SLANG, " ");
   // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
   return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(told) || GET_HERE.test(told) && LINK.test(text)
-    || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(JOIN, " "));
+    || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(TME_POST, " ").replace(JOIN, " "), TEASER.test(raw));
 }
+// A shared channel post is news, not a contact: "OnlyFans now accepts crypto, details t.me/cryptonews/1234".
+const TME_POST = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/[a-z0-9_]+\/\d+/giu;
 const JOIN = re("‹join›", "giu");
 
 // What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
