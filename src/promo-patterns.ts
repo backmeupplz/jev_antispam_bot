@@ -157,15 +157,25 @@ const DM = any(
 );
 const DM_ALL = new RegExp(DM.source, "giu");
 // A DM someone else sent the author is a report, not a call: "мне написали в лс", "в лс писали", "got a DM".
-const DM_SENDER = "(?:пишут|пишет|писали|писал[аи]?|написал[аи]?|зовут|звали|позвали|зов[её]т|предлага[ею]т|предложил[аи]?|приглаша[ею]т|пригласил[аи]?|прислал[аи]?|скинул[аи]?|кидают|кидает|кинул[аи]?|шл[юе]т|шл[её]т|скидыва[ею]т|присыла[ею]т|пришл[оаи]|пришел|прилета[ею]т|прилетел[аи]?|приход[яи]т|стуч[ия]тся|постучал(?:ся|ась|ись)|ломятся|лезут|спамят)›";
-const DM_REPORTED_BEFORE = re(`‹${DM_SENDER}(?:\\s[\\p{L}-]+){0,2}\\s?$|‹(?:got|received|sent me)\\s(?:a |an |some |this |the |another )?$`);
-// For adult content the author's own DMs are a report ("Porn bots in my DM", "У меня в лс порно бот") unless teased ("Free
-// nudes in my DM 😏"); a gig or trade offer "у меня в лс" still calls.
-const DM_OWN = re(`(?<!‹(?:come|slide|sliding|hop|jump|get)\\s)‹in(?:to)? my\\s$|‹у (?:меня|нас)\\s$`);
-const DM_REPORTED_AFTER = re(`^\\s?(?:[\\p{L}-]+\\s){0,3}${DM_SENDER}`);
+const DM_SENT = "пишут|пишет|писали|писал[аи]?|написал[аи]?|зовут|звали|позвали|зов[её]т|предлага[ею]т|предложил[аи]?|приглаша[ею]т|пригласил[аи]?|прислал[аи]?|скинул[аи]?|кидают";
+// Adult content arrives in members' DMs uninvited, so more verbs report it: "Мне в личку порно шлют", "В лс порно скидывают",
+// "Порно бот в лс постучался". They stay out of gig and trade offers, where "Резюме пришли в лс" is a call.
+const ADULT_DM_SENT = `${DM_SENT}|кидает|кинул[аи]?|шл[юе]т|шл[её]т|скидыва[ею]т|присыла[ею]т|пришл[оа]|пришел|пришёл|прилета[ею]т|прилетел[аи]?|приход[яи]т|стуч[ия]тся|постучал(?:ся|ась|ись)|ломятся|лезут|спам\\p{L}*|отправил[аи]?|отправля[ею]т|получил[аи]?|получа[ею]т|рассыла[ею]т`;
+const dmReported = (sent: string, before = "", after = "") => ({
+  before: re(`‹(?:${sent})›(?:\\s[\\p{L}-]+){0,2}\\s?$|‹(?:got|received|sent me)\\s(?:a |an |some |this |the |another )?$${before}`),
+  after: re(`^\\s?(?:[\\p{L}-]+\\s){0,3}(?:${sent})›${after}`),
+});
+const DM_REPORTED = dmReported(DM_SENT);
+// …and so does who sent it or getting it: "В лс порно от бота", "Got porn in DM from someone here", "I'm getting porn in DM".
+const ADULT_DM_REPORTED = dmReported(ADULT_DM_SENT, "|‹(?:got|getting|received|receiving)(?:\\s[\\p{L}-]+){0,2}\\s?$",
+  "|^\\s?(?:[\\p{L}-]+\\s){0,3}(?:от|from)\\s(?!(?:меня|нас|me|us)›)");
+// For adult content the author's own DMs are a report ("Porn bots in my DM", "У меня в лс порно бот", "Мне в лс порно бот")
+// unless teased ("Free nudes in my DM 😏"); a gig or trade offer "у меня в лс" still calls.
+const DM_OWN = re(`(?<!‹(?:come|slide|sliding|hop|jump|get)\\s)‹in(?:to)? my\\s$|‹у (?:меня|нас)\\s$|‹(?:ко )?(?:мне|нам)\\s$`);
 // "Желающие пишут в лс" addresses readers: the verb is a call, not a report.
 const WILLING = any("‹(?:желающ|заинтересован|интересующ|кому (?:интересно|надо|нужно)|кто (?:хочет|готов|заинтересован))");
-function callsToDm(text: string, ownDmCalls = true): boolean {
+function callsToDm(text: string, adult?: { teased: boolean }): boolean {
+  const reported = adult ? ADULT_DM_REPORTED : DM_REPORTED;
   return [...text.matchAll(DM_ALL)].some((match) => {
     const end = match.index + match[0].length;
     const after = text.slice(end, end + 60);
@@ -173,7 +183,8 @@ function callsToDm(text: string, ownDmCalls = true): boolean {
     if (match[0].endsWith("dm") && /^'?d(?![\p{L}\p{N}])/u.test(after)) return false;
     const start = Math.max(0, ...[".", "!", "?", "\n", ",", ":", ";"].map((mark) => text.lastIndexOf(mark, match.index - 1) + 1));
     const before = text.slice(Math.max(start, match.index - 40), match.index);
-    return WILLING.test(before) || !DM_REPORTED_BEFORE.test(before) && (ownDmCalls || !DM_OWN.test(before)) && !DM_REPORTED_AFTER.test(after);
+    return WILLING.test(before)
+      || !reported.before.test(before) && (!adult || adult.teased || !DM_OWN.test(before)) && !reported.after.test(after);
   });
 }
 // The author is the one looking for work, not offering it. People sought ("Ищу людей на подработку",
@@ -650,7 +661,7 @@ const FUNNEL = any(
   "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter) (?:it |them )?(?:now|free|here)›|‹get (?:it |them )?(?:now|free|access)›|‹free (?:preview|access|trial)›",
   "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
-  "@[a-z][a-z0-9_]*bot›|(?:(?<![\\p{L}\\p{N}_.-])|(?<=www\\.))(?:t|telegram)\\.me/(?![a-z0-9_]+/\\d)");
+  "@[a-z][a-z0-9_]*bot›|(?:(?<![\\p{L}\\p{N}_.-])|(?<=www\\.))(?:t|telegram)\\.me/");
 // A join, subscribe or open call is a funnel only in a sentence about the adult content: opening a clause about it
 // ("Subscribe to my OnlyFans"), calling to a channel, bot, site or link ("Новые нюдсы каждый день, вступай в канал", "Leaked
 // OnlyFans, join now https://…"), or as a bare call closing it ("Эротические видео каждый день, подписывайся", "Free porn
@@ -683,6 +694,10 @@ const TEASER = /[\u{1F60F}\u{1F975}\u{1F4A6}\u{1F608}\u{1F48B}\u{1FAE6}\u{1F445}
 // "бесплатно"): "Pornhub gives free premium", "free for creators" or "free to read" is news.
 const SALES = any("‹(?:free|hot|бесплатн\\p{L}*|горяч\\p{L}*) (?:[\\p{L}-]+ )?(?:p[o0]rn|п[o0]рн|nud|нюд|hentai|хентай|onlyfans|sex|секс|xxx|videos?›|vids?›|clips?›|pics?›|content›|access›|preview›|видео|ролик|контент)",
   "‹(?:for free|бесплатно|unlim\\p{L}*|new drops?|24/7|gratis|grátis|gratuit|kostenlos|real girls|no (?:registration|sign ?up)|безлимит\\p{L}*|без регистрации|реальн\\p{L}* девуш\\p{L}*)›");
+// "Нюдсы у меня в лс, пиши" asks to write: the author's DMs are the funnel.
+const WRITE = any("‹(?:пиши|пишите|напиши|напишите|write me|text me|message me)›");
+// An ad opens a sentence with what it sells ("Free nudes in my DM"); "I got free porn in my DM" is a complaint.
+const SELLS = new RegExp(`(?:^|[.!?\\n]\\s?)(?:${SALES.source})`, "iu");
 function pointsAtAd(raw: string, text: string): boolean {
   if (!raw.match(ARROWS)) return false;
   return TEASER.test(raw) || SALES.test(text) || raw.split("\n").some((line) => (line.match(ARROWS)?.length ?? 0) >= 2);
@@ -702,7 +717,8 @@ const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|мо
 const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
   "‹(?:удал(?:ить|ите|и)|против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются)|бан|в бан|забан\\p{L}*|баним|(?:здесь|тут) нельзя|нельзя(?=\\s?(?:[,.!;—–-]|$)))›|‹нельзя (?:[\\p{L}-]+ )?(?:писать|постить|публиковать|кидать|скидывать|размещать|выкладывать|отправлять|рекламировать)›",
   "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|ban|kick)›|(?<!‹no )‹rules?›",
-  "‹(?:удаляет|удаляют|чистит|банит|банят|кикает|блочит|фильтрует|kicks|bans|removes|deletes|filters|blocks)›");
+  // A bot that removes it: "Поставьте @ChatKeeperBot, он удаляет порно-ботов" (but "watch before Telegram deletes it" sells).
+  "(?:бот|bot|@[a-z][a-z0-9_]*)[^.!?\\n]{0,40}?‹(?:удаляет|удаляют|чистит|банит|банят|кикает|блочит|фильтрует|kicks|bans|removes|deletes|filters|blocks)›");
 // Health, recovery, education, settings, security, law, crime, morals and news talk about it: "porn addiction support group, join @…", "закон о блокировке
 // порно", "arrested for distributing porn, details: https://…". Ads never use these words.
 const ADULT_TALK = any("‹(?:addict\\p{L}*|recover\\p{L}*|nofap|quit(?:ting)?›|reboot\\p{L}*|therap\\p{L}*|research\\p{L}*|study|studies|education|parent\\p{L}*|protect\\p{L}*|block\\p{L}*|law›|laws›|bill›|ban on|news|article|report\\p{L}*|survey)",
@@ -738,10 +754,14 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   if (slang && !services) return Boolean(message.inlineButtons?.length) || INVITE.test(told);
   const clauses = toldPart(commaText).replace(ADULT_DENIED, " ").replace(ADULT_SLANG, " ");
   // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
-  return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(told) || GET_HERE.test(told) && LINK.test(text)
-    || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(TME_POST, " ").replace(JOIN, " "), TEASER.test(raw));
+  // A shared channel post is news, not a funnel, unless teased or sold: "OnlyFans now accepts crypto, details t.me/cryptonews/1234"
+  // is news, "Горячие нюдсы 🥵 t.me/hot_nudes/12" an ad.
+  const teased = TEASER.test(raw) || SALES.test(text);
+  const posted = teased ? told : told.replace(TME_POST, " ");
+  return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(posted)
+    || GET_HERE.test(told) && LINK.test(teased ? text : text.replace(TME_POST, " "))
+    || callsToContent(clauses) || callsToDm(posted.replace(WEB_LINK, " ").replace(JOIN, " "), { teased: TEASER.test(raw) || SELLS.test(text) || WRITE.test(posted) });
 }
-// A shared channel post is news, not a contact: "OnlyFans now accepts crypto, details t.me/cryptonews/1234".
 const TME_POST = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/[a-z0-9_]+\/\d+/giu;
 const JOIN = re("‹join›", "giu");
 
