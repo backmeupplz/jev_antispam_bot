@@ -1,4 +1,4 @@
-// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–25), pinned with their exact outcome.
+// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–25) and #148, pinned with their exact outcome.
 // [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
@@ -539,6 +539,11 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Нюдсы в лс от 2 фото бесплатно"],
   ["Нюдсы в лс от «Kate» 🥵 пиши"],
   ["Порно видео, наш бот в личке ответит 🥵"],
+  // #148: ads the stop/report cues must keep.
+  ["Не шли деньги на OnlyFans, бесплатные нюдсы в боте @free_nudes_bot"],
+  ["Free porn, our bot @freeporn_bot in the comments 👇"],
+  ["Наш порно бот @hot_bot в комментах 🥵"],
+  ["Porn bot @hotporn_x_bot 🥵 free nudes 24/7"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1309,6 +1314,23 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn in my DM from 5 bots"],
   ["Опять порно бот в личке"],
   ["Мой бот в лс получает порно спам, как защититься"],
+  // #148: stop-sending complaints and handle-naming reports.
+  ["Stop sending me porn in DM"],
+  ["Stop sending nudes to my DM"],
+  ["Хватит слать нюдсы в лс"],
+  ["Перестаньте кидать порно в лс"],
+  ["Не присылайте нюдсы в лс, пожалуйста"],
+  ["Не шлите мне порно в личку"],
+  ["Please don't DM me nudes"],
+  ["Порно бот @xxx_bot в комментах"],
+  ["В комментах порно бот @xxx_bot, пожалуйтесь"],
+  ["Porn bot alert: @xxx_bot"],
+  ["Stop DMing me porn"],
+  ["Хватит кидать мне порно в личку"],
+  ["Не надо слать мне нюдсы"],
+  ["Не надо слать мне нюдсы в лс"],
+  ["Quit sending me nudes in DM"],
+  ["Перестаньте спамить порно в лс"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
@@ -1440,7 +1462,6 @@ export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Смотрю тут хентай, заходи"],
   ["Ну и порно у тебя в коде, заходи"],
   ["Fun fact: OnlyFans was built for musicians, open the site and see"],
-  ["Porn bot alert: @hotgirls_bot"],
   ["Got a DM from a porn bot: @hotgirls_bot"],
   ["DM me if you want my hentai recommendations"],
   ["Watching hentai with friends tonight", true],
