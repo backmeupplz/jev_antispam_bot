@@ -168,11 +168,11 @@ const dmReported = (sent: string, before = "", after = "") => ({
 const DM_REPORTED = dmReported(DM_SENT);
 // …and so does who sent it or getting it: "В лс порно от бота", "Got porn in DM from someone here", "I'm getting porn in DM".
 const ADULT_DM_REPORTED = dmReported(ADULT_DM_SENT, "|‹(?:got|getting|received|receiving)(?:\\s[\\p{L}-]+){0,2}\\s?$",
-  "|^\\s?(?:[\\p{L}-]+\\s){0,3}(?:от|from)\\s(?!(?:меня|нас|me|us)›)(?=\\p{L}|@|\\d+\\s(?:[\\p{L}-]+\\s)?(?:бот|акк|аккаунт|номер|людей|человек|bots?›|accounts?›|numbers?›|people›|users?›|guys?›))");
+  "|^\\s?(?:[\\p{L}-]+\\s){0,3}(?:от|from)\\s(?!(?:меня|нас|me|us)›)(?=\\p{L}|@|\\d+(?:-?(?:х|x|ти|ми|ех|ух|го)|\\+)?(?:\\s?[-–]\\s?\\d+)?\\s(?:[\\p{L}-]+\\s)?(?:бот|акк|аккаунт|номер|людей|человек|bots?›|accounts?›|numbers?›|people›|users?›|guys?›))");
 // For adult content the author's own DMs or a bot sitting there are a report ("Porn bots in my DM", "У меня в лс порно бот",
 // "Мне в лс порно бот", "Порно бот в личке")
 // unless teased ("Free nudes in my DM 😏"); a gig or trade offer "у меня в лс" still calls.
-const DM_OWN = re(`(?<!‹(?:come|slide|sliding|hop|jump|get)\\s)‹in(?:to)? my\\s$|‹у (?:меня|нас)\\s$|‹(?:ко )?(?:мне|нам)\\s$|‹бот(?:ы|ов)?\\s$`);
+const DM_OWN = re(`(?<!‹(?:come|slide|sliding|hop|jump|get)\\s)‹in(?:to)? my\\s$|‹у (?:меня|нас)\\s$|‹(?:ко )?(?:мне|нам)\\s$|(?<!‹(?:наш|мой|наши|мои)\\s)‹бот(?:ы|ов)?\\s$`);
 // "Желающие пишут в лс" addresses readers: the verb is a call, not a report.
 const WILLING = any("‹(?:желающ|заинтересован|интересующ|кому (?:интересно|надо|нужно)|кто (?:хочет|готов|заинтересован))");
 function callsToDm(text: string, adult?: { teased: boolean }): boolean {
