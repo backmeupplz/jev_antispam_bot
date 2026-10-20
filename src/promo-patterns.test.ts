@@ -7,7 +7,7 @@ import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, crypt
 import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
 import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
-import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
+import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -188,6 +188,10 @@ test("the #145 adult promo matches with or without its buttons, standalone, as a
 });
 
 test.each(adultPromoParaphrases)("held-out adult promo matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(adult);
+});
+
+test.each(adultPromoReviewAds)("adult promo found in review matches: %s", (text) => {
   expect(promoPattern(plain(text))).toBe(adult);
 });
 

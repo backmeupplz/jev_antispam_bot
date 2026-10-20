@@ -25,6 +25,14 @@ export const adultPromoParaphrases = [
   "Private rooms · face cam · full-length scenes — open the app below",
 ];
 
+// Astra review round 1 (PR #49): ads the fixes must keep catching.
+export const adultPromoReviewAds = [
+  "Sex chat with real girls 24/7 → https://example.invalid/chat",
+  "Запрещёнка 18+ видео 👉 t.me/+example",
+  "Unlim porn, no rules, tap below 👇",
+  "Смотри без регистрации порно видео тут 👇",
+];
+
 // Must stay kept: warnings and reports, moderation and rule reminders quoting such posts, sex-ed, health and news,
 // jokes or slang without a funnel, complaints about adult bots.
 export const adultPromoControls = [
@@ -53,4 +61,22 @@ export const adultPromoControls = [
   "This is a nude lipstick shade, link in bio",
   "Private rooms available at our hostel, book via the link below",
   "Stream with face cam today, join the channel t.me/gaming_stream",
+  // Astra review round 1 (PR #49): shared links, film talk, "X porn" slang, complaints and settings help.
+  "NSFW but hilarious 😂 https://imgur.com/abc",
+  "Apple removed NSFW channels from Telegram on iPhone, more here https://9to5mac.com/x",
+  "Telegram now hides adult content by default, here's how to turn it on: https://telegram.org/faq",
+  "OnlyFans creators earn more than doctors now, crazy. https://bbc.com/x",
+  "Watched a documentary on the porn industry yesterday. Link: https://netflix.com/x",
+  "OnlyFans is going to ban explicit content, lol https://x.com/post",
+  "Сайт с порно заблокировали, теперь через VPN, вот ссылка https://vpn.example",
+  "Найс фотки, прям порно для фотографов 😂 ссылка на оригинал https://flickr.com/x",
+  "The new season has 18+ scenes, trailer: https://youtube.com/watch?v=x",
+  "Erotic thriller movies list: https://letterboxd.com/list",
+  "Warning: the video contains explicit scenes, trailer here https://youtube.com/watch?v=y",
+  "Food porn 🍔 at Mama's diner, link below",
+  "Food porn 🍕 in Antalya, check my profile for the place",
+  "Real estate porn: this villa is insane https://example.invalid/villa",
+  "Porn bots keep trying to join our chat, can we enable a captcha?",
+  "Who else got the porn bot DM today? 🙄",
+  "Чтобы видеть 18+ контент в телеге, зайди в настройки конфиденциальности",
 ];
