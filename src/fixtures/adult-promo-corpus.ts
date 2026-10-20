@@ -646,6 +646,12 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Stop sending this porn to your friends, watch it yourself in @porn_bot 🥵"],
   ["Хватит слать это порно друзьям, все нюдсы тут @nudes_bot 🥵"],
   ["Нюдсы в боте @nudes_bot 🥵 Хватит кидать это в лс"],
+  ["Porn bot alert: @hot_porn_bot 🥵 FREE PORN VIDEOS"],
+  ["Porn bot alert 🥵 @hot_porn_bot"],
+  ["Porn bot alert: @hot_bot free nudes"],
+  ["Hot porn bot alert 🥵 @hot_porn_bot"],
+  ["Горячие нюдсы 🥵 @nudes_bot, пожалуйтесь если не понравится"],
+  ["Porn bot alert 🔥 @newporn_bot free videos"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1566,7 +1572,6 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Нюдсы, пиши в лс кидала уже всем"],
   // #148: read the same as the pinned handle-naming reports or stop requests.
   ["Porn bot @hotporn_bot in comments 👇"],
-  ["Porn bot alert 🔥 @newporn_bot free videos"],
   ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
   ["Не надо кидать порно друзьям, смотри сам в @porn_bot"],
   ["Хватит слать мне в лс просьбы, нюдсы тут @nudes_bot"],
