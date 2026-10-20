@@ -711,12 +711,16 @@ const LINK = /https?:\/\/|(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\
 // or progressive ("he was posting porn").
 // A member asks to stop it: "Stop sending me porn in DM", "Хватит слать нюдсы в лс", "Не шлите мне порно в личку", "Please
 // don't DM me nudes". Only about the content or the DMs: "Не шли деньги на OnlyFans, бесплатные нюдсы в боте" sells.
-const STOP_FILLER = "(?:me|us|мне|нам|сюда|больше|ещ[её]|свои|ваши|твои|эти|всякие|any|more|your|these|those|such|random) ";
+const STOP_FILLER = "(?:me|us|мне|нам|сюда|больше|ещ[её]|свои|ваши|твои|эти|any|more|your|these|those|such|random) ";
 const STOP_TERMS = "p[o0]rn|п[o0]рн|nud|нюд|nsfw|xxx|hentai|хентай|интим|эрот|erotic|onlyfans|онлифанс|sex|секс";
-// Writing verbs need the content itself: "Хватит писать мне в лс, все нюдсы в боте @…" sells. "This" or "это" points at it
-// only before the term ("Stop sending me this porn"): "Хватит слать это в лс, нюдсы в боте @…" sells too.
-const STOP_ADULT = `(?:${STOP_FILLER}|(?:this|that|это|эту|этот) )*(?:${STOP_TERMS})`;
-const STOP_OBJECT = `(?:${STOP_ADULT}|(?:${STOP_FILLER})*(?:(?:в|во|to|in|into) (?:my |мою |мой |мне )?(?:лс›|личк|личн|директ|dms?›|pms?›|inbox›)|dms?›|pms?›))`;
+// Writing verbs need the content itself: "Хватит писать мне в лс, все нюдсы в боте @…" sells. "This", "это" or "такое"
+// points at it before the term ("Stop sending me this porn", "Хватит слать всякое порно в лс"), but before the DMs only with
+// no link or handle to sell: "Хватит кидать мне это в лс, порно никому не нужно" complains, "Хватит слать это в лс, нюдсы
+// в боте @…" sells.
+const STOP_POINTER = "(?:this|that|это|эту|этот|всяк\\p{L}*|так(?:ое|ие|ую|ой)) ";
+const STOP_ADULT = `(?:${STOP_FILLER}|${STOP_POINTER})*(?:${STOP_TERMS})`;
+const STOP_OBJECT = `(?:${STOP_ADULT}|(?:${STOP_FILLER}|${STOP_POINTER}(?![\\s\\S]*(?:@[a-z]|t\\.me/|https?://)))*`
+  + "(?:(?:в|во|to|in|into) (?:my |мою |мой |мне )?(?:лс›|личк|личн|директ|dms?›|pms?›|inbox›)|dms?›|pms?›))";
 // A handle named as a report: "Порно бот @xxx_bot в комментах", "В комментах порно бот @xxx_bot, пожалуйтесь", "Porn bot
 // alert: @xxx_bot", also fused ("Порнобот @…", "порно-бот @…"). An ad's "Best porn bot @…bot 🥵", "Bot alert! @…" or "our bot
 // @…bot in the comments" names its own.
