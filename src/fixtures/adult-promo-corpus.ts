@@ -1,4 +1,4 @@
-// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–14), pinned with their exact outcome.
+// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–15), pinned with their exact outcome.
 // [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
@@ -317,6 +317,22 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["This is porn 💦 DM me"],
   ["Это порно 🥵 пиши в лс"],
   ["Это настоящее порно 🥵 t.me/+AbCdEf"],
+  ["This is porn 🥵 t.me/hotxxx?start=ref"],
+  ["This is porn 🥵 telegram.me/hotxxx"],
+  ["This is porn 🥵 https://t.me/hotxxx/"],
+  ["This is porn 🥵 HTTPS://T.ME/HOTXXX"],
+  ["This is porn 🥵 https://t.me/joinchat/AbCdEf"],
+  ["This is porn 🥵 https://t.me/+AbCdEf"],
+  ["This is porn 🥵 @HotXXX_Bot"],
+  ["Это порно 🔥 t.me/hot18x/"],
+  ["This is porn 🥵 t.me/s/hotxxx"],
+  ["This is porn 🥵 t.me/hotxxx_bot?start=1"],
+  ["This is porn 🥵 www.t.me/hotxxx"],
+  ["Это порно 🔥\nt.me/hot18x"],
+  ["🔞 Не открывай, если тебе нет 18 😏 Порно без цензуры 👉 t.me/+AbCdEf"],
+  ["НЕ ОТКРЫВАЙ ЕСЛИ ТЕБЕ НЕТ 18 🔞 Горячие нюдсы 👇 t.me/+AbCdEf"],
+  ["Не подписывайся, если тебе нет 18. Порно канал t.me/+AbCdEf"],
+  ["Не жми, если слабонервный 🥵 Слив нюдсов 👉 @sliv_nudes_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -756,6 +772,17 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["That bot is porn - ban it 👇 @hotgirls_bot"],
   ["This keyboard is porn 🔥 https://t.me/mechkeys/456"],
   ["Этот рендер — порно 🔥 t.me/+AbCdEf"],
+  ["This keyboard is porn 🔥 t.me/mechkeys/456?single"],
+  ["This keyboard is porn 🔥 https://t.me/c/1234567890/456"],
+  ["Этот сетап — порно 🔥 https://t.me/setups/12?comment=34"],
+  ["Этот рендер — порно 🔥 HTTPS://T.ME/ARTCHANNEL/123"],
+  ["Этот рендер — порно 🔥 telegram.me/artchannel/123"],
+  ["This portfolio is porn 🔥 about.me/annadesign"],
+  ["This portfolio is porn 🔥 https://chat.me/x"],
+  ["Порно бот в комментах 👇👇 не переходите"],
+  ["Не открывайте ссылку от порно бота @hotgirls_bot"],
+  ["Порно бот в комментах 👇👇 не жмите на ссылку"],
+  ["Новые нюдсы в комментах 👇👇 не кликайте"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
@@ -771,7 +798,6 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Hot nsfw content, wanna join t.me/hot?"],
   ["🔞 NSFW clips daily. Subscribe to my channel for more 💋"],
   ["🔞 Don't click if you're under 18 👇 Hot p0rn videos", true],
-  ["Don't open if you're shy 😏 XXX content inside 👇", true],
   ["Порно приколы и 18+ видео 🔞 подписывайся t.me/+fun18"],
   ["Hot porn memes & nudes 🔞 join t.me/+memes18"],
   ["Admins of this channel post new nudes daily 🔥 join t.me/+daily"],

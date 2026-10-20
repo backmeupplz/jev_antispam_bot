@@ -647,7 +647,7 @@ const FUNNEL = any(
   "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter) (?:it |them )?(?:now|free|here)›|‹get (?:it |them )?(?:now|free|access)›|‹free (?:preview|access|trial)›",
   "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
-  "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/");
+  "@[a-z][a-z0-9_]*bot›|(?:(?<![\\p{L}\\p{N}_.-])|(?<=www\\.))(?:t|telegram)\\.me/");
 // A join, subscribe or open call is a funnel only in a sentence about the adult content: opening a clause about it
 // ("Subscribe to my OnlyFans"), calling to a channel, bot, site or link ("Новые нюдсы каждый день, вступай в канал", "Leaked
 // OnlyFans, join now https://…"), or as a bare call closing it ("Эротические видео каждый день, подписывайся", "Free porn
@@ -686,14 +686,14 @@ function pointsAtAd(raw: string, text: string): boolean {
 }
 // "Get it here" calls to a link, bot or the buttons: "porn bots get here every day" is a complaint.
 const GET_HERE = any("‹get (?:it )?here›");
-const LINK = /https?:\/\/|(?:t|telegram)\.me\/|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
+const LINK = /https?:\/\/|(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
 // Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
 // An ad tells what its model does in the present ("She posts new nudes daily"), so he, she and they report only in the past
 // or progressive ("he was posting porn").
 const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|he|she|they|кто-то|какой-то|этот|эта|он|она|они) (?:[\\p{L}-]+ ){0,2}?(?:posted|posting|sent|sending|shared|sharing|promoting|spamming|dropped|кинул\\p{L}*|скинул\\p{L}*|прислал\\p{L}*|выложил\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|кто-то|какой-то|этот|эта) (?:[\\p{L}-]+ ){0,2}?(?:posts|sends|promotes|spams|постит|кидает|присылает|рассылает|спамит)›",
-  "‹(?:p[o0]rn\\p{L}*|nsfw|spam|fake|these|those) (?:bots|accounts|spammers) (?:[\\p{L}\\d-]+ ){0,2}?join›|‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying|adding)|don['’]?t (?:join|click|open|subscribe|tap)|не (?:открывай|переходи|жми|нажимай|кликай|подписывайся)\\p{L}*|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
+  "‹(?:p[o0]rn\\p{L}*|nsfw|spam|fake|these|those) (?:bots|accounts|spammers) (?:[\\p{L}\\d-]+ ){0,2}?join›|‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying|adding)|(?:don['’]?t (?:join|click|open|subscribe|tap)|не (?:открывай|переходи|жми|нажимай|кликай|подписывайся)\\p{L}*)›(?!,?\\s(?:(?:it|this) )?(?:if|unless|если|пока)›)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
 // Rules and moderation: "Porn is banned here", "no porn allowed", "за порно бан", "запрещено публиковать порно". An ad's
 // "запрещённое видео", "запрещёнка" or "forbidden content" sells it, and so does "no rules".
 const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
@@ -711,9 +711,9 @@ const MODERATION_BOT = /@(?:combot|shieldy_bot|grouphelpbot|rose_bot|missrose_bo
 // A scandal is news ("Sex tape scandal in parliament, details 👉 …") unless it is a leak being sold ("СКАНДАЛ! Слив интим видео…").
 const SCANDAL = any("‹(?:scandal\\p{L}*|скандал\\p{L}*)");
 const LEAK = any("‹(?:leak\\p{L}*|слив\\p{L}*|слил\\p{L}*|слит\\p{L}*|утек\\p{L}*|утечк\\p{L}*)");
-const LINKED = /(?:t|telegram)\.me\/|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
+const LINKED = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
 // An invite or channel link, not a shared post ("t.me/+…", "t.me/joinchat/…", "t.me/name", but not "t.me/name/123"), or a bot.
-const INVITE = /(?:t|telegram)\.me\/(?:\+|joinchat\/|[a-z0-9_]+(?![a-z0-9_]*\/\d))|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
+const INVITE = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/(?:\+|joinchat\/|[a-z0-9_]+(?![a-z0-9_]*\/\d))|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
 // A joke or meme shared in chat: "lmao the nudes meme 👇", "lol dm me for nudes 😂 jk". Ads tease (😏 🥵 💦), they don't laugh.
 const ADULT_JOKE = any("‹(?:lol|lmao|rofl|jk|haha\\p{L}*|memes?|jokes?|ахах\\p{L}*|хаха\\p{L}*|мем\\p{L}*|шутк\\p{L}*|прикол\\p{L}*)›");
 const LAUGHING = /[\u{1F602}\u{1F923}]/u;
