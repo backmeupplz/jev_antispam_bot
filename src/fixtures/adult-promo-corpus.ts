@@ -575,6 +575,12 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Перестань присылать нюдсы бесплатно 🥵 зарабатывай с нами @of_agency_bot"],
   ["Stop sending nudes for free, sell them on OnlyFans 👉 @creator_bot"],
   ["Do not send nudes for free, earn with OnlyFans 👉 @of_bot"],
+  ["Хватит кидать это в лс, нюдсы в боте @nudes_bot"],
+  ["Хватит слать это в лс, лучшие нюдсы тут 👉 @nudes_bot"],
+  ["Stop sending this in DMs, free porn here 👉 @porn_bot"],
+  ["Не присылайте это мне в лс, лучше заходи в бот @porn_bot 🥵 бесплатное порно"],
+  ["Не шли эту фигню, бесплатные нюдсы в боте @nudes_bot"],
+  ["Хватит слать этот бред, горячие нюдсы бесплатно @nudes_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
