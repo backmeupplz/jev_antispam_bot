@@ -4,7 +4,8 @@ import type { ModerationMessage } from "./spam";
 // the structure of the ad (offer + pay per period + move-to-DM call; a first-person
 // "I took the test in @…bot" endorsement), not its wording. Data: docs/promo-patterns.md.
 // #142 adds a third: an unsolicited P2P crypto trade ask (buy/sell intent + a crypto asset + a deal cue).
-export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask";
+// #145 adds a fourth: explicit adult-content promotion (explicit porn/XXX content + a funnel to a button, site, bot or DM).
+export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
 export const PATTERN_MIN_SCORE = 0.3;
@@ -603,6 +604,60 @@ function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
   return !answersRequest(message, CRYPTO_TOPIC);
 }
 
+// --- Explicit adult-content promotion (#145): explicit porn/XXX content + a funnel to a button, site, bot, channel or DM. ---
+// What the funnel sells: "content", "videos", "clips", "контент", "видео", also obfuscated ("c0ntent").
+// A channel or chat is no content: "18+ chat" is an age limit.
+const CONTENT = "(?:content|c0nt[e3]nt|cont3nt|videos?|vids?|clip\\p{L}*|movies?|films?|scenes?|pics?|photos?|контент\\p{L}*|видео\\p{L}*|ролик\\p{L}*|клип\\p{L}*|фото\\p{L}*|klip\\p{L}*)›";
+// Explicit terms, obfuscated or not: porn (p0rn, pr0n, порно), nudes, NSFW, OnlyFans, hentai, a sex video/chat/cam, cam girls,
+// leaked nudes, and "18+", "XXX", erotic or adult only next to what is sold ("XXX content", "18+ видео", "c0ntent xXx").
+// Sexuality, medicine and news words ("sexual", "sexualité", "pédopornographie", "18+ only", "uncensored video") are not.
+const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
+  "‹(?:nud[e3]s|nudez|нюдс\\p{L}*|нюдес\\p{L}*|nsfw|onlyfans|only fans|онлифанс\\p{L}*|hentai|хентай\\p{L}*)›",
+  "‹(?:sex|секс)[ -]?(?:videos?|vids?|clips?|chats?|cams?|tapes?|content|видео|чат\\p{L}*|переписк\\p{L}*|ролик\\p{L}*|контент\\p{L}*)›|‹sexchat›|‹(?:sexy|naked|nude) (?:videos?|vids?|clips?|pics?|photos?|content)›",
+  "‹cam ?girls?›|‹(?:webcam|live cam) (?:shows?|girls?|models?|sex)›",
+  "‹(?:leaked|слив\\p{L}*|слит\\p{L}*) (?:[\\p{L}-]+ )?(?:nudes|onlyfans|онлифанс\\p{L}*|нюд\\p{L}*|интим\\p{L}*)",
+  `(?<![\\p{L}\\p{N}])(?:18 ?\\+|x{3,}›|эро(?:тик|тическ)\\p{L}*|erotic\\p{L}*|интим\\p{L}*|adult›|explicit›) (?:(?!only›|только›)[\\p{L}-]+ )?${CONTENT}`,
+  `‹${CONTENT} (?:[\\p{L}-]+ )?(?:18 ?\\+|x{3,}›)`);
+// Adult-service phrases explicit only together: "Private rooms · full-length scenes · face cam · no blur".
+const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
+// Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно".
+const ADULT_DENIED = re("‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:[\\p{L}-]+ )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*", "giu");
+// The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a join or
+// subscribe call, a DM call, a bot handle, a t.me link or URL buttons attached to the message.
+const FUNNEL = any(
+  "‹(?:tap|click|press|hit|pick|choose|select|use) (?:[\\p{L}-]+ ){0,2}?(?:buttons?|doors?|links?|rooms?)›",
+  "‹(?:buttons?|links?|doors?) (?:below|here|in (?:my |the )?(?:bio|profile|comments|description))›",
+  "‹open (?:the |my |our |a )?(?:site|website|bot|app|link|channel|vault|chat|room)›",
+  "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:join|subscribe|sign up)›|‹(?:watch|play|enter|get) (?:it )?(?:now|free|here|in|access)›|‹free (?:preview|access|trial)›",
+  "‹(?:жми|нажми|нажимай|кликай|кликни|переходи|перейди|заходи|зайди|подписывайся|подпишись|вступай|вступи|открой|открывай)›|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
+  "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
+  "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/|https?://");
+// Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️.
+const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]/u;
+// Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
+// An ad tells what its model does in the present ("She posts new nudes daily"), so he, she and they report only in the past
+// or progressive ("he was posting porn").
+const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
+  "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|he|she|they|кто-то|какой-то|этот|эта|он|она|они) (?:[\\p{L}-]+ ){0,2}?(?:posted|posting|sent|sending|shared|sharing|promoting|spamming|dropped|кинул\\p{L}*|скинул\\p{L}*|прислал\\p{L}*|выложил\\p{L}*)›",
+  "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|кто-то|какой-то|этот|эта) (?:[\\p{L}-]+ ){0,2}?(?:posts|sends|promotes|spams|постит|кидает|присылает|рассылает|спамит)›",
+  "‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are)›");
+// Rules and moderation: "Porn is banned here", "no porn allowed", "за порно бан", "запрещено публиковать порно". An ad's
+// "запрещённое видео" or "forbidden content" sells it.
+const ADULT_RULE = any(`‹(?:запрещ\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
+  "‹(?:против правил|нарушени\\p{L}* правил|будут удал\\p{L}*|удаля(?:ем|ются)|бан|в бан|забан\\p{L}*|баним|(?:здесь|тут) нельзя)›|‹нельзя (?:[\\p{L}-]+ )?(?:писать|постить|публиковать|кидать|скидывать|размещать|выкладывать|отправлять|рекламировать)›",
+  "‹(?:not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|rules?)›");
+// Health, recovery, education, law, crime and news talk about it: "porn addiction support group, join @…", "закон о блокировке
+// порно", "arrested for distributing porn, details: https://…". Ads never use these words.
+const ADULT_TALK = any("‹(?:addict\\p{L}*|recover\\p{L}*|nofap|quit(?:ting)?›|reboot\\p{L}*|therap\\p{L}*|research\\p{L}*|study|studies|education|parent\\p{L}*|protect\\p{L}*|block\\p{L}*|law›|laws›|bill›|ban on|news|article|report\\p{L}*|survey)",
+  "‹(?:arrest\\p{L}*|police|court|convicted|charged|victims?›|abuse\\p{L}*|crime\\p{L}*|condamn\\p{L}*|enqu[eê]te|victime\\p{L}*|abus›|abus[ée]\\p{L}*|poursuivi\\p{L}*)",
+  "‹(?:зависим\\p{L}*|бросить|бросил\\p{L}*|исследован\\p{L}*|образован\\p{L}*|просвещ\\p{L}*|родител\\p{L}*|защит\\p{L}*|блокир\\p{L}*|закон\\p{L}*|новост\\p{L}*|стать(?:я|и|ю|е|ей|ях)›|психолог\\p{L}*|врач\\p{L}*|арест\\p{L}*|полиц\\p{L}*|суд›|суда›|суде›|задерж\\p{L}*|осужд\\p{L}*|преступ\\p{L}*|насили\\p{L}*|жертв\\p{L}*)");
+function adultPromo(message: ModerationMessage, raw: string, text: string): boolean {
+  const undenied = text.replace(ADULT_DENIED, " ");
+  if (!ADULT.test(undenied) && new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size < 2) return false;
+  if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)) return false;
+  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(text) || callsToDm(text.replace(WEB_LINK, " "));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -624,6 +679,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source)) ? undefined : "side_gig_offer";
   }
   if (cryptoTradeAsk(message, text)) return "crypto_trade_ask";
+  if (adultPromo(message, raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;

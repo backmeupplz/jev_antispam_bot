@@ -28,6 +28,7 @@ import { shortRepeats, usdtAsk, usdtBareAsk, usdtBareAskVariants, usdtControls }
 import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
 import { botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
+import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -2416,6 +2417,41 @@ test("crypto trade controls at 0.79 and requested answers stay kept; an ask unde
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
     { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.29, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+// #145: explicit adult-content promotion forwarded from a channel with URL buttons (incident text, SYNTHETIC buttons).
+const adultKeyboard = { inline_keyboard: adultPromoIncidentButtons.map(({ text, url }) => [{ text, url }]) };
+test("the forwarded adult promo with five URL buttons at 0.4999 is deleted by the adult pattern; telemetry counts buttons only", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.4999));
+  await h.send({ text: adultPromoIncident, from: forwardedUser, forward_origin: forwarded, reply_markup: adultKeyboard });
+  h.setAnswer(keepAt(0.6));
+  await h.send({ chat: groupB, text: adultPromoParaphrases[0] });
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "message_analysis_started").map((log) => [log.inlineButtonCount, log.forwardOriginKind]))
+    .toEqual([[5, "channel"], [0, null]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "adult_content_promo", confidence: 0.4999, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: groupB.id, messageId: 2, isEdited: false, pattern: "adult_content_promo", confidence: 0.6, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount]))
+    .toEqual([[1, "adult_content_promo", 1], [2, "adult_content_promo", 1]]);
+  const telemetry = JSON.stringify(h.logs);
+  for (const sensitive of ["p0rn", "c0ntent", channel.title, ...adultPromoIncidentButtons.flatMap(({ text, url }) => [text, url])]) expect(telemetry).not.toContain(sensitive);
+  await h.stats.stop();
+});
+
+test("adult promo controls at 0.79 stay kept; the incident under the floor only logs", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of adultPromoControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  h.setAnswer(keepAt(0.29));
+  const floor = await h.send({ text: adultPromoIncident, reply_markup: adultKeyboard });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "adult_content_promo", confidence: 0.29, decision: "keep" },
   ]);
   await h.stats.stop();
 });
