@@ -624,16 +624,19 @@ const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
 // Adult-service phrases explicit only together: "Private rooms · full-length scenes · face cam · no blur".
 const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
 // Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно". "Food porn" and other
-// "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad. Neither is
-// porn as a predicate ending its clause or praising: "this code review is porn,", "the new MacBook is porn imo", "Эта клавиатура —
-// чистое порно, жми", "не код, а порно.", "порно какое-то", "porn for nerds", "порно для любого дизайнера". An ad's "Pure porn 24/7"
-// or "Это порно канал" is no predicate. A "nudes palette" is make-up.
-const PRAISE = "pure|absolute|total|literal|literally|basically|straight up|kinda|just|чистое|чистой воды|просто|прям|прямо|сплошное";
-const PRAISED = "(?:for|для) (?:(?:any|every|all|true|real|любого|каждого|настоящих|всех|истинных) )?(?:nerds?|geeks?|devs?|developers?|engineers?|designers?|programmers?|coders?|perfectionists?|gamers?|the eyes|eyes|ears|(?:гик|нерд|дизайнер|разработчик|программист|перфекционист|инженер|айтишник|геймер|глаз|ушей|души|мозг)\\p{L}*)›";
-const ADULT_DENIED =re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|engine|woodworking|kitchen|bike|watch|shoe|sneaker|chess|gpu|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*"
-  + `|(?:‹(?:is|are|was|were|it['’]?s|that['’]?s|это|а)|\\s[—–-])\\s(?:(?:${PRAISE}) ){0,2}(?:p[o0]rn|п[o0]рн)\\p{L}*(?=\\s?(?:[,.!;:—–-]|$|\\p{Extended_Pictographic}|(?:imo|tbh|ngl|honestly|какое-то)›|${PRAISED}))`
-  + `|‹(?:p[o0]rn|п[o0]рн)\\p{L}* (?:какое|какой|какая)-то|‹(?:p[o0]rn|п[o0]рн)\\p{L}* ${PRAISED}`
+// "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad. A "nudes
+// palette" is make-up.
+const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|engine|woodworking|kitchen|bike|watch|shoe|sneaker|chess|gpu|eye|visual|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*"
   + "|‹nud[e3]s? (?:palettes?|lipsticks?|shades?|tones?|collection)›", "giu");
+// Porn as a predicate ending its clause, or as praise, is slang: "this code review is porn,", "the new MacBook is porn imo",
+// "Эта клавиатура — чистое порно, жми", "не код, а порно.", "порно какое-то", "porn for nerds", "порно для любого дизайнера".
+// An ad's "Pure porn 24/7" or "Это порно-канал" is no predicate. Slang cancels only weak cues (a click or жми call, an arrow, a
+// DM call); a t.me link, a bot handle or URL buttons still sell it ("This is porn 🥵 t.me/…").
+const PRAISE = "pure|absolute|total|literal|literally|basically|straight up|kinda|just|real|true|visual|чистое|чистой воды|просто|прям|прямо|сплошное|настоящее|визуальное";
+const PRAISED = "(?:for|для) (?:(?:any|every|all|true|real|любого|каждого|настоящих|всех|истинных) )?(?:nerds?|geeks?|devs?|developers?|engineers?|designers?|programmers?|coders?|perfectionists?|gamers?|the eyes|eyes|ears|(?:гик|нерд|дизайнер|разработчик|программист|перфекционист|инженер|айтишник|геймер|глаз|ушей|души|мозг)\\p{L}*)›";
+const ADULT_SLANG = re(`(?:‹(?:is|are|was|were|it['’]?s|that['’]?s|это|а)|\\s[—–-])\\s(?:(?:${PRAISE}) ){0,2}(?:p[o0]rn|п[o0]рн)\\p{L}*`
+  + `(?=\\s?(?:[,.!;:—–]|$|\\p{Extended_Pictographic}|(?:imo|tbh|ngl|honestly|bro|dude|man|to me|какое-то|в чистом виде)›|${PRAISED})|\\s-\\s)`
+  + `|‹(?:p[o0]rn|п[o0]рн)\\p{L}* (?:какое|какой|какая)-то|‹(?:p[o0]rn|п[o0]рн)\\p{L}* (?:в чистом виде|${PRAISED})`, "giu");
 // The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a DM call, a bot
 // handle, a t.me link or URL buttons attached to the message. A plain web link is a shared article or joke, and "зайди в
 // настройки" is settings help.
@@ -673,9 +676,9 @@ function callsToContent(told: string): boolean {
 // is a funnel only with a teaser or sales cue (😏 🥵 💦, "free", "unlim", "new drops") or in a row of arrows on one line ("⬇️ ⏬⏬⏬ 👉"; a digest bullets one per line).
 const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/gu;
 const TEASER = /[\u{1F60F}\u{1F975}\u{1F4A6}\u{1F608}\u{1F48B}\u{1FAE6}\u{1F445}\u{1F351}\u{1F346}]/u;
-// "Free" sells only the content or access ("Free porn videos", "free preview", "for free", "бесплатно"): "Pornhub gives free
-// premium", "free for creators" or "free to read" is news.
-const SALES = any("‹(?:free|бесплатн\\p{L}*) (?:[\\p{L}-]+ )?(?:p[o0]rn|п[o0]рн|nud|нюд|hentai|хентай|onlyfans|sex|секс|xxx|videos?›|vids?›|clips?›|pics?›|content›|access›|preview›|видео|ролик|контент)",
+// "Free" and "hot" sell only the content or access ("Free porn videos", "Hot OnlyFans leaks", "free preview", "for free",
+// "бесплатно"): "Pornhub gives free premium", "free for creators" or "free to read" is news.
+const SALES = any("‹(?:free|hot|бесплатн\\p{L}*|горяч\\p{L}*) (?:[\\p{L}-]+ )?(?:p[o0]rn|п[o0]рн|nud|нюд|hentai|хентай|onlyfans|sex|секс|xxx|videos?›|vids?›|clips?›|pics?›|content›|access›|preview›|видео|ролик|контент)",
   "‹(?:for free|бесплатно|unlim\\p{L}*|new drops?|24/7|gratis|grátis|gratuit|kostenlos|real girls|no (?:registration|sign ?up)|безлимит\\p{L}*|без регистрации|реальн\\p{L}* девуш\\p{L}*)›");
 function pointsAtAd(raw: string, text: string): boolean {
   if (!raw.match(ARROWS)) return false;
@@ -716,13 +719,18 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   const undenied = text.replace(ADULT_DENIED, " ");
   // An emoji separates a call like a comma does: "Слив нюдсов 🔞 переходи", "Live sex cams 💋 sign up free". It also ends a
   // predicate: "Bro this setup is porn 🔥 click the link". Only when a term is found there, since an emoji may split one.
-  const commas = promoText(raw.replace(/\p{Extended_Pictographic}/gu, ","));
-  const term = ADULT.test(undenied) && !(ADULT.test(commas) && !ADULT.test(commas.replace(ADULT_DENIED, " ")));
-  if (!term && new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size < 2) return false;
+  const commaText = promoText(raw.replace(/\p{Extended_Pictographic}/gu, ","));
+  const commas = commaText.replace(ADULT_DENIED, " ");
+  const term = ADULT.test(undenied);
+  const slang = term && (!ADULT.test(undenied.replace(ADULT_SLANG, " "))
+    || ADULT.test(commas) && !ADULT.test(commas.replace(ADULT_SLANG, " ")));
+  const services = new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size >= 2;
+  if (!term && !services) return false;
   if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
     || ADULT_JOKE.test(text) || LAUGHING.test(raw) || SCANDAL.test(text) && !LEAK.test(text)) return false;
   const told = toldPart(text);
-  const clauses = toldPart(commas).replace(ADULT_DENIED, " ");
+  if (slang && !services) return Boolean(message.inlineButtons?.length) || LINKED.test(told);
+  const clauses = toldPart(commaText).replace(ADULT_DENIED, " ").replace(ADULT_SLANG, " ");
   // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
   return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(told) || GET_HERE.test(told) && LINK.test(text)
     || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(JOIN, " "));
