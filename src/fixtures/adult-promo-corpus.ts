@@ -1,4 +1,4 @@
-// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–8), pinned with their exact outcome.
+// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–9), pinned with their exact outcome.
 // [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
@@ -209,6 +209,13 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Join now for exclusive OnlyFans leaks"],
   ["Subscribe for daily nudes"],
   ["Подпишись и получи слив нюдсов"],
+  ["Join now — free porn videos"],
+  ["Better than OnlyFans: join our channel"],
+  ["Any porn you want, join the channel"],
+  ["Free porn videos — join our channel"],
+  ["NSFW content daily, subscribe"],
+  ["Hot NSFW content, join now"],
+  ["Порно бесплатно — переходи по ссылке"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -511,14 +518,30 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["The NSFW bot is down, open the app instead"],
   ["Warning: video NSFW. Click the link only at home https://youtu.be/x"],
   ["That rabbit hole is NSFW content wise, click the link at your own risk"],
+  ["Warning: NSFW content. Link below"],
+  ["This post has NSFW content, open the link at home"],
+  ["Contains NSFW content (gore), click the link at your own risk: https://reddit.com/r/x"],
+  ["Heads up — NSFW content in the thread, tap the link below"],
+  ["Reddit hides NSFW content now, open the app to see it"],
+  ["CW: NSFW content, link in the comments"],
+  ["NSFW content: blood. Click the link only if you're not eating https://reddit.com/r/x"],
+  ["Hentai is trash, join our anime channel"],
+  ["Это порно какое-то, а не код, заходи в чат обсудим"],
+  ["Смотрю тут хентай, заходи"],
+  ["Ну и порно у тебя в коде, заходи"],
+  ["Watching hentai tonight: join if you want"],
+  ["Fun fact: OnlyFans was built for musicians, open the site and see"],
+  ["Lol jk"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
   ["@hot_girls_bot — порно видео бесплатно 👇"],
   ["Порно бот без блокировок 🔞 @pornbot_ru_bot"],
+  ["🍑 NSFW content daily — subscribe to our channel"],
   ["NSFW pics daily 💦 join t.me/+Zx9kQ"],
   ["Explicit content, full videos — DM me"],
   ["Приватные комнаты, без цензуры, face cam — открой бот"],
+  ["🔞🔞 nsfw content → @spicy_drop_bot"],
   ["Why pay for OnlyFans when you can join us for free?"],
   ["Нюдсы хочешь? Пиши в лс?"],
   ["Hot nsfw content, wanna join t.me/hot?"],
@@ -536,11 +559,15 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Hot nudes report: 100 new girls today 🔥 tap 👇", true],
   ["Порно для взрослых, родители не узнают 😏 жми 👇", true],
   ["NSFW clips daily. No limits. Tap the button.", true],
+  ["Hot NSFW content daily, join the channel"],
   ["NSFW pics every night, subscribe to my channel"],
   ["Leaked OnlyFans content, subscribe @leaks_hub"],
   ["Hot porn videos daily. Subscribe to our channel"],
   ["Слив нюдсов. Подписывайся @sliv_hub"],
   ["Nudes, porn, hentai — subscribe and enjoy"],
+  ["Join now — free porn videos"],
+  ["NSFW content daily, subscribe"],
+  ["Hot NSFW content, join now"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
@@ -568,4 +595,9 @@ export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Стрим про хентай в аниме, подписывайся"],
   ["NSFW channel for car crash videos, join t.me/crashes"],
   ["The NSFW bot is down, open the app instead"],
+  ["Hentai is trash, join our anime channel"],
+  ["Это порно какое-то, а не код, заходи в чат обсудим"],
+  ["Смотрю тут хентай, заходи"],
+  ["Ну и порно у тебя в коде, заходи"],
+  ["Fun fact: OnlyFans was built for musicians, open the site and see"],
 ];
