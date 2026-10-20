@@ -624,8 +624,15 @@ const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
 // Adult-service phrases explicit only together: "Private rooms · full-length scenes · face cam · no blur".
 const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
 // Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно". "Food porn" and other
-// "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad.
-const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|bike|watch|shoe|sneaker|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*", "giu");
+// "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad. Neither is
+// porn as a predicate or praise: "this code review is porn,", "pure porn", "porn for nerds", "чистое порно", "не код, а порно",
+// "порно какое-то", "порно для любого дизайнера". A "nudes palette" is make-up.
+const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|bike|watch|shoe|sneaker|chess|gpu|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*"
+  + "|‹(?:pure|absolute|total|literal|literally|basically|straight up|kinda|true) p[o0]rn\\p{L}*|‹(?:is|are|was|were|it['’]?s|that['’]?s) p[o0]rn›(?=\\s?(?:[,.!;—–-]|$))"
+  + "|‹p[o0]rn\\p{L}* for (?:(?:any|every|all|true|real) )?(?:nerds?|geeks?|devs?|developers?|engineers?|designers?|programmers?|coders?|perfectionists?|gamers?|the eyes|eyes|ears)›"
+  + "|‹(?:чист(?:ое|ой воды)|прям(?:о)?|просто|сплошное|настоящее|натуральное|а) п[o0]рн\\p{L}*|‹п[o0]рн\\p{L}* (?:какое|какой|какая)-то"
+  + "|‹п[o0]рн\\p{L}* для (?:(?:любого|каждого|настоящих|всех|истинных) )?(?:гик|нерд|дизайнер|разработчик|программист|перфекционист|инженер|айтишник|геймер|глаз|ушей|души|мозг)\\p{L}*"
+  + "|‹nud[e3]s? (?:palettes?|lipsticks?|shades?|tones?|collection)›", "giu");
 // The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a DM call, a bot
 // handle, a t.me link or URL buttons attached to the message. A plain web link is a shared article or joke, and "зайди в
 // настройки" is settings help.
@@ -633,7 +640,7 @@ const FUNNEL = any(
   "‹(?:tap|click|press|hit|pick|choose|select|use) (?:[\\p{L}-]+ ){0,2}?(?:buttons?|doors?|links?|rooms?)›",
   "‹(?:buttons?|links?|doors?) (?:below|here|in (?:my |the )?(?:bio|profile|comments|description))›",
   "‹open (?:the |my |our |a )?(?:site|website|bot|app|link|channel|vault|chat|room)›",
-  "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter|get) (?:it )?(?:now|free|here|in|access)›|‹free (?:preview|access|trial)›",
+  "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter) (?:it )?(?:now|free|here)›|‹get (?:it )?(?:now|free|access)›|‹free (?:preview|access|trial)›",
   "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
   "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/");
@@ -661,7 +668,18 @@ function callsToContent(told: string): boolean {
   });
 }
 // Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️, or → at a link or handle ("Settings → Privacy" is a path).
-const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/u;
+// An arrow alone points as often at a news link or the post a member reports ("porn bot in the comments, look 👇"), so it
+// is a funnel only with a teaser or sales cue (😏 🥵 💦 🔞, "free", "unlim", "new drops") or in a row of arrows ("⬇️ ⏬⏬⏬ 👉").
+const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/gu;
+const TEASER = /[\u{1F60F}\u{1F975}\u{1F4A6}\u{1F51E}\u{1F608}\u{1F48B}\u{1FAE6}\u{1F445}\u{1F351}\u{1F346}]/u;
+const SALES = any("‹(?:free|unlim\\p{L}*|new drops?|24/7|gratis|grátis|gratuit|kostenlos|real girls|no (?:registration|sign ?up)|бесплатн\\p{L}*|безлимит\\p{L}*|без регистрации|реальн\\p{L}* девуш\\p{L}*)›");
+function pointsAtAd(raw: string, text: string): boolean {
+  const arrows = raw.match(ARROWS)?.length ?? 0;
+  return arrows > 0 && (TEASER.test(raw) || SALES.test(text) || arrows >= 3);
+}
+// "Get it here" calls to a link, bot or the buttons: "porn bots get here every day" is a complaint.
+const GET_HERE = any("‹get (?:it )?here›");
+const LINK = /https?:\/\/|(?:t|telegram)\.me\/|@[a-z][a-z0-9_]*bot(?![\p{L}\p{N}])/u;
 // Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
 // An ad tells what its model does in the present ("She posts new nudes daily"), so he, she and they report only in the past
 // or progressive ("he was posting porn").
@@ -678,6 +696,7 @@ const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohib
 // порно", "arrested for distributing porn, details: https://…". Ads never use these words.
 const ADULT_TALK = any("‹(?:addict\\p{L}*|recover\\p{L}*|nofap|quit(?:ting)?›|reboot\\p{L}*|therap\\p{L}*|research\\p{L}*|study|studies|education|parent\\p{L}*|protect\\p{L}*|block\\p{L}*|law›|laws›|bill›|ban on|news|article|report\\p{L}*|survey)",
   "‹(?:settings|sensitive content|malware|virus\\p{L}*|deepfake\\p{L}*|privacy|tax\\p{L}*|evil›|настройк\\p{L}*|вирус\\p{L}*|дипфейк\\p{L}*|налог\\p{L}*|зло›)",
+  "‹(?:safety|never (?:send|share)|don['’]?t (?:send|share)|не (?:отправляй|скидывай|присылай|пересылай)|безопасност\\p{L}*|podcasts?|episode|interview|documentary|adaptation|экранизаци\\p{L}*|подкаст\\p{L}*|интервью|документальн\\p{L}*)›",
   "‹(?:arrest\\p{L}*|police|court|convicted|charged|victims?›|abuse\\p{L}*|crime\\p{L}*|condamn\\p{L}*|enqu[eê]te|victime\\p{L}*|abus›|abus[ée]\\p{L}*|poursuivi\\p{L}*)",
   "‹(?:зависим\\p{L}*|бросить|бросил\\p{L}*|исследован\\p{L}*|образован\\p{L}*|просвещ\\p{L}*|родител\\p{L}*|защит\\p{L}*|блокир\\p{L}*|закон\\p{L}*|новост\\p{L}*|стать(?:я|и|ю|е|ей|ях)›|психолог\\p{L}*|врач\\p{L}*|арест\\p{L}*|полиц\\p{L}*|суд›|суда›|суде›|задерж\\p{L}*|осужд\\p{L}*|преступ\\p{L}*|насили\\p{L}*|жертв\\p{L}*)");
 // Antispam bots members recommend or blame: "Поставьте @combot, он удаляет порно", "porn bots get past @shieldy_bot".
@@ -698,7 +717,7 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   // An emoji separates a call like a comma does: "Слив нюдсов 🔞 переходи", "Live sex cams 💋 sign up free".
   const clauses = toldPart(promoText(raw.replace(/\p{Extended_Pictographic}/gu, ","))).replace(ADULT_DENIED, " ");
   // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
-  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told)
+  return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(told) || GET_HERE.test(told) && LINK.test(text)
     || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(JOIN, " "));
 }
 const JOIN = re("‹join›", "giu");
