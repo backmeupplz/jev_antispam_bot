@@ -1,4 +1,4 @@
-// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–13), pinned with their exact outcome.
+// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–14), pinned with their exact outcome.
 // [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
@@ -301,6 +301,22 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["This is porn 🥵 tap the button below", true],
   ["Это порно 🥵 бесплатно, жми на кнопку", true],
   ["Это порно-канал 🥵", true],
+  ["Это настоящее порно 🥵 пиши в лс"],
+  ["This is real porn 🔥 link in bio 💋"],
+  ["This is real porn 💦 DM me"],
+  ["It's real porn 🥵 watch free here 👇"],
+  ["Это настоящее порно! Смотри бесплатно 👇"],
+  ["That's true porn 😈 link in bio"],
+  ["Это порно 🔥 где ещё найдёшь такое? t.me/hot18x"],
+  ["Это порно 😏\nХочешь ещё?\n@hotxxx_bot"],
+  ["This is porn 🥵 want more t.me/hot18x?"],
+  ["This is porn 🥵 want more? t.me/hotxxx_bot?start=ref"],
+  ["Private rooms, face cam, no blur — this is porn 🥵 pick a door below"],
+  ["Приватные комнаты, без цензуры — это порно 🔥 жми ниже"],
+  ["This is porn 🔥 Hot nudes 💦 link in bio"],
+  ["This is porn 💦 DM me"],
+  ["Это порно 🥵 пиши в лс"],
+  ["Это настоящее порно 🥵 t.me/+AbCdEf"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -724,6 +740,22 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["The OnlyFans episode of South Park, watch it here https://southpark.cc.com/x"],
   ["⚠️ Порно бот ниже 👇 не переходите"],
   ["Free OnlyFans? It's a scam, look 👇"],
+  ["Этот рендер — порно 🔥 https://t.me/artchannel/123"],
+  ["This keyboard is porn 🔥 t.me/mechkeys/456"],
+  ["Новый Porsche — это порно, смотри t.me/autonews/789"],
+  ["This setup is pure porn, posted in t.me/battlestations/12"],
+  ["Этот сетап — порно, согласны? t.me/setups/12"],
+  ["This bot is porn for devs, try @jsonviewer_bot"],
+  ["Этот шрифт — визуальное порно 😍 t.me/fonts/77"],
+  ["Этот сетап — порно, видели t.me/setups/12?"],
+  ["Hot OnlyFans drama today 👇 https://x.com/x/status/1"],
+  ["Hot OnlyFans gossip in the comments 👇"],
+  ["Hot porn bot in the comments 👇 careful"],
+  ["Hot hentai take: the plot is better than most anime 👇 thread"],
+  ["Горячие нюдсы бота в комментах 👇 не открывайте"],
+  ["That bot is porn - ban it 👇 @hotgirls_bot"],
+  ["This keyboard is porn 🔥 https://t.me/mechkeys/456"],
+  ["Этот рендер — порно 🔥 t.me/+AbCdEf"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
@@ -765,6 +797,9 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["That's porn! 🔥 Watch free here 👇"],
   ["Самое горячее — порно 🔞 бесплатно 👇"],
   ["Not just memes — porn 🥵 t.me/hotxxx"],
+  ["This is porn 🥵 want more t.me/hot18x?"],
+  ["This is porn 💦 DM me"],
+  ["Это порно 🥵 пиши в лс"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
@@ -819,5 +854,12 @@ export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Порно-актриса бесплатно раздаёт автографы 👉 https://lenta.ru/x"],
   ["Pornhub is down 24/7 in Texas now 👇 https://theverge.com/x"],
   ["OnlyFans is unlimited money glitch for creators 👇 https://x.com/x/status/1"],
+  ["Этот код — настоящее порно, жми сюда https://github.com/x"],
+  ["This keyboard is real porn, click the link https://github.com/x"],
   ["The OnlyFans episode of South Park, watch it here https://southpark.cc.com/x"],
+  ["This bot is porn for devs, try @jsonviewer_bot"],
+  ["Hot OnlyFans drama today 👇 https://x.com/x/status/1"],
+  ["Hot OnlyFans gossip in the comments 👇"],
+  ["Hot hentai take: the plot is better than most anime 👇 thread"],
+  ["Этот рендер — порно 🔥 t.me/+AbCdEf"],
 ];
