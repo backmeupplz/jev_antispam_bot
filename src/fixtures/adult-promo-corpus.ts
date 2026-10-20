@@ -581,6 +581,12 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Не присылайте это мне в лс, лучше заходи в бот @porn_bot 🥵 бесплатное порно"],
   ["Не шли эту фигню, бесплатные нюдсы в боте @nudes_bot"],
   ["Хватит слать этот бред, горячие нюдсы бесплатно @nudes_bot"],
+  ["Stop sending this porn to your friends, watch it yourself in @porn_bot 🥵"],
+  ["Хватит слать это порно друзьям, все нюдсы тут @nudes_bot 🥵"],
+  ["Не шлите это порно, смотрите сами бесплатно t.me/+abc"],
+  ["Stop sending that porn, get real nudes free in @nudes_bot 🥵"],
+  ["Не надо кидать порно друзьям, смотри сам в @porn_bot"],
+  ["Хватит слать мне в лс просьбы, нюдсы тут @nudes_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1489,6 +1495,12 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Porn bot @hotporn_bot in comments 👇"],
   ["Porn bot alert 🔥 @newporn_bot free videos"],
   ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
+  ["Stop sending this porn to your friends, watch it yourself in @porn_bot 🥵"],
+  ["Хватит слать это порно друзьям, все нюдсы тут @nudes_bot 🥵"],
+  ["Не шлите это порно, смотрите сами бесплатно t.me/+abc"],
+  ["Stop sending that porn, get real nudes free in @nudes_bot 🥵"],
+  ["Не надо кидать порно друзьям, смотри сам в @porn_bot"],
+  ["Хватит слать мне в лс просьбы, нюдсы тут @nudes_bot"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
