@@ -609,17 +609,18 @@ function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
 // A channel or chat is no content: "18+ chat" is an age limit.
 const CONTENT = "(?:content|c0nt[e3]nt|cont3nt|videos?|vids?|clip\\p{L}*|pics?|photos?|контент\\p{L}*|видео\\p{L}*|ролик\\p{L}*|клип\\p{L}*|фото\\p{L}*|klip\\p{L}*)›";
 // Explicit terms, obfuscated or not: porn (p0rn, pr0n, порно), nudes, OnlyFans, hentai, a sex video/chat/cam, cam girls,
-// leaked nudes, and "18+", "XXX", NSFW, erotic or adult only next to what is sold ("XXX content", "18+ видео", "c0ntent xXx").
-// Sexuality, medicine and news words ("sexual", "sexualité", "pédopornographie", "18+ only", "uncensored video") are not, a bare
-// NSFW is a content warning on a shared link ("NSFW (gore), click the link"), and "explicit content" is a platform setting.
+// leaked nudes, and "18+", "XXX", erotic or adult only next to what is sold ("XXX content", "18+ видео", "c0ntent xXx").
+// NSFW counts only as "NSFW content" or an NSFW channel, bot or vault: "NSFW gore video, click the link" warns about a shared
+// link. Sexuality, medicine and news words ("sexual", "sexualité", "pédopornographie", "18+ only", "uncensored video") are
+// not, and "explicit content" is a platform setting ("Telegram now shows explicit content on iOS").
 const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
   "‹(?:nud[e3]s|nudez|нюдс\\p{L}*|нюдес\\p{L}*|onlyfans|only fans|онлифанс\\p{L}*|hentai|хентай\\p{L}*)›",
-  `‹nsfw (?:[\\p{L}-]+ )?(?:${CONTENT}|(?:channel|bot|vault|leaks?|канал\\p{L}*|бот\\p{L}*)›)`,
+  "‹nsfw (?:[\\p{L}-]+ )?(?:(?:content|c0nt[e3]nt|контент\\p{L}*)›(?! (?:warning|wise|ahead))|(?:channel|bot|vault|leaks?|канал\\p{L}*|бот\\p{L}*)›)",
   "‹(?:sex|секс)[ -]?(?:videos?|vids?|clips?|chats?|cams?|tapes?|content|видео|чат\\p{L}*|переписк\\p{L}*|ролик\\p{L}*|контент\\p{L}*)›|‹sexchat›|‹(?:sexy|naked|nude) (?:videos?|vids?|clips?|pics?|photos?|content)›",
   "‹cam ?girls?›|‹(?:webcam|live cam) (?:shows?|girls?|models?|sex)›",
   "‹(?:leaked|слив\\p{L}*|слит\\p{L}*) (?:[\\p{L}-]+ )?(?:nudes|onlyfans|онлифанс\\p{L}*|нюд\\p{L}*|интим\\p{L}*)",
   `(?<![\\p{L}\\p{N}])(?:18 ?\\+|x{3,}›|эро(?:тик|тическ)\\p{L}*|erotic\\p{L}*|интим\\p{L}*|adult›) (?:(?!only›|только›)[\\p{L}-]+ )?${CONTENT}`,
-  `‹${CONTENT} (?:[\\p{L}-]+ )?(?:18 ?\\+|x{3,}›|nsfw›)`);
+  `‹${CONTENT} (?:[\\p{L}-]+ )?(?:18 ?\\+|x{3,}›)`);
 // Adult-service phrases explicit only together: "Private rooms · full-length scenes · face cam · no blur".
 const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
 // Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно". "Food porn" and other
@@ -636,21 +637,28 @@ const FUNNEL = any(
   "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
   "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/");
-// A join, subscribe or open call is a funnel only with what it leads to ("subscribe to the channel", "переходи по ссылке",
-// "join now https://…"), as a call opening a clause about the adult content itself ("Subscribe to my OnlyFans", "Free porn
-// videos — join now"), or as a bare call closing a sentence about it ("Эротические видео каждый день, подписывайся").
-// "My ex is about to join OnlyFans", "pure porn for developers, join @devchat" or "это порно какое-то. Заходи в репозиторий"
-// call to nothing of the kind.
+// A join, subscribe or open call is a funnel only in a sentence about the adult content: opening a clause about it ("Subscribe
+// to my OnlyFans", "Free porn: join now"), calling to a channel, bot, site or link ("Новые нюдсы каждый день, вступай в канал",
+// "Leaked OnlyFans, join now https://…"), or as a bare call closing it ("Эротические видео каждый день, подписывайся", "Free
+// porn videos — join now"). "My ex is about to join OnlyFans", "pure porn for developers, join @devchat", "Join, we're
+// watching the Pornhub documentary", "Watching hentai tonight - join if you want" or "это порно какое-то. Заходи в
+// репозиторий" call to nothing of the kind, and neither does a call to something else or anything ("Hentai is trash, join
+// the anime channel instead", "Ну и порно, подпишись на нормальный канал", "Открой любой порно сайт").
 const CALL = "(?:join|subscribe|sign up|переходи|перейди|заходи|зайди|подписывайся|подпишись|вступай|вступи|открой|открывай)›";
-const CALL_TO = any(`‹${CALL}(?:[\\s:—–-]+(?:[\\p{L}-]+ ){0,3}?)(?:(?:channel|group|chat|bot|site|website|vault|rooms?|links?|buttons?|канал|групп|чат|бот|сайт|ссылк|кнопк|комнат|приват)\\p{L}*›|https?://)`);
+const CALL_ON = `‹${CALL}(?:[\\s:—–-]+(?:[\\p{L}-]+ ){0,3}?)`;
+const CALL_TO = any(`${CALL_ON}(?:channel|group|chat|bot|site|website|vault|rooms?|links?|buttons?|канал|групп|чат|бот|сайт|ссылк|кнопк|комнат|приват)\\p{L}*›`);
+const CALL_TO_LINK = any(`${CALL_ON}https?://`);
 const LEAD = "(?:(?:now|so|just|and|go|come|и|а|скорее|быстрее|давай)\\s)?";
-const CLAUSE_CALL = any(`(?:^|\\s[—–-]\\s?|:\\s?)${LEAD}${CALL}`);
+const CLAUSE_CALL = any(`(?:^|:\\s?)${LEAD}${CALL}`);
 const BARE_CALL = any(`^${LEAD}${CALL}(?:\\s(?:now|free|here|today|бесплатно|сейчас|скорее|быстрее))?$`);
+const ELSEWHERE = any("‹(?:instead|вместо|нормальн\\p{L}*|normal|друг(?:ой|ую|ие|им)|other|better|лучше|люб(?:ой|ую|ые|ом)|any)›");
 function callsToContent(told: string): boolean {
-  return told.split(/[.!?\n]+/u).some((sentence) => sentence.split(/[,;]+/u).some((clause) => {
-    const call = clause.trim();
-    return CLAUSE_CALL.test(call) && ADULT.test(call) || BARE_CALL.test(call) && ADULT.test(sentence);
-  }));
+  return told.split(/[.!?\n]+/u).some((sentence) => {
+    if (!ADULT.test(sentence)) return false;
+    const clauses = sentence.split(/[,;]+|\s[—–-]\s/u).map((clause) => clause.trim()).filter(Boolean);
+    return clauses.some((call, i) => (CLAUSE_CALL.test(call) && ADULT.test(call) || CALL_TO.test(call)) && !ELSEWHERE.test(call)
+      || CALL_TO_LINK.test(call) || i === clauses.length - 1 && BARE_CALL.test(call));
+  });
 }
 // Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️, or → at a link or handle ("Settings → Privacy" is a path).
 const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/u;
@@ -690,7 +698,7 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   // An emoji separates a call like a comma does: "Слив нюдсов 🔞 переходи", "Live sex cams 💋 sign up free".
   const clauses = toldPart(promoText(raw.replace(/\p{Extended_Pictographic}/gu, ","))).replace(ADULT_DENIED, " ");
   // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
-  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told) || CALL_TO.test(told)
+  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told)
     || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(JOIN, " "));
 }
 const JOIN = re("‹join›", "giu");
