@@ -79,4 +79,8 @@ export const adultPromoControls = [
   "Porn bots keep trying to join our chat, can we enable a captcha?",
   "Who else got the porn bot DM today? 🙄",
   "Чтобы видеть 18+ контент в телеге, зайди в настройки конфиденциальности",
+  // Astra review round 4: a question line followed by another line is still a question.
+  "Should I join OnlyFans as a creator?\nAsking for a friend",
+  "How did this porn bot even join the chat?\nWe have captcha",
+  "So many porn bots join this group daily",
 ];

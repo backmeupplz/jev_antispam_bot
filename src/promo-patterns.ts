@@ -642,7 +642,7 @@ const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)
 const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|he|she|they|кто-то|какой-то|этот|эта|он|она|они) (?:[\\p{L}-]+ ){0,2}?(?:posted|posting|sent|sending|shared|sharing|promoting|spamming|dropped|кинул\\p{L}*|скинул\\p{L}*|прислал\\p{L}*|выложил\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|кто-то|какой-то|этот|эта) (?:[\\p{L}-]+ ){0,2}?(?:posts|sends|promotes|spams|постит|кидает|присылает|рассылает|спамит)›",
-  "‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying|adding)|don['’]?t (?:join|click|open|subscribe|tap)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
+  "‹(?:bots|accounts|spammers) (?:[\\p{L}\\d-]+ ){0,2}?join›|‹(?:опять|снова|again|keep getting|keeps? (?:posting|sending|trying|adding)|don['’]?t (?:join|click|open|subscribe|tap)|задолбал\\p{L}*|достал\\p{L}*|надоел\\p{L}*|бесят|annoying|tired of|sick of|everywhere|why do|why are|who else|anyone else|кто ещ[её]|у кого ещ[её])›");
 // Rules and moderation: "Porn is banned here", "no porn allowed", "за порно бан", "запрещено публиковать порно". An ad's
 // "запрещённое видео", "запрещёнка" or "forbidden content" sells it, and so does "no rules".
 const ADULT_RULE = any(`‹(?:запрещ(?![её]нк)\\p{L}*|forbidden|prohibited|banned)›(?! (?:[\\p{L}-]+ )?${CONTENT})`,
@@ -669,7 +669,7 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
     || ADULT_JOKE.test(text) || LAUGHING.test(raw) || SCANDAL.test(text) && !LEAK.test(text)) return false;
   // A funnel inside a question asks about it: "My friend wants to join OnlyFans, is it worth it?".
   // Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
-  const told = text.split(/(?<=[.!?\n])(?![.!?\n\p{L}\p{N}_/])/u).filter((part) => !isQuestion(part)).join("").replace(MODERATION_BOT, " ");
+  const told = text.split(/(?<=[.!?])(?![.!?\n\p{L}\p{N}_/])|(?<=\n)(?![.!?\n])/u).filter((part) => !isQuestion(part)).join("").replace(MODERATION_BOT, " ");
   return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told) || callsToDm(told.replace(WEB_LINK, " "));
 }
 
