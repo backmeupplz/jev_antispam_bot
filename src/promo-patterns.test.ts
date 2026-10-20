@@ -219,10 +219,14 @@ test("the pinned adult review corpus keeps its exact outcome", () => {
 
 test("adult promo matching stays fast on 4,096-character adversarial input", () => {
   const inputs = ["p0rn ".repeat(819), "xxx ".repeat(1024), "18+ ".repeat(1024), "no blur private rooms face cam ".repeat(136),
-    "someone ".repeat(512), "tap the ".repeat(512), "@a_bot ".repeat(585), "запрещено ".repeat(409)].map((text) => text.slice(0, 4096));
-  for (const text of inputs) {
+    "someone ".repeat(512), "tap the ".repeat(512), "@a_bot ".repeat(585), "запрещено ".repeat(409), "porn, join ".repeat(373),
+    "porn 👇 ".repeat(586), "порно в лс ".repeat(373), "dm me porn ".repeat(373), "porn — join — ".repeat(293),
+    "stop sending me me me ".repeat(187), "порно хватит слать " + "это ".repeat(1100), "не шлите мне мне ".repeat(241), "бот @a_bot в ".repeat(316),
+    "zz " + ("guys" + ",".repeat(300)).repeat(3) + "porn bot @x_bot in the comments", "zz " + ("ребят" + ".".repeat(300)).repeat(3) + "в комментах порно бот @x_bot"].map((text) => text.slice(0, 4096));
+  // Every input with and without buttons: without them the content-call, DM-call and arrow funnels run too.
+  for (const [i, text] of inputs.flatMap((text) => [text, text]).entries()) {
     const start = performance.now();
-    promoPattern(plain(text, { inlineButtons: adultPromoIncidentButtons }));
+    promoPattern(plain(text, i % 2 ? {} : { inlineButtons: adultPromoIncidentButtons }));
     expect(performance.now() - start).toBeLessThan(250);
   }
 });

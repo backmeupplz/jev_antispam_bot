@@ -709,6 +709,34 @@ const LINK = /https?:\/\/|(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\
 // Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
 // An ad tells what its model does in the present ("She posts new nudes daily"), so he, she and they report only in the past
 // or progressive ("he was posting porn").
+// A member asks to stop it: "Stop sending me porn in DM", "Хватит слать нюдсы в лс", "Не шлите мне порно в личку", "Please
+// don't DM me nudes". Only about the content or the DMs: "Не шли деньги на OnlyFans, бесплатные нюдсы в боте" sells.
+const STOP_FILLER = "(?:me|us|мне|нам|сюда|больше|ещ[её]|свои|ваши|твои|эти|any|more|your|these|those|such|random) ";
+const STOP_TERMS = "p[o0]rn|п[o0]рн|nud|нюд|nsfw|xxx|hentai|хентай|интим|эрот|erotic|onlyfans|онлифанс|sex|секс";
+// Writing verbs need the content itself: "Хватит писать мне в лс, все нюдсы в боте @…" sells. "This", "это" or "такое"
+// points at it before the term ("Stop sending me this porn", "Хватит слать всякое порно в лс"), but before the DMs only with
+// no link or handle to sell: "Хватит кидать мне это в лс, порно никому не нужно" complains, "Хватит слать это в лс, нюдсы
+// в боте @…" sells.
+const STOP_POINTER = "(?:this|that|это|эту|этот|всяк\\p{L}*|так(?:ое|ие|ую|ой)) ";
+const STOP_ADULT = `(?:${STOP_FILLER}|${STOP_POINTER})*(?:${STOP_TERMS})`;
+const STOP_OBJECT = `(?:${STOP_ADULT}|(?:${STOP_FILLER}|${STOP_POINTER}(?![\\s\\S]*(?:@[a-z]|(?:t|telegram)\\.me/|https?://|www\\.|[a-z0-9-]\\.(?:com|net|org|ru|me|io|xyz|app|site|link|club|tv)›)))*`
+  + "(?:(?:в|во|to|in|into) (?:my |мою |мой |мне )?(?:лс›|личк|личн|директ|dms?›|pms?›|inbox›)|dms?›|pms?›))";
+// A handle named as a report: "Порно бот @xxx_bot в комментах", "В комментах порно бот @xxx_bot, пожалуйтесь", "Porn bot
+// alert: @xxx_bot", also fused ("Порнобот @…", "порно-бот @…"). An ad's "Best porn bot @…bot 🥵", "Bot alert! @…" or "our bot
+// @…bot in the comments" names its own. These pleas and reports give way to a teaser or sales cue, so "Stop sending me porn
+// in DM. FREE PORN VIDEOS 🥵 @…" or "Porn bot alert 🥵 @…" stays an ad.
+// Selling one's own: "Хватит кидать нюдсы бесплатно, зарабатывай на них в боте @…", "Stop sending nudes for free, get paid".
+const UNSOLD = "(?![^.!?\\n]{0,120}(?:‹(?:бесплатн|даром|за спасибо›|за (?:просто )?так›|for free›|for nothing›|sell|earn|monetiz|paid|tip(?:s|ped)?›|pay(?:ments?|outs?|pal)?›|money|cash|income|profit|прода[вйёе]|зараб[ао]т|монетиз|ден[еь][гж]|оплат|оплач|плат(?:им|ят)|выплат|доход(?:[аоуы]|ам|ами|ах|ов|ом|н\\p{L}*)?›|бабк|бабл|профит)|[$₽€]))";
+const REPORTED_BOT = "(?:p[o0]rn|п[o0]рн)\\p{L}*?[- ]?(?:бот\\p{L}*|bots?)";
+// A report opens the message, and only plain words may lead or sit inside it, so any adjective ("Best/Great/Топ-порно бот
+// @…"), number ("18+ порно бот") or earlier pitch ("Подписывайся @…, порно бот @… в комментах") keeps it an ad.
+const REPORT_LEAD = "(?<=^[^\\p{L}\\p{N}@]*(?:(?:a|an|the|another|this|that|some|one|there['’]?s|there|is|but|also|again|careful|warning|attention|guys|hey|hi|everyone|fyi|psa|опять|снова|ещё|еще|очередной|какой-то|этот|тот|тут|там|вот|здесь|осторожно|внимание|ребят\\p{L}*|народ|люди|всем|привет|ну|и|а|но)[^\\p{L}\\p{N}@\\s,.!?:;…—–]*[\\s,.!?:;…—–][^\\p{L}\\p{N}@]*){0,3})";
+const REPORT_FILLER = "(?:a|another|this|some|again|опять|снова|ещё|еще|очередной|какой-то|есть|сидит|висит|крутится|бегает|появился|завёлся|завелся)";
+const ADULT_PLEA = any(
+  "(?<!‹не\\s)‹(?:пожалуйтесь|жалуйтесь|пожаловаться|пожаловал\\p{L}*|жалоб\\p{L}*)›|‹(?:(?:p[o0]rn|spam|scam|fake) (?:bots?|accounts?)|spam|scam|spammers?) alert›",
+  `(?<!‹non[-–—]?\\s?)(?:(?<!‹(?:never|won['’]?t|не)\\s)|(?=\\p{L}+ (?:[\\p{L}-]+ ){0,2}?(?:sending|spamming|dming|messaging|texting|слать|кидать|присылать|скидывать|отправлять|спамить|писать) (?:me|us|мне|нам)›))‹(?:stop|quit|хватит|перестань\\p{L}*|прекрати\\p{L}*|не (?:надо|нужно))${UNSOLD} (?:[\\p{L}-]+ ){0,2}?(?:(?:sending|spamming|слать|кидать|присылать|скидывать|отправлять|спамить) ${STOP_OBJECT}|(?:dming|messaging|texting|писать) ${STOP_ADULT})`,
+  `‹(?:не (?:шлите|шли|присылайте|присылай|кидайте|кидай|скидывайте|скидывай|отправляйте|отправляй)|(?:don['’]?t|do not) send)${UNSOLD} ${STOP_OBJECT}|‹(?:don['’]?t|do not) (?:dm|message|text)${UNSOLD} ${STOP_ADULT}`,
+  `‹(?=p[o0]rn|п[o0]рн)${REPORT_LEAD}${REPORTED_BOT} @[a-z0-9_]+ (?:в|in(?: the)?) (?:коммент\\p{L}*|comments›)|‹(?=в коммент)${REPORT_LEAD}в коммент\\p{L}* (?:${REPORT_FILLER} ){0,2}?${REPORTED_BOT} @[a-z0-9_]+`);
 const ADULT_REPORT = any("‹(?:admins?|mods?|moderators?|админ\\p{L}*|модер\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|he|she|they|кто-то|какой-то|этот|эта|он|она|они) (?:[\\p{L}-]+ ){0,2}?(?:posted|posting|sent|sending|shared|sharing|promoting|spamming|dropped|кинул\\p{L}*|скинул\\p{L}*|прислал\\p{L}*|выложил\\p{L}*)›",
   "‹(?:someone|somebody|some (?:\\p{L}+ )?(?:guy|bot|account|user)|this (?:guy|bot|account|user|person)|кто-то|какой-то|этот|эта) (?:[\\p{L}-]+ ){0,2}?(?:posts|sends|promotes|spams|постит|кидает|присылает|рассылает|спамит)›",
@@ -749,7 +777,8 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
     || ADULT.test(commas) && !ADULT.test(commas.replace(ADULT_SLANG, " ")));
   const services = new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size >= 2;
   if (!term && !services) return false;
-  if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
+  const teased = TEASER.test(raw) || SALES.test(text);
+  if (ADULT_REPORT.test(text) || ADULT_PLEA.test(text) && !teased || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
     || ADULT_JOKE.test(text) || LAUGHING.test(raw) || SCANDAL.test(text) && !LEAK.test(text)) return false;
   const told = toldPart(text);
   if (slang && !services) return Boolean(message.inlineButtons?.length) || INVITE.test(told);
@@ -758,7 +787,6 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   // A shared channel post is news, not a funnel, unless teased or sold: "OnlyFans now accepts crypto, details t.me/cryptonews/1234"
   // is news, "Горячие нюдсы 🥵 t.me/hot_nudes/12" an ad. A call or arrow alone doesn't sell it: news shares end with one as
   // often ("Порно-актриса стала депутатом t.me/rian_ru/123, переходите", "Pornhub leaves Texas 👉 t.me/news/12").
-  const teased = TEASER.test(raw) || SALES.test(text);
   const posted = teased ? told : told.replace(TME_POST, " ");
   return Boolean(message.inlineButtons?.length) || pointsAtAd(raw, told) || FUNNEL.test(posted)
     || GET_HERE.test(told) && LINK.test(teased ? text : text.replace(TME_POST, " "))
