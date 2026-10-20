@@ -652,6 +652,12 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Hot porn bot alert 🥵 @hot_porn_bot"],
   ["Горячие нюдсы 🥵 @nudes_bot, пожалуйтесь если не понравится"],
   ["Porn bot alert 🔥 @newporn_bot free videos"],
+  ["Non-stop sending porn to your DM, subscribe @porn_dm_bot"],
+  ["В комментах лучший порно бот @porn_video_bot"],
+  ["В комментах best porn bot @porn_video_bot"],
+  ["Не жалуйтесь на скуку, смотри порно в боте @porn_video_bot"],
+  ["Хватит кидать нюдсы за просто так. Зарабатывай на них в боте @nudes_cash_bot"],
+  ["Stop sending nudes for likes, get tipped in @nudes_tip_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
