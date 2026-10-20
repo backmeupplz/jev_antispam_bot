@@ -634,6 +634,18 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Stop sending nudes for free. Get paid for them @of_bot"],
   ["Stop sending nudes for free, get paid 👉 t.me/of_agency"],
   ["Хватит слать нюдсы бесплатно, получай деньги, пиши в лс"],
+  // #148: a teaser or sales cue beats a stop request or handle-naming report put in front of the ad.
+  ["Stop sending me porn in DM.\n\nFREE PORN VIDEOS 🥵🥵 @hot_porn_bot"],
+  ["Хватит слать нюдсы в лс!\nГорячие нюдсы бесплатно 👉 @nudes_hot_bot"],
+  ["Stop sending that porn, get real nudes free in @nudes_bot 🥵"],
+  ["Хватит слать нюдсы в лс 😏 все мои фото в боте @mynudes_bot"],
+  ["В комментах порно бот @hot_porn_bot, бесплатные нюдсы 🥵"],
+  ["Порно-бот @hot_porn_bot в комментах — бесплатно и без регистрации 💦"],
+  ["Hot porn bot @hot_porn_bot in the comments 🥵"],
+  ["Порно бот @hot_bot в комментах 🥵"],
+  ["Stop sending this porn to your friends, watch it yourself in @porn_bot 🥵"],
+  ["Хватит слать это порно друзьям, все нюдсы тут @nudes_bot 🥵"],
+  ["Нюдсы в боте @nudes_bot 🥵 Хватит кидать это в лс"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1553,16 +1565,11 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Porn videos, DM me if you slid here"],
   ["Нюдсы, пиши в лс кидала уже всем"],
   // #148: read the same as the pinned handle-naming reports or stop requests.
-  ["Порно бот @hot_bot в комментах 🥵"],
   ["Porn bot @hotporn_bot in comments 👇"],
   ["Porn bot alert 🔥 @newporn_bot free videos"],
   ["Не кидайте мне в лс, нюдсы только в боте @nudes_bot"],
-  ["Stop sending this porn to your friends, watch it yourself in @porn_bot 🥵"],
-  ["Хватит слать это порно друзьям, все нюдсы тут @nudes_bot 🥵"],
-  ["Stop sending that porn, get real nudes free in @nudes_bot 🥵"],
   ["Не надо кидать порно друзьям, смотри сам в @porn_bot"],
   ["Хватит слать мне в лс просьбы, нюдсы тут @nudes_bot"],
-  ["Нюдсы в боте @nudes_bot 🥵 Хватит кидать это в лс"],
   ["Хватит слать нюдсы бывшему, начни получать за них @of_bot"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
