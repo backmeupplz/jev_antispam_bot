@@ -594,6 +594,14 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["Хватит слать это в лс, порно тут www.pornsite.com"],
   ["Хватит слать это в лс, нюдсы тут telegram.me/hotnudes"],
   ["Нюдсы в боте @nudes_bot 🥵 Хватит кидать это в лс"],
+  ["Хватит слать нюдсы бесплатно, заработай на них в боте @nudes_cash_bot"],
+  ["Хватит кидать нюдсы бесплатно 💸 заработок от 100к в боте @nudes_cash_bot"],
+  ["Перестань скидывать нюдсы бесплатно, получай за них деньги @of_agency_bot"],
+  ["Stop sending nudes for free, get paid for them 👉 @of_agency_bot"],
+  ["Stop sending nudes for free 💰 make money with OnlyFans @of_agency_bot"],
+  ["Не шли нюдсы бесплатно, получай за них оплату 💸 @of_bot"],
+  ["Stop sending your nudes for free! Get paid for them in @of_bot"],
+  ["Хватит слать нюдсы бывшему, начни получать за них @of_bot"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -1405,6 +1413,10 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Хватит кидать мне это в лс.Между прочим порно никому не нужно"],
   ["Хватит кидать мне это в лс, порно никому не нужно.Мешает работать"],
   ["Хватит слать мне такое в личку,порно тут никому не нужно.Медленно бесит"],
+  ["Хватит кидать нюдсы в лс, я не заплачу"],
+  ["Stop sending nudes in DM, I'm not paying"],
+  ["Stop sending me porn in DM, I won't pay for it"],
+  ["Хватит слать порно в лс, мне не нужны ваши деньги"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
@@ -1518,6 +1530,8 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Не надо кидать порно друзьям, смотри сам в @porn_bot"],
   ["Хватит слать мне в лс просьбы, нюдсы тут @nudes_bot"],
   ["Нюдсы в боте @nudes_bot 🥵 Хватит кидать это в лс"],
+  ["Stop sending your nudes for free! Get paid for them in @of_bot"],
+  ["Хватит слать нюдсы бывшему, начни получать за них @of_bot"],
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
@@ -1616,4 +1630,6 @@ export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Порно в лс от 'бота'"],
   ["Порно в лс от _kate_"],
   ["Порно в лс от «Анны»"],
+  ["Stop sending me porn in DM, I won't pay for it"],
+  ["Хватит слать порно в лс, мне не нужны ваши деньги"],
 ];
