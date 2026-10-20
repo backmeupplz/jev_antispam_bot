@@ -730,7 +730,7 @@ const UNSOLD = "(?![^.!?\\n]{0,120}(?:‹(?:бесплатн|даром|за с�
 const REPORTED_BOT = "(?:p[o0]rn|п[o0]рн)\\p{L}*?[- ]?(?:бот\\p{L}*|bots?)";
 // A report opens the message, and only plain words may lead or sit inside it, so any adjective ("Best/Great/Топ-порно бот
 // @…"), number ("18+ порно бот") or earlier pitch ("Подписывайся @…, порно бот @… в комментах") keeps it an ad.
-const REPORT_LEAD = "(?<=^[^\\p{L}\\p{N}@]*(?:(?:a|an|the|another|this|that|some|one|there['’]?s|there|is|but|also|again|careful|warning|attention|guys|hey|hi|everyone|fyi|psa|опять|снова|ещё|еще|очередной|какой-то|этот|тот|тут|там|вот|здесь|осторожно|внимание|ребят\\p{L}*|народ|люди|всем|привет|ну|и|а|но)[^\\p{L}\\p{N}@]*[\\s,.!?:;…—–][^\\p{L}\\p{N}@]*){0,3})";
+const REPORT_LEAD = "(?<=^[^\\p{L}\\p{N}@]*(?:(?:a|an|the|another|this|that|some|one|there['’]?s|there|is|but|also|again|careful|warning|attention|guys|hey|hi|everyone|fyi|psa|опять|снова|ещё|еще|очередной|какой-то|этот|тот|тут|там|вот|здесь|осторожно|внимание|ребят\\p{L}*|народ|люди|всем|привет|ну|и|а|но)[^\\p{L}\\p{N}@\\s,.!?:;…—–]*[\\s,.!?:;…—–][^\\p{L}\\p{N}@]*){0,3})";
 const REPORT_FILLER = "(?:a|another|this|some|again|опять|снова|ещё|еще|очередной|какой-то|есть|сидит|висит|крутится|бегает|появился|завёлся|завелся)";
 const ADULT_PLEA = any(
   "(?<!‹не\\s)‹(?:пожалуйтесь|жалуйтесь|пожаловаться|пожаловал\\p{L}*|жалоб\\p{L}*)›|‹(?:(?:p[o0]rn|spam|scam|fake) (?:bots?|accounts?)|spam|scam|spammers?) alert›",
