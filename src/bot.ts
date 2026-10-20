@@ -207,7 +207,10 @@ export function registerBotHandlers(bot: Bot, {
         messageId: ctx.msgId,
         characterCount: message.text.length,
         embeddedLinkCount: message.embeddedLinks.length,
+        // Counts and origin types only (#145): never button labels, URLs or the origin's name.
+        inlineButtonCount: message.inlineButtons?.length ?? 0,
         isForwarded: message.isForwarded,
+        forwardOriginKind: "forward_origin" in ctx.msg && ctx.msg.forward_origin ? ctx.msg.forward_origin.type : null,
         preview: message.preview?.map(({ kind, origin, sourceKind, sourceAuthor, text, embeddedLinks }) => ({
           kind, origin, sourceKind, sourceAuthor, contentAvailable: Boolean(text?.trim()),
           characterCount: text?.length ?? 0, embeddedLinkCount: embeddedLinks.length,
@@ -289,8 +292,8 @@ export function registerBotHandlers(bot: Bot, {
       }
       const effective = escalatedScore(probability ?? 0, copies.length);
       const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
-      // Ad shapes Laya keeps under the gate (#126, #142): side-gig recruitment,
-      // first-person @…bot testimonials and P2P crypto trade asks, unless the model is confident it is benign.
+      // Ad shapes Laya keeps under the gate (#126, #142, #145): side-gig recruitment, first-person @…bot
+      // testimonials, P2P crypto trade asks and explicit adult-content promotion, unless the model is confident it is benign.
       const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined : promoPattern(message);
       const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
       if (pattern) logger.info(JSON.stringify({

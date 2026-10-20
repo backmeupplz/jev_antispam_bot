@@ -7,6 +7,8 @@ import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, crypt
 import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
 import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
+import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
+import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -177,4 +179,50 @@ test("a crypto trade answer to another member's trade question is a requested an
 test("the pinned crypto review corpus keeps its exact outcome", () => {
   expect(cryptoCorpusAds.filter((text) => promoPattern(plain(text)) !== crypto)).toEqual(cryptoCorpusKnownMisses);
   expect(cryptoCorpusKeeps.filter((text) => promoPattern(plain(text)))).toEqual(cryptoCorpusKnownMatches);
+});
+
+const adult = "adult_content_promo";
+test("the #145 adult promo matches with or without its buttons, standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }, { isForwarded: true, inlineButtons: adultPromoIncidentButtons }]) {
+    expect(promoPattern(plain(adultPromoIncident, patch))).toBe(adult);
+  }
+});
+
+test.each(adultPromoParaphrases)("held-out adult promo matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(adult);
+});
+
+test.each(adultPromoReviewAds)("adult promo found in review matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(adult);
+});
+
+test("adult promo controls never match: reports, complaints, rules, denials, health, news, jokes and look-alike words", () => {
+  expect(adultPromoControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("explicit terms need a funnel, and URL buttons are one", () => {
+  const bare = "XxX unlim p0rn content, new drops every night";
+  expect(promoPattern(plain(bare))).toBeUndefined();
+  expect(promoPattern(plain(bare, { inlineButtons: adultPromoIncidentButtons }))).toBe(adult);
+  // One adult-service phrase is no adult term; two together are.
+  expect(promoPattern(plain("Private rooms available, tap the button below"))).toBeUndefined();
+  expect(promoPattern(plain("Private rooms · face cam · no blur — tap the button below"))).toBe(adult);
+  // A quoted ad inside a moderator's reminder is not the author's offer.
+  expect(promoPattern(plain("Posts like «XXX p0rn content, tap a button below» get you removed, please read the pinned message"))).toBeUndefined();
+});
+
+test("the pinned adult review corpus keeps its exact outcome", () => {
+  const withButtons = ([text, buttons]: AdultCorpusItem) => plain(text, buttons ? { inlineButtons: [{ kind: "url", text: "Open", url: "https://example.invalid/x" }] } : {});
+  expect(adultCorpusAds.filter((item) => promoPattern(withButtons(item)) !== adult)).toEqual(adultCorpusKnownMisses);
+  expect(adultCorpusKeeps.filter((item) => promoPattern(withButtons(item)))).toEqual(adultCorpusKnownMatches);
+});
+
+test("adult promo matching stays fast on 4,096-character adversarial input", () => {
+  const inputs = ["p0rn ".repeat(819), "xxx ".repeat(1024), "18+ ".repeat(1024), "no blur private rooms face cam ".repeat(136),
+    "someone ".repeat(512), "tap the ".repeat(512), "@a_bot ".repeat(585), "запрещено ".repeat(409)].map((text) => text.slice(0, 4096));
+  for (const text of inputs) {
+    const start = performance.now();
+    promoPattern(plain(text, { inlineButtons: adultPromoIncidentButtons }));
+    expect(performance.now() - start).toBeLessThan(250);
+  }
 });
