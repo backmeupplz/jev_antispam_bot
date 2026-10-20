@@ -1374,6 +1374,9 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Don't DM me porn"],
   ["Не присылайте мне порно в личные сообщения"],
   ["В комментариях порнобот @xxx_bot"],
+  ["Stop sending me this porn in DM"],
+  ["Хватит слать мне это порно в лс"],
+  ["Stop sending me this porn @xxx_bot"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],

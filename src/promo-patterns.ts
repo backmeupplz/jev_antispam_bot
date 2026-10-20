@@ -711,7 +711,7 @@ const LINK = /https?:\/\/|(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\
 // or progressive ("he was posting porn").
 // A member asks to stop it: "Stop sending me porn in DM", "Хватит слать нюдсы в лс", "Не шлите мне порно в личку", "Please
 // don't DM me nudes". Only about the content or the DMs: "Не шли деньги на OnlyFans, бесплатные нюдсы в боте" sells.
-const STOP_FILLER = "(?:(?:me|us|мне|нам|сюда|больше|ещ[её]|свои|ваши|твои|эти|всякие|any|more|your|these|those|such|random) )*";
+const STOP_FILLER = "(?:(?:me|us|мне|нам|сюда|больше|ещ[её]|свои|ваши|твои|эти|это|эту|этот|всякие|any|more|your|this|that|these|those|such|random) )*";
 const STOP_TERMS = "p[o0]rn|п[o0]рн|nud|нюд|nsfw|xxx|hentai|хентай|интим|эрот|erotic|onlyfans|онлифанс|sex|секс";
 // Writing verbs need the content itself: "Хватит писать мне в лс, все нюдсы в боте @…" sells.
 const STOP_ADULT = `${STOP_FILLER}(?:${STOP_TERMS})`;
