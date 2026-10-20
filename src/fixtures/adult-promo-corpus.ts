@@ -1,4 +1,4 @@
-// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–2), pinned with their exact outcome.
+// #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–7), pinned with their exact outcome.
 // [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
@@ -183,6 +183,14 @@ export const adultCorpusAds: AdultCorpusItem[] = [
   ["p0rn0 bez limitov 🔞 zahodi t.me/+pbl"],
   ["Cam girls live 24/7 💋 enter now t.me/camgirls247_bot"],
   ["😈 Порно видео без цензуры\nЖми на кнопку 👇\nЖдёшь?", true],
+  ["Subscribe to my OnlyFans 😘"],
+  ["Free porn videos — join now"],
+  ["Join now for xxx content 🔥"],
+  ["Подпишись на канал с нюдсами 💦"],
+  ["Порно видео каждый день, переходи по ссылке в профиле"],
+  ["Hot NSFW content daily, join the channel"],
+  ["NSFW pics every night, subscribe to my channel"],
+  ["Leaked OnlyFans, join now https://example.invalid/of"],
 ];
 export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["Porn bots keep trying to join our chat, can we enable a captcha?"],
@@ -441,11 +449,26 @@ export const adultCorpusKeeps: AdultCorpusItem[] = [
   ["She left her job to start OnlyFans and now earns more than me haha"],
   ["Porn sites tracking you is a real thing, use a VPN"],
   ["Who's joining the meetup on Saturday? Btw the porn spammer is gone finally"],
+  ["Это не код, а порно какое-то. Заходи в репозиторий, сам увидишь"],
+  ["Хватит смотреть порно, иди работай. Заходи завтра в офис"],
+  ["Слушай, у тебя не код, а порнография. Открой PR и посмотри комментарии"],
+  ["My ex is about to join OnlyFans."],
+  ["My coworker has an OnlyFans, I'm not going to subscribe"],
+  ["Join us tonight, we're watching the Pornhub documentary Money Shot"],
+  ["This is pure porn for developers, join @devchat"],
+  ["Hentai is trash, join the anime club instead @animeclub"],
+  ["NSFW (gore), click the link only if you're not eating: https://reddit.com/r/x"],
+  ["NSFW warning on this one, tap the link below"],
+  ["NSFW but funny, open the link"],
+  ["Join the stream tonight — face cam on, no blur on the screen share"],
+  ["Стрим в 20:00, face cam, без цензуры, заходи"],
+  ["Telegram now shows explicit content on iOS, open the app and check"],
 ];
 export const adultCorpusKnownMisses: AdultCorpusItem[] = [
   ["Vidéos porno gratuites, clique sur le lien https://x.example"],
   ["@hot_girls_bot — порно видео бесплатно 👇"],
   ["Порно бот без блокировок 🔞 @pornbot_ru_bot"],
+  ["Explicit content, full videos — DM me"],
   ["Why pay for OnlyFans when you can join us for free?"],
   ["Нюдсы хочешь? Пиши в лс?"],
   ["Hot nsfw content, wanna join t.me/hot?"],
@@ -464,20 +487,16 @@ export const adultCorpusKnownMisses: AdultCorpusItem[] = [
 ];
 export const adultCorpusKnownMatches: AdultCorpusItem[] = [
   ["Face cam streams, uncensored commentary, join the twitch link below"],
-  ["Full-length videos uncensored, our documentary channel, subscribe"],
   ["Hentai is not my thing tbh, but join our anime club t.me/animeclub"],
   ["18+ standup video, link below"],
   ["Этот фильм 18+ видео, смотрите в кинотеатре, ссылка ниже"],
   ["У этого чела в шапке ссылка на порно канал, гляньте"],
-  ["Can someone explain how OnlyFans pays creators? I want to join as a photographer"],
-  ["Hentai is overrated, change my mind. Anime club meets tonight, join us"],
   ["Порнхаб ушёл из России, теперь только через VPN, открой сайт с VPN"],
   ["Why is every second account here a nudes seller? Check my bio, I'm real"],
   ["The porn filter in @combot is good, join their support chat t.me/combot_support"],
   ["Порно в 2026 году — тема для дебатов в нашем клубе, приходи, ссылка ниже"],
   ["Our NSFW art channel: drawings only, 18+, join t.me/nsfwart"],
   ["Порнуха в каждом втором канале, подпишись на нормальный: t.me/normal"],
-  ["If you want 18+ content, go elsewhere. This is a coding chat, join @devchat"],
   ["Cyberpunk 2077 has nudity, 18+ content warning, watch the trailer 👇"],
   ["Нюдсы в 2026 отправлять опасно, читайте пост t.me/cybersec"],
   ["Как отписаться от порно канала? Нажми на кнопку не работает"],

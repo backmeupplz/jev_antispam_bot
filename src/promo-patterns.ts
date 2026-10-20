@@ -608,32 +608,50 @@ function cryptoTradeAsk(message: ModerationMessage, text: string): boolean {
 // What the funnel sells: "content", "videos", "clips", "контент", "видео", also obfuscated ("c0ntent").
 // A channel or chat is no content: "18+ chat" is an age limit.
 const CONTENT = "(?:content|c0nt[e3]nt|cont3nt|videos?|vids?|clip\\p{L}*|pics?|photos?|контент\\p{L}*|видео\\p{L}*|ролик\\p{L}*|клип\\p{L}*|фото\\p{L}*|klip\\p{L}*)›";
-// Explicit terms, obfuscated or not: porn (p0rn, pr0n, порно), nudes, NSFW, OnlyFans, hentai, a sex video/chat/cam, cam girls,
-// leaked nudes, and "18+", "XXX", erotic or adult only next to what is sold ("XXX content", "18+ видео", "c0ntent xXx").
-// Sexuality, medicine and news words ("sexual", "sexualité", "pédopornographie", "18+ only", "uncensored video") are not.
+// Explicit terms, obfuscated or not: porn (p0rn, pr0n, порно), nudes, OnlyFans, hentai, a sex video/chat/cam, cam girls,
+// leaked nudes, and "18+", "XXX", NSFW, erotic or adult only next to what is sold ("XXX content", "18+ видео", "c0ntent xXx").
+// Sexuality, medicine and news words ("sexual", "sexualité", "pédopornographie", "18+ only", "uncensored video") are not, a bare
+// NSFW is a content warning on a shared link ("NSFW (gore), click the link"), and "explicit content" is a platform setting.
 const ADULT = any("‹(?:p[o0]rn|pr[o0]n›|п[o0]рн)\\p{L}*",
-  "‹(?:nud[e3]s|nudez|нюдс\\p{L}*|нюдес\\p{L}*|nsfw|onlyfans|only fans|онлифанс\\p{L}*|hentai|хентай\\p{L}*)›",
+  "‹(?:nud[e3]s|nudez|нюдс\\p{L}*|нюдес\\p{L}*|onlyfans|only fans|онлифанс\\p{L}*|hentai|хентай\\p{L}*)›",
+  `‹nsfw (?:[\\p{L}-]+ )?(?:${CONTENT}|(?:channel|bot|vault|leaks?|канал\\p{L}*|бот\\p{L}*)›)`,
   "‹(?:sex|секс)[ -]?(?:videos?|vids?|clips?|chats?|cams?|tapes?|content|видео|чат\\p{L}*|переписк\\p{L}*|ролик\\p{L}*|контент\\p{L}*)›|‹sexchat›|‹(?:sexy|naked|nude) (?:videos?|vids?|clips?|pics?|photos?|content)›",
   "‹cam ?girls?›|‹(?:webcam|live cam) (?:shows?|girls?|models?|sex)›",
   "‹(?:leaked|слив\\p{L}*|слит\\p{L}*) (?:[\\p{L}-]+ )?(?:nudes|onlyfans|онлифанс\\p{L}*|нюд\\p{L}*|интим\\p{L}*)",
-  `(?<![\\p{L}\\p{N}])(?:18 ?\\+|x{3,}›|эро(?:тик|тическ)\\p{L}*|erotic\\p{L}*|интим\\p{L}*|adult›|explicit›) (?:(?!only›|только›)[\\p{L}-]+ )?${CONTENT}`,
-  `‹${CONTENT} (?:[\\p{L}-]+ )?(?:18 ?\\+|x{3,}›)`);
+  `(?<![\\p{L}\\p{N}])(?:18 ?\\+|x{3,}›|эро(?:тик|тическ)\\p{L}*|erotic\\p{L}*|интим\\p{L}*|adult›) (?:(?!only›|только›)[\\p{L}-]+ )?${CONTENT}`,
+  `‹${CONTENT} (?:[\\p{L}-]+ )?(?:18 ?\\+|x{3,}›|nsfw›)`);
 // Adult-service phrases explicit only together: "Private rooms · full-length scenes · face cam · no blur".
 const ADULT_SERVICE = new RegExp(re("‹(?:no blur|private rooms?|face ?cam|full[- ]length (?:scenes?|videos?)|uncensored|без цензуры|приватн\\p{L}* комнат\\p{L}*)›").source, "giu");
 // Ads never deny it; rules and channel descriptions do: "No porn, no spam, join @memes", "без порно". "Food porn" and other
 // "X porn" slang is no porn. Only a quantity word may sit between, so "без регистрации порно видео" stays an ad.
 const ADULT_DENIED = re("‹(?:food|foodie|earth|car|sky|space|tech|gear|ruin|book|city|house|home|real estate|property|design|interior|architecture|nature|sunset|cat|dog|data|map|word|gun|fitness|travel|plant|garden|coffee|cable|cable management|keyboard|desk|setup|sound|audio|font|typography|code|ui|lego|bike|watch|shoe|sneaker|фуд|кабель\\p{L}*) p[o0]rn\\p{L}*|‹(?:no|not|without|zero|без|не|нет|никакого|никакой|никаких|ни) (?:(?:a|an|the|any|more|real|such|other|explicit|какого|какой|такого|всякого|лишнего|больше) )?(?:p[o0]rn|п[o0]рн|nsfw|nudes|18 ?\\+|x{3,}›|adult|explicit|эрот|интим|нюдс)\\p{L}*", "giu");
-// The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a join or
-// subscribe call, a DM call, a bot handle, a t.me link or URL buttons attached to the message. A plain web link is a shared
-// article or joke, and "зайди в настройки" is settings help.
+// The funnel: a button or door to pick, a site, bot, app or channel to open, a link below or in the bio, a DM call, a bot
+// handle, a t.me link or URL buttons attached to the message. A plain web link is a shared article or joke, and "зайди в
+// настройки" is settings help.
 const FUNNEL = any(
   "‹(?:tap|click|press|hit|pick|choose|select|use) (?:[\\p{L}-]+ ){0,2}?(?:buttons?|doors?|links?|rooms?)›",
   "‹(?:buttons?|links?|doors?) (?:below|here|in (?:my |the )?(?:bio|profile|comments|description))›",
   "‹open (?:the |my |our |a )?(?:site|website|bot|app|link|channel|vault|chat|room)›",
-  "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:join|subscribe|sign up)›|‹(?:watch|play|enter|get) (?:it )?(?:now|free|here|in|access)›|‹free (?:preview|access|trial)›",
-  "‹(?:жми|нажми|нажимай|кликай|кликни|переходи|перейди|заходи|зайди|подписывайся|подпишись|вступай|вступи|открой|открывай)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
+  "‹(?:link in|in my|check my|on my) (?:bio|profile)›|‹(?:watch|play|enter|get) (?:it )?(?:now|free|here|in|access)›|‹free (?:preview|access|trial)›",
+  "‹(?:жми|нажми|нажимай|кликай|кликни)›(?! (?:в )?(?:настройк|параметр))|‹смотри (?:тут|здесь|в профиле|по ссылке|ниже|бесплатно)›",
   "‹(?:ссылк|кнопк)\\p{L}* (?:ниже|тут|здесь|в профиле|в био|в описании|в шапке|в комментари\\p{L}*)|‹в (?:профиле|био|шапке|описании)›|‹(?:бот|канал)\\p{L}* (?:ниже|тут|здесь|по ссылке)›",
   "@[a-z][a-z0-9_]*bot›|(?:t|telegram)\\.me/");
+// A join, subscribe or open call is a funnel only with what it leads to ("subscribe to the channel", "переходи по ссылке",
+// "join now https://…"), as a call opening a clause about the adult content itself ("Subscribe to my OnlyFans", "Free porn
+// videos — join now"), or as a bare call closing a sentence about it ("Эротические видео каждый день, подписывайся").
+// "My ex is about to join OnlyFans", "pure porn for developers, join @devchat" or "это порно какое-то. Заходи в репозиторий"
+// call to nothing of the kind.
+const CALL = "(?:join|subscribe|sign up|переходи|перейди|заходи|зайди|подписывайся|подпишись|вступай|вступи|открой|открывай)›";
+const CALL_TO = any(`‹${CALL}(?:[\\s:—–-]+(?:[\\p{L}-]+ ){0,3}?)(?:(?:channel|group|chat|bot|site|website|vault|rooms?|links?|buttons?|канал|групп|чат|бот|сайт|ссылк|кнопк|комнат|приват)\\p{L}*›|https?://)`);
+const LEAD = "(?:(?:now|so|just|and|go|come|и|а|скорее|быстрее|давай)\\s)?";
+const CLAUSE_CALL = any(`(?:^|\\s[—–-]\\s?|:\\s?)${LEAD}${CALL}`);
+const BARE_CALL = any(`^${LEAD}${CALL}(?:\\s(?:now|free|here|today|бесплатно|сейчас|скорее|быстрее))?$`);
+function callsToContent(told: string): boolean {
+  return told.split(/[.!?\n]+/u).some((sentence) => sentence.split(/[,;]+/u).some((clause) => {
+    const call = clause.trim();
+    return CLAUSE_CALL.test(call) && ADULT.test(call) || BARE_CALL.test(call) && ADULT.test(sentence);
+  }));
+}
 // Pointing down or right at the buttons or link: 👇 ⬇️ ⤵️ ⏬ 👉 ➡️, or → at a link or handle ("Settings → Privacy" is a path).
 const ARROWS = /[\u{1F447}⬇⤵⏬\u{1F449}➡]|→\s*(?:https?:\/\/|t\.me\/|@)/u;
 // Reports and complaints about it: "someone posted porn spam here, admins?", "этот бот опять кидает порно", "porn bots again".
@@ -668,15 +686,24 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
   if (!ADULT.test(undenied) && new Set([...undenied.matchAll(ADULT_SERVICE)].map((m) => m[0])).size < 2) return false;
   if (ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
     || ADULT_JOKE.test(text) || LAUGHING.test(raw) || SCANDAL.test(text) && !LEAK.test(text)) return false;
-  // A funnel inside a question asks about it: "My friend wants to join OnlyFans, is it worth it?".
-  // Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
+  const told = toldPart(text);
+  // An emoji separates a call like a comma does: "Слив нюдсов 🔞 переходи", "Live sex cams 💋 sign up free".
+  const clauses = toldPart(promoText(raw.replace(/\p{Extended_Pictographic}/gu, ","))).replace(ADULT_DENIED, " ");
+  // A join call before a handle is a channel, not a DM: "pure porn for developers, join @devchat".
+  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told) || CALL_TO.test(told)
+    || callsToContent(clauses) || callsToDm(told.replace(WEB_LINK, " ").replace(JOIN, " "));
+}
+const JOIN = re("‹join›", "giu");
+
+// What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
+// OnlyFans, is it worth it?". Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
+function toldPart(text: string): string {
   const parts = text.split(/(?<=[.!?])(?![.!?\n\p{L}\p{N}_/])|(?<=\n)(?![.!?\n])/u);
   // An unpunctuated line running into a question is part of it ("My gf wants to join OnlyFans\nis it worth it?"), unless it
   // carries the link or bot itself.
   const asked = (part: string, i: number) => isQuestion(part)
     || /[^.!?]\n$/u.test(part) && !LINKED.test(part) && isQuestion(parts[i + 1] ?? "");
-  const told = parts.filter((part, i) => !asked(part, i)).join("").replace(MODERATION_BOT, " ");
-  return Boolean(message.inlineButtons?.length) || ARROWS.test(raw) || FUNNEL.test(told) || callsToDm(told.replace(WEB_LINK, " "));
+  return parts.filter((part, i) => !asked(part, i)).join("").replace(MODERATION_BOT, " ");
 }
 
 function isAttributed(raw: string): boolean {
