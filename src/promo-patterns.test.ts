@@ -266,7 +266,10 @@ test("free-copy matching stays fast on 4,096-character adversarial input", () =>
     "книга. ".repeat(585), "послушал аудиокнигу, если кому интересно, могу скинуть".repeat(73),
     // Every offer looks back over a bounded window at the last work word (#153 review 2).
     "прочитал книгу, очень понравилась, если кому надо, скину, ".repeat(70), "книга и ".repeat(512), "могу скинуть\n".repeat(315),
-    "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину"].map((text) => text.slice(0, 4096));
+    "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину",
+    // Lead-ins, "в аудио" and formats (#153 review 5).
+    "опять снова тот же вижу: ".repeat(164), "Опять снова снова снова снова: послушай ".repeat(103), "послушал " + "а ".repeat(2000) + "в аудио",
+    "i just read the pdf rules, i can send it ".repeat(100)].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
     const start = performance.now();
     promoPattern(plain(text));
