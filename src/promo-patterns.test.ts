@@ -259,7 +259,10 @@ test("the pinned free-copy review corpus keeps its exact outcome", () => {
 test("free-copy matching stays fast on 4,096-character adversarial input", () => {
   const inputs = ["послушал книгу ".repeat(273), "могу скинуть ".repeat(315), "если кому интересно ".repeat(204), "послушал «".repeat(409),
     "прочитал книгу, могу скинуть " + "а ".repeat(2000), "i can send ".repeat(372), "if anyone is ".repeat(315), "могу а а скинуть ".repeat(240),
-    "книга. ".repeat(585), "послушал аудиокнигу, если кому интересно, могу скинуть".repeat(73)].map((text) => text.slice(0, 4096));
+    "книга. ".repeat(585), "послушал аудиокнигу, если кому интересно, могу скинуть".repeat(73),
+    // Every offer looks back over a bounded window at the last work word (#153 review 2).
+    "прочитал книгу, очень понравилась, если кому надо, скину, ".repeat(70), "книга и ".repeat(512), "могу скинуть\n".repeat(315),
+    "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину"].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
     const start = performance.now();
     promoPattern(plain(text));
