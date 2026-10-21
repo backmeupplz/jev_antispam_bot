@@ -269,7 +269,9 @@ test("free-copy matching stays fast on 4,096-character adversarial input", () =>
     "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину",
     // Lead-ins, "в аудио" and formats (#153 review 5).
     "опять снова тот же вижу: ".repeat(164), "Опять снова снова снова снова: послушай ".repeat(103), "послушал " + "а ".repeat(2000) + "в аудио",
-    "i just read the pdf rules, i can send it ".repeat(100)].map((text) => text.slice(0, 4096));
+    "i just read the pdf rules, i can send it ".repeat(100),
+    // A lead-in counts only before the first read verb (#153 review 6).
+    "а ".repeat(1000) + "послушал. опять: послушал ".repeat(80), "опять: послушал книгу, скину. ".repeat(136)].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
     const start = performance.now();
     promoPattern(plain(text));

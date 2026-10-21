@@ -814,7 +814,7 @@ const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверс�
 const BOOK = any("(?<!‹(?:записн|трудов|телефонн|сберегательн|медицинск|санитарн|ветеринарн|зачетн|зачётн)\\p{L}*\\s)‹(?:книг|книжк|аудиокни|аудиоверси|аудио[- ]?формат|автобиограф|литератур)\\p{L}*|(?<!‹(?:на|в|во|из)\\s)‹электронк\\p{L}*", COURSE_TAKEN,
   "‹(?:books?|audiobooks?|audio ?versions?|e-?books?|novels?|memoirs?|biograph\\p{L}*|audible)›", "(?<!‹of )‹courses?›");
 const FILE_FORMAT = re("‹(?:pdf|epub|fb2)›");
-const DOCUMENT = re("‹(?:rules|bylaws|handbook|manual|guidelines|minutes|contract|agreement|lease|template|policy|forms?|syllabus|schedule|notes|slides|report|article|instructions|checklist|regulations|test|exam|prep|application|documents?|docs?|letter|newsletter|brochure|menu|presentation)›");
+const DOCUMENT = re("‹(?:rules|bylaws|handbook|manual|guidelines|minutes|contract|agreement|lease|template|policy|forms?|syllabus|schedule|notes|slides|report|article|instructions|checklist|regulations|test|exam|prep|application|documents?|docs?|letter|newsletter|brochure|menu|presentation|patterns?|guides?|itinerar(?:y|ies)|workbooks?)›");
 const IN_AUDIO = re("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›[^.,;:!?\\n—–]{0,60}?‹в аудио›");
 const RECORDING = re("‹(?:лекци|собрани|вебинар|подкаст|интервью|урок|совещани|планерк|встреч|эфир|стрим|концерт|семинар|конференц|выступлени|голосов|разговор|звонок|звонк|песн|трек|проповед|сказк|медитац|мастер-класс|тренинг|марафон|консультац|передач|аффирмац|практик|обращени|молитв|спектакл|доклад|занят|стих)");
 const namesBook = (told: string) => BOOK.test(told) || IN_AUDIO.test(told) && !RECORDING.test(told)
@@ -852,9 +852,14 @@ const BOOK_REQUEST = any("‹(?:скиньте|киньте|пришлите|п�
   "‹(?:в обмен|взамен|обменя(?:ю|юсь|емся)|поменя(?:ю|юсь|емся)|меняю|меняюсь|in exchange|swap(?:ping)? for|trade (?:it |them )?for)›");
 // Reports, rules and reminders about it: "Опять боты пишут: послушал книгу, могу скинуть", "такие сообщения удаляем",
 // "Offers like this get you banned". English "bot" is left out: "вот" folds to it. A lead-in pastes the ad, so a read or
-// listen verb follows its colon ("Опять: послушал книгу…"); a review's own colon tells a thought ("Снова убедился: …").
-const BOOK_REPORT = any(`(?:^|[.!?\\n]\\s?)[^.!?\\n:]{0,60}?‹(?:опять|снова|again|тот же|та же|тем же|таким текстом|этим текстом|вижу|модер\\p{L}*|админ\\p{L}*|mods?|admins?|аккаунт\\p{L}*|heads up|this one)›[^.!?\\n:]{0,40}:(?=[\\s\\S]{0,120}?(?:${CONSUMED.source}))`,
-  "‹кто ещ[её] (?:[\\p{L}-]+ )?получ\\p{L}*", "‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
+// listen verb follows its colon ("Опять: послушал книгу…") and none comes before it: a review's own colon tells a thought
+// ("Снова убедился: …", "Послушал книгу Форда и снова убедился: время дороже денег. Особенно понравилась мысль…").
+const LEAD_IN = re(`(?:^|[.!?\\n]\\s?)[^.!?\\n:]{0,60}?‹(?:опять|снова|again|тот же|та же|тем же|таким текстом|этим текстом|вижу|модер\\p{L}*|админ\\p{L}*|mods?|admins?|аккаунт\\p{L}*|heads up|this one)›[^.!?\\n:]{0,40}:(?=[\\s\\S]{0,120}?(?:${CONSUMED.source}))`);
+function pastesAd(text: string): boolean {
+  const lead = LEAD_IN.exec(text);
+  return !!lead && text.search(CONSUMED) >= lead.index + lead[0].length;
+}
+const BOOK_REPORT = any("‹кто ещ[её] (?:[\\p{L}-]+ )?получ\\p{L}*", "‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
   "‹(?:кто-то|какой-то|какая-то|некий|someone|somebody|some (?:guy|girl|account|user)|this guy|that guy) (?:[\\p{L}-]+ )?(?:пишет|написал\\p{L}*|присылает|прислал\\p{L}*|скинул\\p{L}*|рассылает|предлагает|dm['’]?e?d|messaged|texted|sent|wrote|says|keeps|posts)›",
   "‹(?:написал|прислал|скинул|предложил|отправил)[аи]? (?:мне|нам)›|‹пришл[оаи] (?:мне |нам )?(?:в лс|в личк\\p{L}*|в директ)|‹(?:dm['’]?e?d|messaged|texted) me›|‹(?:аккуратн|бдительн|игнорир|достал\\p{L}*|надоел\\p{L}*|вирус|ignore›|psa›|malware|virus|phishing|fall for)",
   "(?:‹это|[—–-])\\s?реклам|‹(?:правила (?:чата|группы)|напоминаю|reminder|chat rules|(?:are|is) (?:an )?ads?›|get (?:deleted|removed|banned))",
@@ -938,7 +943,7 @@ function sendsTheWork(told: string, start: number, end: number): boolean {
 }
 
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
-  if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text)) return false;
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text) || pastesAd(text)) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
   if (!namesBook(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
   if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60))
