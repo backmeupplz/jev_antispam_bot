@@ -9,6 +9,8 @@ import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCor
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
 import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
+import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyParaphrases } from "./fixtures/book-copy-offer";
+import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnownMisses } from "./fixtures/book-copy-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -231,6 +233,48 @@ test("adult promo matching stays fast on 4,096-character adversarial input", () 
   for (const [i, text] of inputs.flatMap((text) => [text, text]).entries()) {
     const start = performance.now();
     promoPattern(plain(text, i % 2 ? {} : { inlineButtons: adultPromoIncidentButtons }));
+    expect(performance.now() - start).toBeLessThan(250);
+  }
+});
+
+const book = "book_copy_offer";
+test("the #153 free-copy bait matches standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(bookCopyIncident, patch))).toBe(book);
+});
+
+test.each([...bookCopyFamily, ...bookCopyParaphrases])("free-copy bait variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(book);
+});
+
+test("free-copy controls never match: requests, book talk, public links and libraries, reports, rules and refusals", () => {
+  expect(bookCopyControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("a free-copy offer answering another member's book request is a requested answer", () => {
+  expect(promoPattern(plain(bookCopyIncident, memberReply("Кто-нибудь слушал Форда? Есть у кого аудиокнига?")))).toBeUndefined();
+  expect(promoPattern(plain(bookCopyIncident, memberReply("Как дела у всех?")))).toBe(book);
+});
+
+test("the pinned free-copy review corpus keeps its exact outcome", () => {
+  expect(bookCorpusAds.filter((text) => promoPattern(plain(text)) !== book)).toEqual(bookCorpusKnownMisses);
+  expect(bookCorpusKeeps.filter((text) => promoPattern(plain(text)))).toEqual(bookCorpusKnownMatches);
+});
+
+test("free-copy matching stays fast on 4,096-character adversarial input", () => {
+  const inputs = ["послушал книгу ".repeat(273), "могу скинуть ".repeat(315), "если кому интересно ".repeat(204), "послушал «".repeat(409),
+    "прочитал книгу, могу скинуть " + "а ".repeat(2000), "i can send ".repeat(372), "if anyone is ".repeat(315), "могу а а скинуть ".repeat(240),
+    "книга. ".repeat(585), "послушал аудиокнигу, если кому интересно, могу скинуть".repeat(73),
+    // Every offer looks back over a bounded window at the last work word (#153 review 2).
+    "прочитал книгу, очень понравилась, если кому надо, скину, ".repeat(70), "книга и ".repeat(512), "могу скинуть\n".repeat(315),
+    "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину",
+    // Lead-ins, "в аудио" and formats (#153 review 5).
+    "опять снова тот же вижу: ".repeat(164), "Опять снова снова снова снова: послушай ".repeat(103), "послушал " + "а ".repeat(2000) + "в аудио",
+    "i just read the pdf rules, i can send it ".repeat(100),
+    // A lead-in counts only before the first read verb (#153 review 6).
+    "а ".repeat(1000) + "послушал. опять: послушал ".repeat(80), "опять: послушал книгу, скину. ".repeat(136)].map((text) => text.slice(0, 4096));
+  for (const text of inputs) {
+    const start = performance.now();
+    promoPattern(plain(text));
     expect(performance.now() - start).toBeLessThan(250);
   }
 });
