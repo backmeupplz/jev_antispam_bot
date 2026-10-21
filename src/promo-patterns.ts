@@ -849,15 +849,21 @@ const PUBLIC_COPY = any("https?://|www\\.|‹(?:t|telegram)\\.me/|[a-z0-9-]\\.(?
 // The author asks for a book, or trades one: "скиньте кто-нибудь…", "у кого есть аудиоверсия?", "Can someone send me the PDF?".
 const BOOK_REQUEST = any("‹(?:скиньте|киньте|пришлите|перешлите|подскажите|посоветуйте|ищу|ищем|у кого(?:-нибудь|-то)? (?:есть|найд[её]тся)|есть у кого|может у кого|кто (?:может|сможет) (?:скинуть|переслать|отправить|поделиться))›",
   "‹поделитесь (?:[\\p{L}-]+ )?(?:книг|аудио|ссылк|pdf|файл)", "‹(?:looking for|does anyone have|anyone have|anybody have|(?:can|could) (?:someone|anyone|anybody)|(?:please )?send me(?! (?:a |an )?(?:dm|pm|message|text|line)›))›",
-  "‹(?:в обмен|взамен|обменя(?:ю|юсь|емся)|поменя(?:ю|юсь|емся)|меняю|меняюсь|in exchange|swap(?:ping)? for|trade (?:it |them )?for)›");
+  "‹(?:в обмен|взамен|обменя(?:ю|юсь|емся)|поменя(?:ю|юсь|емся)|меняю|меняюсь|in exchange|swap(?:ping)? for|trade (?:it |them )?for)›",
+  // A paper book is given away or sold, not a copy sent: "Книга в хорошем состоянии, могу отправить", "Книжка бумажная".
+  "‹(?:в (?:хорошем|отличном|идеальном|новом|нормальном) состоянии|бумажн(?:ая|ую|ой|ые|ых|ом)?›(?! (?:и|или) электрон)|отда(?:м|ю) (?:даром|бесплатно|в добрые)|самовывоз)");
 // Reports, rules and reminders about it: "Опять боты пишут: послушал книгу, могу скинуть", "такие сообщения удаляем",
 // "Offers like this get you banned". English "bot" is left out: "вот" folds to it. A lead-in pastes the ad, so a read or
-// listen verb follows its colon ("Опять: послушал книгу…") and none comes before it: a review's own colon tells a thought
-// ("Снова убедился: …", "Послушал книгу Форда и снова убедился: время дороже денег. Особенно понравилась мысль…").
+// listen verb follows its colon ("Опять: послушал книгу…") and no read work comes before it: a review's own colon tells a
+// thought ("Снова убедился: …", "Послушал книгу Форда и снова убедился: время дороже денег. Особенно понравилась мысль…"),
+// while a reporter reads or enters the chat ("Зашла в чат, а тут опять:", "Читаю чат, снова:", "Прошёл день, и снова:").
+// English titles go unquoted, so there any read verb reads the work: "Just finished Atomic Habits again: …".
 const LEAD_IN = re(`(?:^|[.!?\\n]\\s?)[^.!?\\n:]{0,60}?‹(?:опять|снова|again|тот же|та же|тем же|таким текстом|этим текстом|вижу|модер\\p{L}*|админ\\p{L}*|mods?|admins?|аккаунт\\p{L}*|heads up|this one)›[^.!?\\n:]{0,40}:(?=[\\s\\S]{0,120}?(?:${CONSUMED.source}))`);
 function pastesAd(text: string): boolean {
   const lead = LEAD_IN.exec(text);
-  return !!lead && text.search(CONSUMED) >= lead.index + lead[0].length;
+  if (!lead) return false;
+  const head = text.slice(0, lead.index + lead[0].length);
+  return !CONSUMED.test(head) || !namesBook(head) && !TITLED.test(head) && /\p{Script=Cyrillic}/u.test(head);
 }
 const BOOK_REPORT = any("‹кто ещ[её] (?:[\\p{L}-]+ )?получ\\p{L}*", "‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
   "‹(?:кто-то|какой-то|какая-то|некий|someone|somebody|some (?:guy|girl|account|user)|this guy|that guy) (?:[\\p{L}-]+ )?(?:пишет|написал\\p{L}*|присылает|прислал\\p{L}*|скинул\\p{L}*|рассылает|предлагает|dm['’]?e?d|messaged|texted|sent|wrote|says|keeps|posts)›",
@@ -943,7 +949,7 @@ function sendsTheWork(told: string, start: number, end: number): boolean {
 }
 
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
-  if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text) || pastesAd(text)) return false;
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text) || pastesAd(promoText(raw))) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
   if (!namesBook(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
   if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60))
