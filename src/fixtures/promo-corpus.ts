@@ -789,7 +789,7 @@ export const corpusKnownMisses = [
 ];
 
 // Conversation the rule still matches. Each has the full ad shape (a job, a rate per period and a DM call),
-// so only the 0.30 model floor keeps it.
+// so only the 0.20 model floor keeps it.
 export const corpusKnownMatches = [
   "Работа на заводе, 3000 за смену, устал. Кто тоже? Пишите в лс поболтаем",
   "Есть хорошая работа у брата, 5000 в день, но там вакансий нет. Пиши в лс расскажу",

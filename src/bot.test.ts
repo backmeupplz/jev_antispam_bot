@@ -26,7 +26,8 @@ import { channelPosts, repeatControls, repeatedOffer } from "./fixtures/repeat-c
 import { directCryptoTradeControls } from "./fixtures/crypto-trade-courier";
 import { shortRepeats, usdtAsk, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
-import { botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
+import { PATTERN_MIN_SCORE } from "./promo-patterns";
+import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
@@ -2345,6 +2346,24 @@ test("side-gig comment at 0.797 and forwarded @bot testimonial at 0.437 are dele
   await h.stats.stop();
 });
 
+test("the #152 forwarded @bot testimonial at 0.2844 is deleted; the floor is 0.20 inclusive", async () => {
+  expect(PATTERN_MIN_SCORE).toBe(0.2);
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.2844));
+  await h.send({ text: botTestimonialFloorIncident, forward_origin: { type: "hidden_user", sender_user_name: "Мария", date: 1 } });
+  h.setAnswer(keepAt(0.2));
+  await h.send({ from: { ...user, id: 13 }, text: botTestimonialFloorIncident });
+  h.setAnswer(keepAt(0.1999));
+  await h.send({ from: { ...user, id: 14 }, text: botTestimonialFloorIncident });
+  expect(deleted(h)).toEqual([[group.id, 1], [group.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.messageId, log.pattern, log.confidence, log.decision])).toEqual([
+    [1, "bot_testimonial", 0.2844, "pattern_delete"], [2, "bot_testimonial", 0.2, "pattern_delete"], [3, "bot_testimonial", 0.1999, "keep"]]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([[1, "bot_testimonial"], [2, "bot_testimonial"]]);
+  expect(h.confirmed).toEqual(["1", "2"]);
+  expect(JSON.stringify(h.logs)).not.toContain("pszyno");
+  await h.stats.stop();
+});
+
 test("pattern rule stays silent for admins, under the model floor, for requested answers and failed classifications", async () => {
   const h = harness();
   // First, so the cached admin status is the administrator's.
@@ -2353,7 +2372,7 @@ test("pattern rule stays silent for admins, under the model floor, for requested
   await h.send({ text: botTestimonialIncident });
   h.setMemberStatus("member");
   const member = { ...user, id: 13 };
-  h.setAnswer(keepAt(0.29));
+  h.setAnswer(keepAt(0.19));
   await h.send({ from: member, text: sideGigIncident });
   h.setAnswer(keepAt(0.6));
   await h.send({ from: member, text: sideGigIncident, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: "Ищу подработку на выходные, есть варианты?" } });
@@ -2362,7 +2381,7 @@ test("pattern rule stays silent for admins, under the model floor, for requested
   expect(h.deletes()).toEqual([]);
   expect(h.skipped().map((log) => log.reason)).toEqual(["group_admin"]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
-    { event: "promo_pattern_detected", chatId: group.id, messageId: 2, isEdited: false, pattern: "side_gig_offer", confidence: 0.29, decision: "keep" },
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 2, isEdited: false, pattern: "side_gig_offer", confidence: 0.19, decision: "keep" },
   ]);
   await h.stats.stop();
 });
@@ -2413,11 +2432,11 @@ test("crypto trade controls at 0.79 and requested answers stay kept; an ask unde
   h.setAnswer(keepAt(0.79));
   for (const [index, text] of [...cryptoTradeControls, ...usdtControls, ...directCryptoTradeControls].entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
   for (const { question, answer } of cryptoTradeRepliedAnswers) await h.send({ text: answer, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: question } });
-  h.setAnswer(keepAt(0.29));
+  h.setAnswer(keepAt(0.19));
   const floor = await h.send({ text: cryptoTradeIncident });
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
-    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.29, decision: "keep" },
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "crypto_trade_ask", confidence: 0.19, decision: "keep" },
   ]);
   await h.stats.stop();
 });
@@ -2479,11 +2498,11 @@ test("adult promo controls at 0.79 stay kept; the incident under the floor only 
   const h = harness();
   h.setAnswer(keepAt(0.79));
   for (const [index, text] of adultPromoControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
-  h.setAnswer(keepAt(0.29));
+  h.setAnswer(keepAt(0.19));
   const floor = await h.send({ text: adultPromoIncident, reply_markup: adultKeyboard });
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
-    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "adult_content_promo", confidence: 0.29, decision: "keep" },
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "adult_content_promo", confidence: 0.19, decision: "keep" },
   ]);
   await h.stats.stop();
 });

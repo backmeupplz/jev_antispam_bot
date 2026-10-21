@@ -1,5 +1,5 @@
 // #145: adult-promo probes written by the independent reviews of PR #49 (rounds 1–25) and #148, pinned with their exact outcome.
-// [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.30.
+// [text, withUrlButton?]. Known misses are ads left to the model; known matches are conversations the rule still deletes at >= 0.20.
 export type AdultCorpusItem = [string, boolean?];
 export const adultCorpusAds: AdultCorpusItem[] = [
   ["🔞 Hot p0rn videos daily 🔥 tap the button below"],
