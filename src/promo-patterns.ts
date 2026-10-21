@@ -814,18 +814,22 @@ const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверс�
 const BOOK = any("(?<!‹(?:записн|трудов|телефонн|сберегательн|медицинск|санитарн|ветеринарн|зачетн|зачётн)\\p{L}*\\s)‹(?:книг|книжк|аудиокни|аудиоверси|аудио[- ]?формат|автобиограф|литератур)\\p{L}*|(?<!‹(?:на|в|во|из)\\s)‹электронк\\p{L}*", COURSE_TAKEN,
   "‹(?:books?|audiobooks?|audio ?versions?|e-?books?|novels?|memoirs?|biograph\\p{L}*|audible)›", "(?<!‹of )‹courses?›");
 const FILE_FORMAT = re("‹(?:pdf|epub|fb2)›");
-const DOCUMENT = re("‹(?:rules|bylaws|handbook|manual|guidelines|minutes|contract|agreement|lease|template|policy|forms?|syllabus|schedule|notes|slides|report|article|instructions|checklist|regulations|test|exam|prep|application|documents?|docs?|letter|newsletter|brochure|menu|presentation|patterns?|guides?|itinerar(?:y|ies)|workbooks?)›");
+const DOCUMENT = re("‹(?:papers?|thesis|dissertation|stud(?:y|ies)|research|preprints?|magazines?|journals?|earnings|catalog(?:ue)?s?|portfolio|cv|resume|rules|bylaws|handbook|manual|guidelines|minutes|contract|agreement|lease|template|policy|forms?|syllabus|schedule|notes|slides|report|article|instructions|checklist|regulations|test|exam|prep|application|documents?|docs?|letter|newsletter|brochure|menu|presentation|patterns?|guides?|itinerar(?:y|ies)|workbooks?)›");
 const IN_AUDIO = re("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›[^.,;:!?\\n—–]{0,60}?‹в аудио›");
 const RECORDING = re("‹(?:лекци|собрани|вебинар|подкаст|интервью|урок|совещани|планерк|встреч|эфир|стрим|концерт|семинар|конференц|выступлени|голосов|разговор|звонок|звонк|песн|трек|проповед|сказк|медитац|мастер-класс|тренинг|марафон|консультац|передач|аффирмац|практик|обращени|молитв|спектакл|доклад|занят|стих)");
-const namesBook = (told: string) => BOOK.test(told) || IN_AUDIO.test(told) && !RECORDING.test(told)
-  || !/\p{Script=Cyrillic}/u.test(told) && FILE_FORMAT.test(told) && !DOCUMENT.test(told);
+// An English title is capitalised right after the reading verb ("I just read The Alchemist", "finished reading Man's Search
+// for Meaning"), so a PDF of a paper, a thesis or a plan is no book: "I just read the paper on fasting", "Just finished my thesis".
+const EN_TITLE = /(?<![\p{L}\p{N}])(?:[Rr]ead(?:ing)?|[Ff]inished(?: reading| listening to)?|[Ll]isten(?:ed|ing) to|[Ll]oved|[Ee]njoyed|[Dd]evoured|[Rr]ecommend)\s(?:the\s|a\s)?\p{Lu}/u;
+const namesBook = (told: string, raw = "") => BOOK.test(told) || IN_AUDIO.test(told) && !RECORDING.test(told)
+  || !/\p{Script=Cyrillic}/u.test(told) && FILE_FORMAT.test(told) && !DOCUMENT.test(told) && EN_TITLE.test(glyphs(raw.replace(/\p{Cf}/gu, "")));
 // The author read, heard or took it, or praises it: "послушал", "слушал аудиокнигу", "открыл для себя", "понравилась",
 // "I just finished", "highly recommend".
 const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›|‹(?:про|до|пере)?чита(?:л|ла|ли|ю)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
   "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)|‹(?:закончил|окончил)\\p{L}* (?:[\\p{L}-]+ )?курс|‹закончил[аи]? (?:[\\p{L}-]+ )?(?:книг|аудиокни|читать|слушать)",
   "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|discovered|recommend|took (?:[\\p{L}-]+ ){0,2}?courses?›)|(?:just|recently) (?:read|finished|listened)|highly recommend|changed my|loved|enjoyed|devoured)›");
 // A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
-const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„]`);
+// A quoted document or talk is no title: "Прочитала «Положение о летнем лагере»", "Прочитали «Устав ТСЖ»".
+const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„](?!\\s?(?:положени|правил|устав|договор|регламент|инструкци|приказ|постановлени|закон|кодекс|памятк|объявлени|протокол|бесед|проповед|вебинар|лекци|семинар|подкаст|интервью|урок|рекомендаци|методичк|распоряжени|письм)\\p{L}*)`);
 // A first-person offer to send it: "могу скинуть", "готов поделиться", "отправлю", "перешлю", "I can send", "I'll share".
 // "не могу скинуть" refuses.
 const SEND = "(?:скинуть|кинуть|переслать|отправить|прислать|выслать|сбросить|поделиться)";
@@ -951,7 +955,7 @@ function sendsTheWork(told: string, start: number, end: number): boolean {
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
   if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text) || pastesAd(promoText(raw))) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
-  if (!namesBook(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
+  if (!namesBook(told, raw) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
   if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60))
     && sendsTheWork(told, match.index, match.index + match[0].length))) return false;
   return !answersRequest(message, (source) => WORK.test(source));
