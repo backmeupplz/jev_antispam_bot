@@ -8,7 +8,7 @@ import type { ModerationMessage } from "./spam";
 export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
-export const PATTERN_MIN_SCORE = 0.3;
+export const PATTERN_MIN_SCORE = 0.2;
 
 // Lookalike letters fold to one form in both the text and the patterns, so a
 // swapped Latin/Cyrillic letter matches either way.

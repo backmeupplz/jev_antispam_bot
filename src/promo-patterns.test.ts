@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { botTestimonialControls, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
+import { botTestimonialControls, botTestimonialFloorIncident, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
 import { usdtAsk, usdtAskVariants, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
@@ -23,6 +23,10 @@ test("both #126 incidents match, standalone, as channel-post comments and forwar
     expect(promoPattern(plain(sideGigIncident, patch))).toBe("side_gig_offer");
     expect(promoPattern(plain(botTestimonialIncident, patch))).toBe("bot_testimonial");
   }
+});
+
+test("the #152 forwarded testimonial matches, standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(botTestimonialFloorIncident, patch))).toBe("bot_testimonial");
 });
 
 test.each(sideGigParaphrases)("held-out side-gig paraphrase matches: %s", (text) => {
