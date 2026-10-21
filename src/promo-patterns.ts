@@ -819,9 +819,22 @@ const IN_AUDIO = re("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|
 const RECORDING = re("‹(?:лекци|собрани|вебинар|подкаст|интервью|урок|совещани|планерк|встреч|эфир|стрим|концерт|семинар|конференц|выступлени|голосов|разговор|звонок|звонк|песн|трек|проповед|сказк|медитац|мастер-класс|тренинг|марафон|консультац|передач|аффирмац|практик|обращени|молитв|спектакл|доклад|занят|стих)");
 // An English title is capitalised right after the reading verb ("I just read The Alchemist", "finished reading Man's Search
 // for Meaning"), so a PDF of a paper, a thesis or a plan is no book: "I just read the paper on fasting", "Just finished my thesis".
-const EN_TITLE = /(?<![\p{L}\p{N}])(?:[Rr]ead(?:ing)?|[Ff]inished(?: reading| listening to)?|[Ll]isten(?:ed|ing) to|[Ll]oved|[Ll]iked|[Ee]njoyed|[Dd]evoured|[Rr]ecommend)\s(?:the\s|a\s)?\p{Lu}/u;
+// The title is a run of capitalised words (joined by "of", "the", "and"… or a possessive), and what follows it is no noun
+// of its own: "Liked Atomic Habits a lot", "read Rich Dad Poor Dad and it changed my mindset", not a show, a talk, a piece or
+// a date: "Listened to Bankless this week", "Liked Delphi's piece on restaking", "Listened to Huberman on dopamine".
+const EN_TITLE = /(?<![\p{L}\p{N}])(?:[Rr]ead(?:ing)?|[Ff]inished(?: reading| listening to)?|[Ll]isten(?:ed|ing) to|[Ll]oved|[Ll]iked|[Ee]njoyed|[Dd]evoured|[Rr]ecommend)\s(?:the\s|a\s)?(\p{Lu}[^.,;:!?\n—–()]*)/gu;
+const TITLE_JOIN = /^(?:of|the|a|an|and|to|in|for|s)$/u;
+const AFTER_TITLE = /^(?:and|a|so|now|too|again|twice|last|it|is|was|really|very|highly|honestly|recently|finally|by|loved|liked|enjoyed)$/u;
+function titled(raw: string): boolean {
+  return [...glyphs(raw.replace(/\p{Cf}/gu, "")).matchAll(EN_TITLE)].some(([, title]) => {
+    const words = [...title!.matchAll(/[\p{L}\p{N}]+/gu)].map(([word]) => word);
+    const caps = (word = "") => /^[\p{Lu}\p{N}]/u.test(word);
+    const next = words.find((word, i) => !caps(word) && !(TITLE_JOIN.test(word) && caps(words[i + 1])));
+    return next === undefined || AFTER_TITLE.test(next);
+  });
+}
 const namesBook = (told: string, raw = "") => BOOK.test(told) || IN_AUDIO.test(told) && !RECORDING.test(told)
-  || !/\p{Script=Cyrillic}/u.test(told) && FILE_FORMAT.test(told) && !DOCUMENT.test(told) && EN_TITLE.test(glyphs(raw.replace(/\p{Cf}/gu, "")));
+  || !/\p{Script=Cyrillic}/u.test(told) && FILE_FORMAT.test(told) && !DOCUMENT.test(told) && titled(raw);
 // The author read, heard or took it, or praises it: "послушал", "слушал аудиокнигу", "открыл для себя", "понравилась",
 // "I just finished", "highly recommend".
 const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›|‹(?:про|до|пере)?чита(?:л|ла|ли|ю)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
