@@ -799,14 +799,16 @@ const JOIN = re("‹join›", "giu");
 // --- Free-copy bait (#153): a first-person review of a book, audiobook or course + an offer to send a copy + an interest
 // or DM cue. "Недавно послушал «Время деньги» Генри Форда… Есть хорошая аудиоверсия. Если кому интересно пишите в личку, отправлю."
 // What is reviewed: a book, an audio or text version of one, or a course the author took ("курс" alone is also a rate).
-const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверси|аудиоформат|аудио-формат|автобиограф|литератур)\\p{L}*", "‹(?:аудио|озвучк\\p{L}*)›",
-  "‹(?:текстов|электронн|печатн|бумажн)\\p{L}* (?:верси|вариант|формат)",
-  "‹(?:прош(?:ла|[её]л)|проходил\\p{L}*|закончил\\p{L}*|окончил\\p{L}*|прослушал\\p{L}*) (?:[\\p{L}-]+ )?курс",
+// Bare "аудио" is a voice message, a podcast or a song as often: "Послушала голосовое, если кому надо, перешлю аудио".
+// A course of treatment is no course the author took: "Прошла курс ЛФК, если кому надо — скину".
+const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверси|аудио[- ]?формат|автобиограф|литератур)\\p{L}*", "‹(?:озвучк\\p{L}*|в аудио)›",
+  "‹(?:текстов|электронн|печатн|бумажн)\\p{L}* (?:верси|вариант|формат)|‹электронк\\p{L}*",
+  "‹(?:прош(?:ла|[её]л)|проходил\\p{L}*|закончил\\p{L}*|окончил\\p{L}*|прослушал\\p{L}*) (?:[\\p{L}-]+ )?курс(?! (?:лечени|антибиот|терапи|уколов|капельниц|массаж|лфк|реабилит|физио|витамин|при[её]ма|процедур))",
   "‹(?:books?|audiobooks?|audio ?versions?|e-?books?|novels?|memoirs?|biograph\\p{L}*|pdf|epub|fb2|audible)›", "(?<!‹of )‹courses?›");
 // The author read, heard or took it, or praises it: "послушал", "слушал аудиокнигу", "открыл для себя", "понравилась",
 // "I just finished", "highly recommend".
-const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли)›|‹(?:про|до|пере)?чита(?:л|ла|ли)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
-  "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)|‹(?:закончил|окончил)\\p{L}* (?:[\\p{L}-]+ )?курс",
+const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›|‹(?:про|до|пере)?чита(?:л|ла|ли|ю)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
+  "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)|‹(?:закончил|окончил)\\p{L}* (?:[\\p{L}-]+ )?курс|‹закончил[аи]? (?:[\\p{L}-]+ )?(?:книг|аудиокни|читать|слушать)",
   "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|discovered|recommend|took)|(?:just|recently) (?:read|finished|listened)|highly recommend|changed my|loved|enjoyed|devoured)›");
 // A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
 const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„]`);
@@ -820,8 +822,8 @@ const COPY_OFFER = re(`(?<!‹(?:не|ни)\\s)‹(?:могу|можем|гот�
   + "|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|happy to|glad to|(?<!‹(?:you|we|they|he|she|anyone|someone|who)\\s)can) (?:gladly |happily |also |totally )?(?:send|share|forward|pass|email)›", "giu");
 // What it sends must be the copy: nothing more in the clause ("могу скинуть.", "отправлю, пишите"), or the work, a format,
 // a recipient, a DM or "free" within a few filler words ("скину аудиоверсию", "перешлю в лс", "I'll send it to anyone").
-const FILLER = "(?:её|его|их|вам|тебе|всем|все|всю|весь|эту|этот|это|сразу|тоже|также|обе|оба|свою|свой|мою|мой|в|на|с|со|по|it|them|this|that|the|a|an|you|over|along|both|to|with|one)";
-const COPY_WORD = "(?:книг|книжк|аудио|текст|файл|pdf|пдф|epub|fb2|mp3|запис|урок|материал|верси|вариант|формат|электронн|кому|желающ|лс|(?<=‹(?:в|на|in|on|via) )(?:телеграм\\p{L}*|тг›|вотсап|ватсап|whatsapp|telegram)|your way|л\\.с|личк|личн|директ|бесплатн|даром|если|audio|text|files?›|pdf|epub|mp3|cop(?:y|ies)›|e-?books?›|books?›|recordings?›|lessons?›|materials?›|versions?›|anyone|anybody|whoever|everyone|if›|dm›|pm›|inbox|free›)";
+const FILLER = "(?:её|его|их|вам|тебе|всем|все|всю|весь|эту|этот|это|вами|всеми|целиком|сразу|тоже|также|обе|оба|свою|свой|мою|мой|в|на|с|со|по|завтра|сегодня|вечером|позже|it|them|this|that|the|a|an|you|over|along|both|to|with|one|later|today|tonight)";
+const COPY_WORD = "(?:книг|книжк|аудио|текст|файл|pdf|пдф|epub|fb2|mp3|запис|урок|материал|верси|вариант|формат|электронн|кому|желающ|лс|(?<=‹(?:в|на|in|on|via) )(?:телег\\p{L}*|почт\\p{L}*|тг›|вотсап|ватсап|whatsapp|telegram)|your way|л\\.с|личк|личн|директ|бесплатн|даром|если|audio|text|files?›|pdf|epub|mp3|cop(?:y|ies)›|e-?books?›|books?›|recordings?›|lessons?›|materials?›|versions?›|anyone|anybody|whoever|everyone|if›|dm›|pm›|inbox|free›)";
 const A_COPY = re(`^(?:\\s?${FILLER}›){0,3}\\s?(?:$|[.!…)\\n—–-]|,(?!\\s?(?:(?:на|в|во|с|о|об|про|у|из|для|at|on|in|from) )?(?:кто|who|где|куда|откуда|о ч[её]м|про что|что|как|(?:в )?как(?:ой|ая|ое|ие|ом|их|ую)|сколько|когда|where|what|how|when)›)|${COPY_WORD})`);
 // Interest or a DM: "если кому интересно", "кому интересно", "если есть желание", "пишите в личку", "if anyone's interested".
 const INTEREST = any("‹(?:если|кому|кто|кого)(?:[- ](?:то|нибудь|либо))?(?: [\\p{L}-]+){0,2}? (?:интересн\\p{L}*|надо|нужн\\p{L}*|хочет|хотите|захочет|интересует|заинтересова\\p{L}*)›",
@@ -838,14 +840,58 @@ const BOOK_REQUEST = any("‹(?:скиньте|киньте|пришлите|п�
 // "Offers like this get you banned". English "bot" is left out: "вот" folds to it.
 const BOOK_REPORT = any("‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
   "‹(?:кто-то|какой-то|какая-то|некий|someone|somebody|some (?:guy|girl|account|user)|this guy|that guy) (?:[\\p{L}-]+ )?(?:пишет|написал\\p{L}*|присылает|прислал\\p{L}*|скинул\\p{L}*|рассылает|предлагает|dm['’]?e?d|messaged|texted|sent|wrote|says|keeps|posts)›",
-  "‹(?:написал|прислал|скинул|предложил|отправил)[аи]? (?:мне|нам)›|‹пришл[оаи] (?:мне |нам )?(?:в лс|в личк\\p{L}*|в директ)|‹(?:dm['’]?e?d|messaged|texted) me›|‹(?:аккуратн|бдительн|игнорир|достал\\p{L}*|надоел\\p{L}*|вирус|ignore›|psa›|malware|virus|phishing)",
+  "‹(?:написал|прислал|скинул|предложил|отправил)[аи]? (?:мне|нам)›|‹пришл[оаи] (?:мне |нам )?(?:в лс|в личк\\p{L}*|в директ)|‹(?:dm['’]?e?d|messaged|texted) me›|‹(?:аккуратн|бдительн|игнорир|достал\\p{L}*|надоел\\p{L}*|вирус|ignore›|psa›|malware|virus|phishing|fall for)",
   "(?:‹это|[—–-])\\s?реклам|‹(?:правила (?:чата|группы)|напоминаю|reminder|chat rules|(?:are|is) (?:an )?ads?›|get (?:deleted|removed|banned))",
   "‹(?:запрещ\\p{L}*|удаля(?:ем|ются|ю)|будут удал\\p{L}*|бан›|в бан|забан\\p{L}*|против правил|нарушени\\p{L}* правил|нельзя|not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|banned|get you (?:banned|removed))");
+// An offer sends the work only when nothing else is named between them: the rest of its sentence names the copy or
+// nothing ("скину аудиоверсию", "отправлю, пишите в лс"), and before it the last work named is followed only by its
+// author or title (up to the next punctuation) and praise, interest or DM words. So "Сделала конспект, если кому надо,
+// скину", "Рецепт пирога могу скинуть", "Могу скинуть, если кому интересно, название" and "расскажу, сколько скину"
+// send something else.
+const WORDS = /[\p{L}\p{N}]+/gu;
+const COPY_NAME = re("^(?:книг|книжк|аудио|текст|электрон|файл|пдф|запис|урок|материал|верси|вариант|формат|озвучк|курс|биограф|автобиограф|литератур"
+  + "|(?:books?|audiobooks?|ebooks?|cop(?:y|ies)|files?|recordings?|lessons?|materials?|versions?|courses?|audio|pdf|epub|mp3|fb2|novels?|memoirs?)$)");
+const READ_WORD = re("^(?:(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)|(?:про|до|пере)?чита(?:л|ла|ли|ю)|прочл[аи]?|прочел|понравил\\p{L}*|зашл[аои]|советую|рекомендую"
+  + "|открыл\\p{L}*|закончил\\p{L}*|read|listened|finished|loved|enjoyed|recommend|devoured|changed|changing)$");
+const BETWEEN_WORD = re(`^(?:${FILLER.slice(3, -1)}|если|кому|кто|кого|то|нибудь|либо|интересн\\p{L}*|надо|нужн\\p{L}*|хоч\\p{L}*|хотите|захочет|интересует`
+  + "|заинтересова\\p{L}*|есть|будет|желани\\p{L}*|интерес|желающ\\p{L}*|пиш\\p{L}*|напиш\\p{L}*|обращайтесь|лс|л|личк\\p{L}*|личн\\p{L}*|сообщени\\p{L}*"
+  + "|директ|телег\\p{L}*|почт\\p{L}*|тг|так|сохранил\\p{L}*|вотсап|ватсап|ещ[её]|могу|можем|готов\\p{L}*|радостью|удовольствием|охотно|бесплатно|даром|и|а|или|у|меня|я|мне|же|тоже|что"
+  + "|очень|прям|просто|реально|всем|всеми|вами|хорош\\p{L}*|отличн\\p{L}*|полезн\\p{L}*|помогл\\p{L}*|огонь|супер|класс|кстати"
+  + "|i|ll|s|re|m|ve|d|have|got|is|are|if|anyone|anybody|someone|somebody|want|wants|need|needs|interested|let|me|know|and|just|dm|pm|message|text|write"
+  + "|hit|up|so|also|happy|glad|can|could|would|will|be|really|highly|honestly|like|way|your|whoever|everyone|free|for|who|or|too|great|amazing|gladly"
+  + "|happily|send|share)$");
+const HAS_WORD = re("^(?:есть|have|has|got)$");
+const INTEREST_CLAUSE = re("^\\s?(?:если|кому|кто|желающ|if|whoever|anyone|anybody)›");
+const plainWords = (text: string) => [...text.matchAll(WORDS)].every(([word]) => BETWEEN_WORD.test(word) || READ_WORD.test(word) || COPY_NAME.test(word));
+function sendsTheWork(told: string, start: number, end: number): boolean {
+  for (const [word] of told.slice(end).split(/[.!?\n]/u)[0]!.matchAll(WORDS)) {
+    if (COPY_NAME.test(word)) return true;
+    if (!BETWEEN_WORD.test(word) && !READ_WORD.test(word)) return false;
+  }
+  // The work is named close by; the bound keeps many offers in a long text linear.
+  const before = start > 400 ? told.slice(start - 400, start).replace(/^[\p{L}\p{N}]+/u, "") : told.slice(0, start);
+  const words = [...before.matchAll(WORDS)];
+  const last = (test: RegExp) => words.filter(([word]) => test.test(word)).at(-1);
+  const anchor = last(COPY_NAME) ?? last(READ_WORD);
+  if (!anchor) return false;
+  const BREAK = /[.,!?\n:;—–()]/u;
+  const clause = (text: string) => text.split(BREAK).at(-1)!;
+  const told1 = (text: string, has?: boolean) => [...text.matchAll(WORDS)].some(([word]) => READ_WORD.test(word) || has && HAS_WORD.test(word));
+  // The offer's own clause names nothing else ("Рецепт пирога могу скинуть"), the work's clause reads, praises or has it
+  // ("Прочитала книгу…", "Есть аудиоверсия", not "Список похожих книг составила"), and a statement between them may
+  // praise ("Зашло на ура", "Life changing").
+  const head = clause(before.slice(0, anchor.index));
+  const clauses = before.slice(anchor.index + anchor[0].length).split(BREAK).slice(1);
+  return plainWords(clause(before)) && (plainWords(head) || told1(head, true)) && clauses.every((part) => plainWords(part)
+    || !INTEREST_CLAUSE.test(part) && told1(part));
+}
+
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
   if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text)) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
   if (!WORK.test(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
-  if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60)))) return false;
+  if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60))
+    && sendsTheWork(told, match.index, match.index + match[0].length))) return false;
   return !answersRequest(message, (source) => WORK.test(source));
 }
 
