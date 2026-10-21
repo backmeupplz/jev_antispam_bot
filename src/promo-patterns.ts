@@ -826,7 +826,7 @@ const namesBook = (told: string, raw = "") => BOOK.test(told) || IN_AUDIO.test(t
 // "I just finished", "highly recommend".
 const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)›|‹(?:про|до|пере)?чита(?:л|ла|ли|ю)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
   "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)|‹(?:закончил|окончил)\\p{L}* (?:[\\p{L}-]+ )?курс|‹закончил[аи]? (?:[\\p{L}-]+ )?(?:книг|аудиокни|читать|слушать)",
-  "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|discovered|recommend|took (?:[\\p{L}-]+ ){0,2}?courses?›)|(?:just|recently) (?:read|finished|listened)|highly recommend|changed my|loved|enjoyed|devoured)›");
+  "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|liked|discovered|recommend|took (?:[\\p{L}-]+ ){0,2}?courses?›)|(?:just|recently) (?:read|finished|listened|discovered)|listening to|highly recommend|changed my|loved|enjoyed|liked|devoured)›");
 // A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
 // A quoted document or talk is no title: "Прочитала «Положение о летнем лагере»", "Прочитали «Устав ТСЖ»".
 const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„](?!\\s?(?:положени|правил|устав|требовани|порядо?к|услови|чек-лист|спис|меню|расписани|техзадани|задани|сценари|программ|договор|регламент|инструкци|приказ|постановлени|закон|кодекс|памятк|объявлени|протокол|бесед|проповед|вебинар|лекци|семинар|подкаст|интервью|урок|рекомендаци|методичк|распоряжени|письм)\\p{L}*)`);
@@ -837,7 +837,7 @@ const COPY_OFFER = re(`(?<!‹(?:не|ни)\\s)‹(?:могу|можем|гот�
   + "|(?<!‹(?:не|ни)\\s)‹(?:скину|кину|закину|перешлю|отправлю|пришлю|вышлю|сброшу|поделюсь|скидываю|кидаю|пересылаю|отправляю|высылаю)›|‹" + SEND + " (?:могу|можем)›|‹кому (?:скинуть|переслать|отправить|прислать)›|‹делюсь (?:с желающими|со всеми|бесплатно)›"
   // "DM me for the PDF", "Message me if you want a copy".
   + "|‹(?:dm|pm|message|text|write) me (?:for|if you want) (?:the |a |an )?(?:pdf|cop(?:y|ies)|files?|audiobook|e-?book|mp3|audio(?: version)?|text version)›"
-  + "|‹(?:i can|i could|i['’]ll|i will) (?:dm|pm|message) you›|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|i['’]d love to|happy to|glad to|(?<!‹(?:you|we|they|he|she|anyone|someone|who)\\s)can) (?:gladly |happily |also |totally )?(?:send|share|forward|email)›", "giu");
+  + "|‹(?:i can|i could|i['’]ll|i will) (?:dm|pm|message) you›|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|i['’]d love to|happy to|glad to|ready to|(?<!‹(?:you|we|they|he|she|anyone|someone|who)\\s)can) (?:gladly |happily |also |totally )?(?:send|share|forward|email)›", "giu");
 // What it sends must be the copy: nothing more in the clause ("могу скинуть.", "отправлю, пишите"), or the work, a format,
 // a recipient, a DM or "free" within a few filler words ("скину аудиоверсию", "перешлю в лс", "I'll send it to anyone").
 const FILLER = "(?:и|полн\\p{L}*|каждому|любому|всякому|тем|тому|её|его|их|вам|тебе|всем|все|всю|весь|эту|этот|это|вами|всеми|целиком|сразу|тоже|также|обе|оба|свою|свой|мою|мой|в|на|с|со|по|завтра|сегодня|вечером|позже|it|them|this|that|the|a|an|you|over|along|both|to|with|one|later|today|tonight)";
@@ -884,14 +884,14 @@ const COPY_NAME = re("^(?:книг|книжк|аудио|текст|электр
   + "|(?:books?|audiobooks?|ebooks?|cop(?:y|ies)|files?|recordings?|lessons?|materials?|versions?|formats?|courses?|audio|pdf|epub|mp3|fb2|novels?|memoirs?)$)");
 const BOOK_NAME = re("^(?:книг|книжк|аудиокни|аудиоверси|озвучк|курс|биограф|автобиограф|литератур|(?:books?|audiobooks?|ebooks?|courses?|novels?|memoirs?)$)");
 const READ_WORD = re("^(?:(?:по|про|до|пере)?слуша(?:л|ла|ли|ю)|(?:про|до|пере)?чита(?:л|ла|ли|ю)|прочл[аи]?|прочел|понравил\\p{L}*|зашл[аои]|советую|рекомендую|мотивир\\p{L}*|вдохновля\\p{L}*"
-  + "|открыл\\p{L}*|закончил\\p{L}*|read|listened|finished|loved|enjoyed|recommend|devoured|changed|changing)$");
+  + "|открыл\\p{L}*|закончил\\p{L}*|read|listened|listening|finished|loved|enjoyed|liked|discovered|recommend|devoured|changed|changing)$");
 const BETWEEN_WORD = re(`^(?:${FILLER.slice(3, -1)}|если|кому|кто|кого|то|нибудь|либо|интересн\\p{L}*|надо|нужн\\p{L}*|хоч\\p{L}*|хотите|захочет|интересует`
   + "|заинтересова\\p{L}*|есть|будет|желани\\p{L}*|интерес|желающ\\p{L}*|пиш\\p{L}*|напиш\\p{L}*|обращайтесь|лс|л|личк\\p{L}*|личн\\p{L}*|сообщени\\p{L}*"
   + "|директ|телег\\p{L}*|почт(?:а|е|у|ы)?|тг|так|сохранил\\p{L}*|вотсап|ватсап|ещ[её]|могу|можем|готов\\p{L}*|радостью|удовольствием|охотно|бесплатно|даром|и|а|или|у|меня|я|мне|же|тоже|что"
   + "|виде|очень|прям|просто|реально|всем|всеми|вами|хорош\\p{L}*|отличн\\p{L}*|полезн\\p{L}*|помогл\\p{L}*|огонь|супер|класс|кстати|она|он|was"
   + "|i|ll|s|re|m|ve|d|have|got|is|are|if|anyone|anybody|someone|somebody|want|wants|need|needs|interested|let|me|know|and|just|dm|pm|message|text|write"
   + "|hit|up|so|also|happy|glad|can|could|would|will|be|really|highly|honestly|like|way|your|whoever|everyone|free|for|who|or|too|great|amazing|gladly"
-  + "|happily|send|share|good|nice|there|in)$");
+  + "|happily|send|share|good|nice|there|in|private|messages|dms|available)$");
 const COORD = re("‹(?:и|а|но|and|but)›");
 const HAS_WORD = re("^(?:есть|have|has|got)$");
 const INTEREST_CLAUSE = re("^\\s?(?:если|кому|кто|желающ|if|whoever|anyone|anybody)›");
