@@ -801,42 +801,51 @@ const JOIN = re("‹join›", "giu");
 // What is reviewed: a book, an audio or text version of one, or a course the author took ("курс" alone is also a rate).
 const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверси|аудиоформат|аудио-формат|автобиограф|литератур)\\p{L}*", "‹(?:аудио|озвучк\\p{L}*)›",
   "‹(?:текстов|электронн|печатн|бумажн)\\p{L}* (?:верси|вариант|формат)",
-  "‹(?:прош(?:ла|[её]л)|проходил\\p{L}*|закончил\\p{L}*|окончил\\p{L}*) (?:[\\p{L}-]+ )?курс",
+  "‹(?:прош(?:ла|[её]л)|проходил\\p{L}*|закончил\\p{L}*|окончил\\p{L}*|прослушал\\p{L}*) (?:[\\p{L}-]+ )?курс",
   "‹(?:books?|audiobooks?|audio ?versions?|e-?books?|novels?|memoirs?|biograph\\p{L}*|pdf|epub|fb2|audible)›", "(?<!‹of )‹courses?›");
 // The author read, heard or took it, or praises it: "послушал", "слушал аудиокнигу", "открыл для себя", "понравилась",
 // "I just finished", "highly recommend".
 const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли)›|‹(?:про|до|пере)?чита(?:л|ла|ли)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
-  "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)",
+  "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)|‹(?:закончил|окончил)\\p{L}* (?:[\\p{L}-]+ )?курс",
   "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|discovered|recommend|took)|(?:just|recently) (?:read|finished|listened)|highly recommend|changed my|loved|enjoyed|devoured)›");
 // A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
 const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„]`);
 // A first-person offer to send it: "могу скинуть", "готов поделиться", "отправлю", "перешлю", "I can send", "I'll share".
 // "не могу скинуть" refuses.
-const SEND = "(?:скинуть|кинуть|переслать|отправить|прислать|выслать|сбросить|поделиться|дать (?:почитать|послушать))";
+const SEND = "(?:скинуть|кинуть|переслать|отправить|прислать|выслать|сбросить|поделиться)";
 const COPY_OFFER = re(`(?<!‹(?:не|ни)\\s)‹(?:могу|можем|готов[аы]?|с радостью|охотно)(?: [\\p{L}-]+){0,2}? ${SEND}›`
-  + "|(?<!‹(?:не|ни)\\s)‹(?:скину|кину|перешлю|отправлю|пришлю|вышлю|сброшу|поделюсь)›"
-  + "|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|happy to|glad to|can) (?:gladly |happily |also |totally )?(?:send|share|forward|pass|email|dm)›", "giu");
-// What else it may send is no copy: a link, the title, the author's name, a list, the author's own notes or impressions.
-const NOT_A_COPY = re("^\\s?(?:[\\p{L}-]+\\s){0,2}?(?:ссылк|линк|назван|автор|список|подборк|отзыв|впечатлени|мнени|мысл|скрин|фото|цитат|контакт|номер|links?›|titles?›|names?›|lists?›|reviews?›|thoughts›|notes›|screenshots?›|photos?›|quotes?›|contacts?›|numbers?›|recommendations?›)");
+  + "|(?<!‹(?:не|ни)\\s)‹(?:скину|кину|закину|перешлю|отправлю|пришлю|вышлю|сброшу|поделюсь)›|‹кому (?:скинуть|переслать|отправить|прислать)›|‹делюсь (?:с желающими|со всеми|бесплатно)›"
+  // "DM me for the PDF", "Message me if you want a copy".
+  + "|‹(?:dm|pm|message|text|write) me (?:for|if you want) (?:the |a |an )?(?:pdf|cop(?:y|ies)|files?|audiobook|e-?book|mp3|audio(?: version)?|text version)›"
+  + "|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|happy to|glad to|(?<!‹(?:you|we|they|he|she|anyone|someone|who)\\s)can) (?:gladly |happily |also |totally )?(?:send|share|forward|pass|email)›", "giu");
+// What it sends must be the copy: nothing more in the clause ("могу скинуть.", "отправлю, пишите"), or the work, a format,
+// a recipient, a DM or "free" within a few filler words ("скину аудиоверсию", "перешлю в лс", "I'll send it to anyone").
+const FILLER = "(?:её|его|их|вам|тебе|всем|все|всю|весь|эту|этот|это|сразу|тоже|также|обе|оба|свою|свой|мою|мой|в|на|с|со|по|it|them|this|that|the|a|an|you|over|along|both|to|with|one)";
+const COPY_WORD = "(?:книг|книжк|аудио|текст|файл|pdf|пдф|epub|fb2|mp3|запис|урок|материал|верси|вариант|формат|электронн|кому|желающ|лс|(?<=‹(?:в|на|in|on|via) )(?:телеграм\\p{L}*|тг›|вотсап|ватсап|whatsapp|telegram)|your way|л\\.с|личк|личн|директ|бесплатн|даром|если|audio|text|files?›|pdf|epub|mp3|cop(?:y|ies)›|e-?books?›|books?›|recordings?›|lessons?›|materials?›|versions?›|anyone|anybody|whoever|everyone|if›|dm›|pm›|inbox|free›)";
+const A_COPY = re(`^(?:\\s?${FILLER}›){0,3}\\s?(?:$|[.!…)\\n—–-]|,(?!\\s?(?:(?:на|в|во|с|о|об|про|у|из|для|at|on|in|from) )?(?:кто|who|где|куда|откуда|о ч[её]м|про что|что|как|(?:в )?как(?:ой|ая|ое|ие|ом|их|ую)|сколько|когда|where|what|how|when)›)|${COPY_WORD})`);
 // Interest or a DM: "если кому интересно", "кому интересно", "если есть желание", "пишите в личку", "if anyone's interested".
 const INTEREST = any("‹(?:если|кому|кто|кого)(?:[- ](?:то|нибудь|либо))?(?: [\\p{L}-]+){0,2}? (?:интересн\\p{L}*|надо|нужн\\p{L}*|хочет|хотите|захочет|интересует|заинтересова\\p{L}*)›",
   "‹если (?:есть|будет) (?:желание|интерес)›|‹желающ\\p{L}*|‹(?:пиши|пишите|напиши|напишите|обращайтесь)›",
   "‹if (?:anyone|anybody|someone|somebody|you|any of you|people)(?:['’]s|['’]re| is| are)? (?:[\\p{L}-]+ ){0,2}?(?:interested|wants?|needs?|like)›|‹(?:let me know|hit me up|just ask|anyone interested|whoever wants)›");
 // The copy is public: a link, a library, a store or an app ("есть на ЛитРес", "в Яндекс Книгах", "on Audible", "Libby").
 const PUBLIC_COPY = any("https?://|www\\.|‹(?:t|telegram)\\.me/|[a-z0-9-]\\.(?:com|net|org|ru|me|io|app)›",
-  "‹(?:литрес|litres|storytel|сторител|bookmate|букмейт|яндекс книг|яндекс музык|libby|kindle|google (?:books|play)|apple books|spotify|youtube|ютуб|флибуст|flibusta|libgen|z-library|библиотек|library)\\p{L}*");
+  "‹(?:литрес|litres|storytel|сторител|bookmate|букмейт|яндекс книг|яндекс музык|audible|libby|kindle|google (?:books|play)|apple books|spotify|youtube|ютуб|флибуст|flibusta|libgen|z-library|(?<!‹(?:мо(?:ей|ю|я)|сво(?:ей|ю|я)|домашн\\p{L}*|my|our)\\s)(?:библиотек|library))\\p{L}*");
 // The author asks for a book, or trades one: "скиньте кто-нибудь…", "у кого есть аудиоверсия?", "Can someone send me the PDF?".
 const BOOK_REQUEST = any("‹(?:скиньте|киньте|пришлите|перешлите|подскажите|посоветуйте|ищу|ищем|у кого(?:-нибудь|-то)? (?:есть|найд[её]тся)|есть у кого|может у кого|кто (?:может|сможет) (?:скинуть|переслать|отправить|поделиться))›",
-  "‹поделитесь (?:[\\p{L}-]+ )?(?:книг|аудио|ссылк|pdf|файл)", "‹(?:looking for|does anyone have|anyone have|anybody have|(?:can|could) (?:someone|anyone|anybody)|(?:please )?send me)›");
+  "‹поделитесь (?:[\\p{L}-]+ )?(?:книг|аудио|ссылк|pdf|файл)", "‹(?:looking for|does anyone have|anyone have|anybody have|(?:can|could) (?:someone|anyone|anybody)|(?:please )?send me(?! (?:a |an )?(?:dm|pm|message|text|line)›))›",
+  "‹(?:в обмен|взамен|обменя(?:ю|юсь|емся)|поменя(?:ю|юсь|емся)|меняю|меняюсь|in exchange|swap(?:ping)? for|trade (?:it |them )?for)›");
 // Reports, rules and reminders about it: "Опять боты пишут: послушал книгу, могу скинуть", "такие сообщения удаляем",
 // "Offers like this get you banned". English "bot" is left out: "вот" folds to it.
 const BOOK_REPORT = any("‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
-  "‹(?:запрещ\\p{L}*|удаля(?:ем|ются)|будут удал\\p{L}*|бан›|в бан|забан\\p{L}*|против правил|нарушени\\p{L}* правил|нельзя|not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|banned|get you (?:banned|removed))");
+  "‹(?:кто-то|какой-то|какая-то|некий|someone|somebody|some (?:guy|girl|account|user)|this guy|that guy) (?:[\\p{L}-]+ )?(?:пишет|написал\\p{L}*|присылает|прислал\\p{L}*|скинул\\p{L}*|рассылает|предлагает|dm['’]?e?d|messaged|texted|sent|wrote|says|keeps|posts)›",
+  "‹(?:написал|прислал|скинул|предложил|отправил)[аи]? (?:мне|нам)›|‹пришл[оаи] (?:мне |нам )?(?:в лс|в личк\\p{L}*|в директ)|‹(?:dm['’]?e?d|messaged|texted) me›|‹(?:аккуратн|бдительн|игнорир|достал\\p{L}*|надоел\\p{L}*|вирус|ignore›|psa›|malware|virus|phishing)",
+  "(?:‹это|[—–-])\\s?реклам|‹(?:правила (?:чата|группы)|напоминаю|reminder|chat rules|(?:are|is) (?:an )?ads?›|get (?:deleted|removed|banned))",
+  "‹(?:запрещ\\p{L}*|удаля(?:ем|ются|ю)|будут удал\\p{L}*|бан›|в бан|забан\\p{L}*|против правил|нарушени\\p{L}* правил|нельзя|not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|banned|get you (?:banned|removed))");
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
   if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text)) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
   if (!WORK.test(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
-  if (![...told.matchAll(COPY_OFFER)].some((match) => !NOT_A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60)))) return false;
+  if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60)))) return false;
   return !answersRequest(message, (source) => WORK.test(source));
 }
 
