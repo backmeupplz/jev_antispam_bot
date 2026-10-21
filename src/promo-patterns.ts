@@ -5,7 +5,8 @@ import type { ModerationMessage } from "./spam";
 // "I took the test in @…bot" endorsement), not its wording. Data: docs/promo-patterns.md.
 // #142 adds a third: an unsolicited P2P crypto trade ask (buy/sell intent + a crypto asset + a deal cue).
 // #145 adds a fourth: explicit adult-content promotion (explicit porn/XXX content + a funnel to a button, site, bot or DM).
-export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo";
+// #153 adds a fifth: free-copy bait (a first-person book or course review + an offer to send a copy + an interest or DM cue).
+export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo" | "book_copy_offer";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
 export const PATTERN_MIN_SCORE = 0.3;
@@ -795,6 +796,50 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
 const TME_POST = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/[a-z0-9_]+\/\d+/giu;
 const JOIN = re("‹join›", "giu");
 
+// --- Free-copy bait (#153): a first-person review of a book, audiobook or course + an offer to send a copy + an interest
+// or DM cue. "Недавно послушал «Время деньги» Генри Форда… Есть хорошая аудиоверсия. Если кому интересно пишите в личку, отправлю."
+// What is reviewed: a book, an audio or text version of one, or a course the author took ("курс" alone is also a rate).
+const WORK = any("‹(?:книг|книжк|аудиокни|аудиоверси|аудиоформат|аудио-формат|автобиограф|литератур)\\p{L}*", "‹(?:аудио|озвучк\\p{L}*)›",
+  "‹(?:текстов|электронн|печатн|бумажн)\\p{L}* (?:верси|вариант|формат)",
+  "‹(?:прош(?:ла|[её]л)|проходил\\p{L}*|закончил\\p{L}*|окончил\\p{L}*) (?:[\\p{L}-]+ )?курс",
+  "‹(?:books?|audiobooks?|audio ?versions?|e-?books?|novels?|memoirs?|biograph\\p{L}*|pdf|epub|fb2|audible)›", "(?<!‹of )‹courses?›");
+// The author read, heard or took it, or praises it: "послушал", "слушал аудиокнигу", "открыл для себя", "понравилась",
+// "I just finished", "highly recommend".
+const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли)›|‹(?:про|до|пере)?чита(?:л|ла|ли)›|‹(?:прочл[аи]?|прочел|прош(?:ла|[её]л)|понравил(?:ась|ся|ось|ись)|зашл[аои]|советую|рекомендую)›",
+  "‹(?:прослушивани|открыл[аи]? для себя|помогл[аои]? мне)",
+  "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|discovered|recommend|took)|(?:just|recently) (?:read|finished|listened)|highly recommend|changed my|loved|enjoyed|devoured)›");
+// A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
+const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„]`);
+// A first-person offer to send it: "могу скинуть", "готов поделиться", "отправлю", "перешлю", "I can send", "I'll share".
+// "не могу скинуть" refuses.
+const SEND = "(?:скинуть|кинуть|переслать|отправить|прислать|выслать|сбросить|поделиться|дать (?:почитать|послушать))";
+const COPY_OFFER = re(`(?<!‹(?:не|ни)\\s)‹(?:могу|можем|готов[аы]?|с радостью|охотно)(?: [\\p{L}-]+){0,2}? ${SEND}›`
+  + "|(?<!‹(?:не|ни)\\s)‹(?:скину|кину|перешлю|отправлю|пришлю|вышлю|сброшу|поделюсь)›"
+  + "|‹(?:i can|i could|i['’]ll|i will|i['’]d (?:be )?(?:happy|glad) to|happy to|glad to|can) (?:gladly |happily |also |totally )?(?:send|share|forward|pass|email|dm)›", "giu");
+// What else it may send is no copy: a link, the title, the author's name, a list, the author's own notes or impressions.
+const NOT_A_COPY = re("^\\s?(?:[\\p{L}-]+\\s){0,2}?(?:ссылк|линк|назван|автор|список|подборк|отзыв|впечатлени|мнени|мысл|скрин|фото|цитат|контакт|номер|links?›|titles?›|names?›|lists?›|reviews?›|thoughts›|notes›|screenshots?›|photos?›|quotes?›|contacts?›|numbers?›|recommendations?›)");
+// Interest or a DM: "если кому интересно", "кому интересно", "если есть желание", "пишите в личку", "if anyone's interested".
+const INTEREST = any("‹(?:если|кому|кто|кого)(?:[- ](?:то|нибудь|либо))?(?: [\\p{L}-]+){0,2}? (?:интересн\\p{L}*|надо|нужн\\p{L}*|хочет|хотите|захочет|интересует|заинтересова\\p{L}*)›",
+  "‹если (?:есть|будет) (?:желание|интерес)›|‹желающ\\p{L}*|‹(?:пиши|пишите|напиши|напишите|обращайтесь)›",
+  "‹if (?:anyone|anybody|someone|somebody|you|any of you|people)(?:['’]s|['’]re| is| are)? (?:[\\p{L}-]+ ){0,2}?(?:interested|wants?|needs?|like)›|‹(?:let me know|hit me up|just ask|anyone interested|whoever wants)›");
+// The copy is public: a link, a library, a store or an app ("есть на ЛитРес", "в Яндекс Книгах", "on Audible", "Libby").
+const PUBLIC_COPY = any("https?://|www\\.|‹(?:t|telegram)\\.me/|[a-z0-9-]\\.(?:com|net|org|ru|me|io|app)›",
+  "‹(?:литрес|litres|storytel|сторител|bookmate|букмейт|яндекс книг|яндекс музык|libby|kindle|google (?:books|play)|apple books|spotify|youtube|ютуб|флибуст|flibusta|libgen|z-library|библиотек|library)\\p{L}*");
+// The author asks for a book, or trades one: "скиньте кто-нибудь…", "у кого есть аудиоверсия?", "Can someone send me the PDF?".
+const BOOK_REQUEST = any("‹(?:скиньте|киньте|пришлите|перешлите|подскажите|посоветуйте|ищу|ищем|у кого(?:-нибудь|-то)? (?:есть|найд[её]тся)|есть у кого|может у кого|кто (?:может|сможет) (?:скинуть|переслать|отправить|поделиться))›",
+  "‹поделитесь (?:[\\p{L}-]+ )?(?:книг|аудио|ссылк|pdf|файл)", "‹(?:looking for|does anyone have|anyone have|anybody have|(?:can|could) (?:someone|anyone|anybody)|(?:please )?send me)›");
+// Reports, rules and reminders about it: "Опять боты пишут: послушал книгу, могу скинуть", "такие сообщения удаляем",
+// "Offers like this get you banned". English "bot" is left out: "вот" folds to it.
+const BOOK_REPORT = any("‹(?:пишут|предлагают|рассылают|кидают|присылают|скинули|прислали|написали|бот\\p{L}*|такие сообщения|такое сообщение|этот текст|одно и то же|копипаст\\p{L}*|copy-?paste|same (?:text|message))›",
+  "‹(?:запрещ\\p{L}*|удаля(?:ем|ются)|будут удал\\p{L}*|бан›|в бан|забан\\p{L}*|против правил|нарушени\\p{L}* правил|нельзя|not allowed|against (?:the )?rules|will be (?:deleted|removed|banned)|banned|get you (?:banned|removed))");
+function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text)) return false;
+  const told = sentences(text).filter((part) => !isQuestion(part)).join("");
+  if (!WORK.test(told) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
+  if (![...told.matchAll(COPY_OFFER)].some((match) => !NOT_A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60)))) return false;
+  return !answersRequest(message, (source) => WORK.test(source));
+}
+
 // What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
 // OnlyFans, is it worth it?". Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
 function toldPart(text: string): string {
@@ -828,6 +873,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   }
   if (cryptoTradeAsk(message, text)) return "crypto_trade_ask";
   if (adultPromo(message, raw.replace(QUOTED, " "), text)) return "adult_content_promo";
+  if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;

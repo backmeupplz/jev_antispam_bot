@@ -29,6 +29,7 @@ import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
 import { botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
+import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -2440,6 +2441,37 @@ test("the forwarded adult promo with five URL buttons at 0.4999 is deleted by th
     .toEqual([[1, "adult_content_promo", 1], [2, "adult_content_promo", 1]]);
   const telemetry = JSON.stringify(h.logs);
   for (const sensitive of ["p0rn", "c0ntent", channel.title, ...adultPromoIncidentButtons.flatMap(({ text, url }) => [text, url])]) expect(telemetry).not.toContain(sensitive);
+  await h.stats.stop();
+});
+
+// #153: the forwarded free-audiobook bait at its captured 0.377 and a family copy in another chat at 0.73.
+test("the free-copy bait is deleted by the book pattern, forwarded or not; telemetry carries no text", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.377));
+  await h.send({ text: bookCopyIncident, from: forwardedUser, forward_origin: forwarded });
+  h.setAnswer(keepAt(0.73));
+  await h.send({ chat: groupB, text: bookCopyFamily[0] });
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "book_copy_offer", confidence: 0.377, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: groupB.id, messageId: 2, isEdited: false, pattern: "book_copy_offer", confidence: 0.73, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount]))
+    .toEqual([[1, "book_copy_offer", 1], [2, "book_copy_offer", 1]]);
+  expect(JSON.stringify(h.logs)).not.toContain("аудиоверси");
+  await h.stats.stop();
+});
+
+test("free-copy controls at 0.79 stay kept; the bait under the floor only logs", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of bookCopyControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: bookCopyIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "book_copy_offer", confidence: 0.19, decision: "keep" },
+  ]);
   await h.stats.stop();
 });
 
