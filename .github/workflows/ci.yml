@@ -7,7 +7,7 @@ on:
 
 env:
   # Production builds the Dockerfile; its FROM lines must use this same version.
-  BUN_VERSION: 1.4.0
+  BUN_VERSION: 1.4.4
 
 jobs:
   check:
