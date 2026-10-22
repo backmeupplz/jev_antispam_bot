@@ -4,7 +4,7 @@
 
 # Deploy gate: typecheck and test these sources on the Bun that will run them.
 # The runtime stage copies a marker from this stage so BuildKit cannot skip it.
-FROM oven/bun:1.4.0-slim AS check
+FROM oven/bun:1.4.4-slim AS check
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -13,7 +13,7 @@ COPY src ./src
 COPY migrations ./migrations
 RUN bun run check && touch /checked
 
-FROM oven/bun:1.4.0-slim
+FROM oven/bun:1.4.4-slim
 WORKDIR /app
 COPY --from=check /checked /checked
 COPY package.json bun.lock ./
