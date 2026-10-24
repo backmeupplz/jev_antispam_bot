@@ -33,7 +33,9 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      TEST_DATABASE_URL: postgres://jev_stats_test:test-only-password@postgres:5432/jev_stats_test
+      # The tests refuse any database host but 127.0.0.1/localhost, so the run step forwards
+      # 127.0.0.1:5432 to the service
+      TEST_DATABASE_URL: postgres://jev_stats_test:test-only-password@127.0.0.1:5432/jev_stats_test
     steps:
       - uses: actions/checkout@v4
       # The production image builds from these FROM lines and runs `bun run check` itself, so
@@ -52,8 +54,26 @@ jobs:
       - run: bun install --frozen-lockfile
       # `bun run check` (typecheck && test), with both halves in parallel
       - run: |
-          bun run typecheck &
-          bun test &
-          for job in $(jobs -p); do wait $job || exit 1; done
+          python3 -c '
+          import asyncio
+          async def pipe(r, w):
+              while data := await r.read(65536):
+                  w.write(data)
+                  await w.drain()
+              w.write_eof()
+          async def handle(r, w):
+              r2, w2 = await asyncio.open_connection("postgres", 5432)
+              await asyncio.gather(pipe(r, w2), pipe(r2, w))
+          async def main():
+              await (await asyncio.start_server(handle, "127.0.0.1", 5432)).serve_forever()
+          asyncio.run(main())' >/dev/null 2>&1 &
+          forward=$!
+          until (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 0.1; done
+          bun run typecheck & typecheck=$!
+          bun test & tests=$!
+          wait $typecheck; a=$?
+          wait $tests; b=$?
+          kill $forward
+          [ $a = 0 ] && [ $b = 0 ]
         env:
           AUDIT_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
