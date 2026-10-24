@@ -15,11 +15,12 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Our own PRs and pushes run on the Mac runners; outsiders' PRs (AGit via the github bot) on Linux
+    runs-on: ${{ (github.event_name != 'pull_request' || contains(fromJSON('["backmeupplz","renovate","claude"]'), github.event.pull_request.user.login)) && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 10
+    # Linux only: the Mac's host-mode runners ignore services and run Homebrew's PostgreSQL instead.
+    # Reached by service name (a published host port collides with parallel jobs), data on tmpfs.
     services:
-      # Reached by service name; publishing a host port would collide with parallel jobs.
-      # The data dir is a tmpfs: initdb and the tests no longer wait on the runner's busy disk.
       postgres:
         image: postgres:16-alpine
         env:
@@ -32,14 +33,10 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
-    env:
-      # The tests refuse any database host but 127.0.0.1/localhost, so the run step forwards
-      # 127.0.0.1:5432 to the service
-      TEST_DATABASE_URL: postgres://jev_stats_test:test-only-password@127.0.0.1:5432/jev_stats_test
     steps:
       - uses: actions/checkout@v4
       # The production image builds from these FROM lines and runs `bun run check` itself, so
-      # CI checks the same Bun version instead of building the image (jobs have no Docker daemon).
+      # CI checks the same Bun version instead of building the image.
       - name: Dockerfile uses the CI Bun version
         run: |
           froms=$(grep -E '^FROM ' Dockerfile)
@@ -48,13 +45,45 @@ jobs:
             echo "::error file=Dockerfile::every FROM must be oven/bun:${BUN_VERSION}-slim"
             exit 1
           fi
-      - uses: oven-sh/setup-bun@v2
+      - if: runner.os == 'Linux'
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # Mac: Bun installed once per runner tool cache (setup-bun's cache transfer is slow there),
+      # checked against the release's SHASUMS256.txt
+      - if: runner.os == 'macOS'
+        run: |
+          dir="$RUNNER_TOOL_CACHE/bun/$BUN_VERSION"
+          if [ ! -x "$dir/bun" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/bun.zip" "https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-darwin-aarch64.zip"
+            want=$(curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/SHASUMS256.txt" | awk '$2 == "bun-darwin-aarch64.zip" {print $1}')
+            got=$(shasum -a 256 "$RUNNER_TEMP/bun.zip" | cut -d' ' -f1)
+            [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::Bun $BUN_VERSION doesn't match its SHASUMS256.txt"; exit 1; }
+            rm -rf "$dir" && mkdir -p "$dir"
+            unzip -j -q "$RUNNER_TEMP/bun.zip" -d "$dir"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
-      # `bun run check` (typecheck && test), with both halves in parallel
+      # `bun run check` (typecheck && test), with both halves in parallel. The tests refuse any
+      # database host but 127.0.0.1/localhost.
       - run: |
-          python3 -c '
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Homebrew's PostgreSQL 14 (the tests pass on it as on 16), data in this runner's tool
+            # cache so a cancelled run's server is found and stopped here
+            pg=/opt/homebrew/opt/postgresql@14/bin
+            data="$RUNNER_TOOL_CACHE/jev-postgres"
+            [ -f "$data/postmaster.pid" ] && "$pg/pg_ctl" -D "$data" -m immediate stop || true
+            rm -rf "$data"
+            echo test-only-password > "$RUNNER_TEMP/pgpass"
+            "$pg/initdb" -D "$data" -U jev_stats_test --pwfile="$RUNNER_TEMP/pgpass" -A scram-sha-256 --no-sync > /dev/null
+            port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+            "$pg/pg_ctl" -D "$data" -l "$RUNNER_TEMP/postgres.log" -w -o "-p $port -c listen_addresses=127.0.0.1 -c unix_socket_directories= -c fsync=off" start > /dev/null
+            trap '"$pg/pg_ctl" -D "$data" -m immediate stop > /dev/null' EXIT
+            PGPASSWORD=test-only-password "$pg/createdb" -h 127.0.0.1 -p $port -U jev_stats_test jev_stats_test
+          else
+            # Forwards 127.0.0.1:5432 to the service
+            port=5432
+            python3 -c '
           import asyncio
           async def pipe(r, w):
               while data := await r.read(65536):
@@ -67,13 +96,11 @@ jobs:
           async def main():
               await (await asyncio.start_server(handle, "127.0.0.1", 5432)).serve_forever()
           asyncio.run(main())' >/dev/null 2>&1 &
-          forward=$!
-          until (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 0.1; done
+            trap "kill $!" EXIT
+            until (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 0.1; done
+          fi
+          export TEST_DATABASE_URL=postgres://jev_stats_test:test-only-password@127.0.0.1:$port/jev_stats_test
+          export AUDIT_TEST_DATABASE_URL=$TEST_DATABASE_URL
           bun run typecheck & typecheck=$!
           bun test & tests=$!
-          wait $typecheck; a=$?
-          wait $tests; b=$?
-          kill $forward
-          [ $a = 0 ] && [ $b = 0 ]
-        env:
-          AUDIT_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          for job in $typecheck $tests; do wait $job || exit 1; done
