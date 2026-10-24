@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Production builds the Dockerfile; its FROM lines must use this same version.
   BUN_VERSION: 1.4.4
@@ -12,36 +16,28 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
+      # Reached by service name; publishing a host port would collide with parallel jobs.
+      # The data dir is a tmpfs: initdb and the tests no longer wait on the runner's busy disk.
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_DB: jev_stats_test
           POSTGRES_USER: jev_stats_test
           POSTGRES_PASSWORD: test-only-password
-        ports:
-          - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data
           --health-cmd "pg_isready -U jev_stats_test -d jev_stats_test"
           --health-interval 2s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 30
     env:
-      TEST_DATABASE_URL: postgres://jev_stats_test:test-only-password@127.0.0.1:5432/jev_stats_test
+      TEST_DATABASE_URL: postgres://jev_stats_test:test-only-password@postgres:5432/jev_stats_test
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - run: bun install --frozen-lockfile
-      - run: bun run check
-        env:
-          AUDIT_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
-
-  deploy-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # The production image builds from these FROM lines and runs `bun run check` itself, so
+      # CI checks the same Bun version instead of building the image (jobs have no Docker daemon).
       - name: Dockerfile uses the CI Bun version
         run: |
           froms=$(grep -E '^FROM ' Dockerfile)
@@ -50,5 +46,14 @@ jobs:
             echo "::error file=Dockerfile::every FROM must be oven/bun:${BUN_VERSION}-slim"
             exit 1
           fi
-      - name: Build the production image (runs bun run check)
-        run: docker build --progress=plain -t jev-antispam-bot .
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      # `bun run check` (typecheck && test), with both halves in parallel
+      - run: |
+          bun run typecheck &
+          bun test &
+          for job in $(jobs -p); do wait $job || exit 1; done
+        env:
+          AUDIT_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}

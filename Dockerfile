@@ -1,5 +1,5 @@
 # Production image (Easypanel builds this file). Every FROM must use the Bun
-# version that CI pins (BUN_VERSION in .github/workflows/ci.yml); CI fails
+# version that CI pins (BUN_VERSION in .forgejo/workflows/ci.yml); CI fails
 # when they differ.
 
 # Deploy gate: typecheck and test these sources on the Bun that will run them.
