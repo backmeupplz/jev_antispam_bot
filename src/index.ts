@@ -6,6 +6,7 @@ import { PostgresSpamCache } from "./spam-cache";
 import { PostgresRepeatStore } from "./repeat-sends";
 import { Bot } from "grammy";
 import { registerBotHandlers } from "./bot";
+import { startWithHandover } from "./handover";
 import { loadConfig } from "./config";
 import { JevSpamClassifier } from "./spam";
 import { createStatsRecorder } from "./stats";
@@ -50,10 +51,10 @@ registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deleti
 
 let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
-function shutdown(signal: string): Promise<void> {
+function shutdown(): Promise<void> {
   if (!shutdownPromise) {
     shutdownPromise = (async () => {
-      console.info(JSON.stringify({ event: "bot_stopping", signal, ...stats.health() }));
+      console.info(JSON.stringify({ event: "bot_stopping", ...stats.health() }));
       await drainBot(bot, polling, drainHandlers);
       clearInterval(auditHealthTimer);
       await deletionAudit.close();
@@ -66,9 +67,6 @@ function shutdown(signal: string): Promise<void> {
   }
   return shutdownPromise;
 }
-
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
-process.once("SIGINT", () => void shutdown("SIGINT"));
 
 console.info(JSON.stringify({
   event: "bot_starting",
@@ -84,12 +82,12 @@ console.info(JSON.stringify({
   trainingCapture: Boolean(trainingCapture),
 }));
 try {
-  polling = bot.start({
+  // Polls only while holding the handover lock; SIGTERM/SIGINT stop polling, then run shutdown()
+  polling = startWithHandover(bot, {
     allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
     onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
-  });
+  }, shutdown);
   await polling;
 } finally {
-  if (shutdownPromise) await shutdownPromise;
-  else { await drainHandlers(); clearInterval(auditHealthTimer); await deletionAudit.close(); await spamCache?.close(); await repeats.close(); await trainingCapture?.close(); await stats.stop(); }
+  await shutdown();
 }
