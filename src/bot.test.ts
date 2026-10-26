@@ -88,19 +88,28 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     writeBatch: async (batch) => { batches.push(structuredClone(batch)); },
     close: async () => {},
   }, { autoStart: false, logger });
+  const failures = new Map<string, Record<string, unknown>[]>();
   bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
+    const failure = failures.get(method)?.shift();
+    if (failure) return { ok: false, ...failure } as never;
     const chatId = (payload as { chat_id?: number }).chat_id;
     const isReceivingGroup = chatId === group.id || chatId === metadata.id;
     if ((method === "getChat" && isReceivingGroup && metadataError)
       || (method === "getChat" && !isReceivingGroup && profileError)
-      || (method === "getChatMember" && adminError)) {
+      || ((method === "getChatMember" || method === "getChatAdministrators") && adminError)) {
       return { ok: false, error_code: 403, description: "private API detail" };
     }
     if (method === "getChat") {
       if (isReceivingGroup) return { ok: true, result: metadata } as never;
       if (chatId === personalChannel.id || chatId === personalChannelMetadata.id) return { ok: true, result: personalChannelMetadata } as never;
       return { ok: true, result: { ...profileMetadata, id: chatId } } as never;
+    }
+    // Every human sender seen so far shares the chat's configured status.
+    if (method === "getChatAdministrators") {
+      const status = memberStatusByChat.get(chatId!) ?? memberStatus;
+      return { ok: true, result: status === "administrator" || status === "creator"
+        ? [...humans].map(id => ({ status, user: { ...user, id } })) : [] } as never;
     }
     if (method === "getChatMember") return { ok: true, result: { status: memberStatusByChat.get(chatId!) ?? memberStatus,
       user: { ...user, id: (payload as { user_id: number }).user_id } } } as never;
@@ -109,6 +118,8 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     }
     return { ok: true, result: true } as never;
   });
+  const humans = new Set<number>();
+  bot.use(async (ctx, next) => { if (ctx.from && !ctx.from.is_bot) humans.add(ctx.from.id); await next(); });
   registerBotHandlers(bot, {
     model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit, ...(repeats ? { repeats } : {}),
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
@@ -133,6 +144,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     setMetadataError: () => { metadataError = true; },
     setProfileError: () => { profileError = true; },
     setAdminError: () => { adminError = true; },
+    failNext: (method: string, ...responses: Record<string, unknown>[]) => { failures.set(method, [...failures.get(method) ?? [], ...responses]); },
     setMemberStatus: (value: string) => { memberStatus = value; },
     setMemberStatusIn: (chatId: number, value: string) => { memberStatusByChat.set(chatId, value); },
     setMetadata: (value: Record<string, unknown>) => { metadata = value; },
@@ -398,7 +410,7 @@ test("real handler sees local quote, edited reply, external quote and missing so
   expect(h.classifications[3]?.message.preview?.[0]).not.toHaveProperty("text");
   expect(h.classifications[4]?.message.preview?.[0]).not.toHaveProperty("text");
   expect(h.deletes()).toEqual([]);
-  expect(h.calls.every((call) => ["getChatMember", "getChat"].includes(call.method))).toBe(true);
+  expect(h.calls.every((call) => ["getChatAdministrators", "getChat"].includes(call.method))).toBe(true);
   expect(JSON.stringify(h.logs)).not.toContain(source.text);
   await h.stats.stop();
 });
@@ -666,6 +678,70 @@ test("metadata API failures and invalid responses fail open with terminal skip r
     }
     await h.stats.stop();
   }
+});
+
+// #193: admin lookups must not silently disable moderation.
+const tooMany = (retry_after: number) => ({ error_code: 429, description: "Too Many Requests: retry after " + retry_after, parameters: { retry_after } });
+
+test("admin status comes from one cached list per chat, even where getChatMember needs admin rights", async () => {
+  const h = harness();
+  // Hidden-member group where Jev is not an admin: every per-user lookup is refused.
+  h.failNext("getChatMember", ...Array(5).fill({ error_code: 400, description: "Bad Request: CHAT_ADMIN_REQUIRED" }));
+  await h.send();
+  await h.send({ from: forwardedUser });
+  await h.send();
+  expect(h.skipped()).toEqual([]);
+  expect(h.classifications).toHaveLength(3);
+  expect(h.calls.filter(call => ["getChatAdministrators", "getChatMember"].includes(call.method)))
+    .toEqual([{ method: "getChatAdministrators", payload: { chat_id: group.id } }]);
+  await h.stats.stop();
+});
+
+test("a short admin-list 429 is retried and the message is still classified", async () => {
+  const h = harness();
+  h.failNext("getChatAdministrators", tooMany(0));
+  await h.send();
+  expect(h.calls.filter(call => call.method === "getChatAdministrators")).toHaveLength(2);
+  expect(h.logs.filter(log => log.event === "admin_lookup")).toEqual([{ event: "admin_lookup", chatId: group.id, messageId: 1, outcome: "retried_after_429" }]);
+  expect(h.skipped()).toEqual([]);
+  expect(h.logs.filter(log => log.event === "message_analyzed")).toHaveLength(1);
+  await h.stats.stop();
+});
+
+test("a long admin-list 429 keeps the message with exactly one terminal record and stops calling until retry_after", async () => {
+  const h = harness(); h.setAnswer(assessment(true));
+  h.failNext("getChatAdministrators", tooMany(60));
+  await h.send();
+  await h.send({ from: forwardedUser });
+  expect(h.calls.map(call => call.method)).toEqual(["getChatAdministrators"]);
+  expect(h.logs.filter(log => ["message_skipped", "message_analyzed", "admin_check_failed"].includes(log.event as string))).toEqual([
+    { event: "admin_check_failed", kind: "telegram_429", reason: "too_many_requests", retryAfter: 60, chatId: group.id, messageId: 1 },
+    { event: "message_skipped", chatId: group.id, messageId: 1, reason: "admin_metadata_failed", decision: "keep", isEdited: false },
+    { event: "admin_check_failed", kind: "telegram_flood_wait", chatId: group.id, messageId: 2 },
+    { event: "message_skipped", chatId: group.id, messageId: 2, reason: "admin_metadata_failed", decision: "keep", isEdited: false },
+  ]);
+  expect(h.classifications).toEqual([]);
+  expect(h.deletes()).toEqual([]);
+  await h.stats.stop();
+});
+
+test("admin and delete failures log an allowlisted reason class, never Telegram's description", async () => {
+  const h = harness(); h.setAnswer(assessment(true));
+  h.failNext("getChatAdministrators", { error_code: 400, description: "Bad Request: chat not found" });
+  h.failNext("getChatMember", { error_code: 400, description: "Bad Request: CHAT_ADMIN_REQUIRED" });
+  await h.send();
+  h.failNext("deleteMessage", { error_code: 400, description: "Bad Request: message can't be deleted for everyone" });
+  await h.send({ chat: { ...group, id: -1002 } });
+  expect(h.logs.filter(log => String(log.event).endsWith("_failed"))).toEqual([
+    { event: "admin_check_failed", kind: "telegram_400", reason: "chat_admin_required", chatId: group.id, messageId: 1 },
+    { event: "delete_failed", kind: "telegram_400", reason: "message_cant_be_deleted", chatId: -1002, messageId: 2 },
+  ]);
+  expect(h.logs.filter(log => log.event === "admin_lookup")).toEqual([
+    { event: "admin_lookup", chatId: group.id, messageId: 1, outcome: "member_fallback", reason: "chat_not_found" },
+  ]);
+  expect(h.skipped().map(log => log.reason)).toEqual(["admin_metadata_failed"]);
+  expect(JSON.stringify(h.logs)).not.toMatch(/Bad Request|not found|for everyone/);
+  await h.stats.stop();
 });
 
 test("channel history isolates identities, synthetic from, human users, receiving groups and edits", async () => {
@@ -1401,7 +1477,7 @@ for (const fixture of buttonCases) for (const edited of [false, true]) {
     }, recent: [] }]);
     expect(h.deletes()).toEqual(fixture.delete ? [id] : []);
     expect(requests).toEqual([]);
-    expect(h.calls.every(c => ["getChatMember", "getChat", "deleteMessage"].includes(c.method))).toBe(true);
+    expect(h.calls.every(c => ["getChatAdministrators", "getChat", "deleteMessage"].includes(c.method))).toBe(true);
     const telemetry = JSON.stringify(h.logs);
     for (const privateValue of [fixture.text, fixture.url ?? unknownButtonUrl, fixture.label ?? "CLICK HERE", "Original source"]) expect(telemetry).not.toContain(privateValue);
     expect(h.logs.filter(log => log.event === "message_analyzed")).toHaveLength(1);
@@ -1589,7 +1665,9 @@ test("cache: human/bot admin, self and linked-channel exemptions precede lookup"
   h.setMemberStatus("administrator"); await h.send();
   await h.send({ from: botInfo });
   await h.send({ from: inlineHelper });
-  expect(h.calls.filter(call => call.method === "getChatMember").map(call => call.payload.user_id)).toEqual([user.id, inlineHelper.id]);
+  // Humans are found in the chat's one administrator list; only the bot needs its own lookup.
+  expect(h.calls.filter(call => call.method.startsWith("getChat")).map(call => [call.method, call.payload.user_id]))
+    .toEqual([["getChatAdministrators", undefined], ["getChatMember", inlineHelper.id]]);
   expect(h.skipped().map(log => log.reason)).toEqual(["group_admin", "bot_itself", "group_admin"]);
   h.setMetadata({ ...group, linked_chat_id: channel.id }); await h.send({ sender_chat: channel });
   expect(cache.lookups).toBe(0); expect(h.deletes()).toEqual([]); await h.stats.stop();
@@ -1708,6 +1786,7 @@ for (const edited of [false, true]) {
           expect(h.skipped()).toEqual([]);
           expect(h.deletes()).toEqual(deleteIt ? [1] : []);
           expect(h.calls.filter(call => call.method !== "deleteMessage")).toEqual([
+            { method: "getChatAdministrators", payload: { chat_id: group.id } },
             { method: "getChatMember", payload: { chat_id: group.id, user_id: inlineHelper.id } },
           ]); // No bot profile/media fetching or automatic reply.
           expect(h.logs.filter(log => log.event === "message_analysis_started")).toMatchObject([{ isEdited: edited, senderProfilePresent: false }]);
@@ -1728,7 +1807,7 @@ for (const edited of [false, true]) {
       if (failure) h.setAdminError(); else h.setMemberStatus("administrator");
       await h.send({ from: inlineHelper }, edited);
       expect(h.skipped().map(log => log.reason)).toEqual([failure ? "admin_metadata_failed" : "group_admin"]);
-      expect(h.calls.map(call => call.method)).toEqual(["getChatMember"]);
+      expect(h.calls.map(call => call.method)).toEqual(["getChatAdministrators", "getChatMember"]);
       expect(h.classifications).toEqual([]);
       expect(h.deletes()).toEqual([]);
       expect(cache.lookups).toBe(0);
@@ -1794,7 +1873,7 @@ test("bot policy: uncaptioned media stays outside human profile moderation", asy
   expect(h.skipped().map(log => log.reason)).toEqual(["media_profile_unavailable"]);
   expect(h.classifications).toEqual([]);
   expect(h.deletes()).toEqual([]);
-  expect(h.calls.map(call => call.method)).toEqual(["getChatMember"]);
+  expect(h.calls.map(call => call.method)).toEqual(["getChatAdministrators", "getChatMember"]);
   await h.stats.stop();
 });
 

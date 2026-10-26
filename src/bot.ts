@@ -1,7 +1,7 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import { AUDIT_CHAT_ID, type AuditRefusal, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
-import { AdminCache } from "./admin-cache";
+import { AdminCache, FloodWaitError } from "./admin-cache";
 import { CampaignLedger, campaignPost, campaignText } from "./campaign";
 import { deleteMessages } from "./deletion";
 import { deletionMessageIds, MessageHistory } from "./history";
@@ -15,6 +15,7 @@ import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "
 import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatSnapshots, type RepeatCopy, type RepeatStore } from "./repeat-sends";
 import type { StatsRecorder } from "./stats";
 import type { TrainingCapture } from "./training-capture";
+import { telegramErrorReason } from "./telegram-errors";
 
 export function registerBotHandlers(bot: Bot, {
   classifier,
@@ -129,7 +130,8 @@ export function registerBotHandlers(bot: Bot, {
         }
         let isAdmin;
         try {
-          isAdmin = await admins.isAdmin(ctx.api, ctx.chat.id, ctx.from.id);
+          isAdmin = await admins.isAdmin(ctx.api, ctx.chat.id, ctx.from, (outcome, reason) =>
+            logger.info(JSON.stringify({ event: "admin_lookup", chatId: ctx.chat.id, messageId: ctx.msgId, outcome, ...(reason ? { reason } : {}) })));
         } catch (error) {
           logFailure("admin_check_failed", error, ctx.chat.id, ctx.msgId);
           await skip("admin_metadata_failed");
@@ -341,7 +343,7 @@ export function registerBotHandlers(bot: Bot, {
           if (ctx.senderChat) {
             const other = await ctx.api.getChat(chatId);
             if (other.id === chatId && !("linked_chat_id" in other && other.linked_chat_id === ctx.senderChat.id)) continue;
-          } else if (!await admins.isAdmin(ctx.api, chatId, ctx.from!.id)) continue;
+          } else if (!await admins.isAdmin(ctx.api, chatId, ctx.from!, undefined, { wait: false })) continue;
           logger.info(JSON.stringify({ event: "repeat_copy_skipped", chatId, reason: "exempt_sender" }));
         } catch (error) {
           logFailure("repeat_exemption_check_failed", error, chatId);
@@ -459,7 +461,8 @@ export function registerBotHandlers(bot: Bot, {
   });
 
   bot.on("chat_member", async (ctx) => {
-    admins.invalidate(ctx.chat.id, ctx.chatMember.new_chat_member.user.id);
+    const member = ctx.chatMember.new_chat_member;
+    admins.update(ctx.chat.id, member.user.id, member.status);
   });
 
   bot.catch(({ error, ctx }) => {
@@ -471,10 +474,15 @@ export function registerBotHandlers(bot: Bot, {
       ? `telegram_${error.error_code}`
       : error instanceof HttpError
         ? "telegram_network"
-        : error instanceof Error
-          ? "error"
-          : "unknown";
-    logger.error(JSON.stringify({ event, kind, chatId, messageId }));
+        : error instanceof FloodWaitError
+          ? "telegram_flood_wait"
+          : error instanceof Error
+            ? "error"
+            : "unknown";
+    // reason is an allowlisted class of Telegram's description, never the description itself.
+    const reason = telegramErrorReason(error);
+    const retryAfter = error instanceof GrammyError ? error.parameters?.retry_after : undefined;
+    logger.error(JSON.stringify({ event, kind, ...(reason ? { reason } : {}), ...(retryAfter !== undefined ? { retryAfter } : {}), chatId, messageId }));
   }
 
   // Shadow verdicts are compared offline (scripts/compare-shadow.ts) and never delete.
