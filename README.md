@@ -1,5 +1,7 @@
 # Jev Anti-Spam Bot
 
+Website: **[jev.borodutch.com](https://jev.borodutch.com)** (how the anti-spam bot works, what it deletes, FAQ).
+
 A minimal [grammY](https://grammy.dev/) Telegram bot that asks TypeSafe's Jev model whether each group message is spam and deletes only high-confidence matches.
 
 It targets common Telegram spam:
