@@ -11,6 +11,8 @@ import { loadConfig } from "./config";
 import { JevSpamClassifier } from "./spam";
 import { createStatsRecorder } from "./stats";
 import { PostgresTrainingCapture } from "./training-capture";
+import { promos } from "./promo";
+import { PostgresPromoStore } from "./promo-store";
 
 const config = loadConfig();
 if (!config.databaseUrl) throw new Error("DATABASE_URL is required for private deletion auditing");
@@ -47,7 +49,13 @@ const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.ap
   url: config.shadow.url,
 });
 
-registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold, repeats });
+// Prime Radiant's reply promos: off without PROMO_TOKEN or with PROMO=off
+const promoStore = new PostgresPromoStore(config.databaseUrl);
+const promo = promos("jev", promoStore);
+promo.start();
+
+registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold, repeats,
+  promo, isNewChat: (chatId) => promoStore.isNewChat(chatId) });
 
 let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
@@ -61,6 +69,8 @@ function shutdown(): Promise<void> {
       await spamCache?.close();
       await repeats.close();
       await trainingCapture?.close();
+      await promo.stop();
+      await promoStore.close();
       const health = await stats.stop();
       console.info(JSON.stringify({ event: "bot_stopped", ...health }));
     })();

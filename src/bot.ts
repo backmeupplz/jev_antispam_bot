@@ -1,4 +1,4 @@
-import { Bot, GrammyError, HttpError } from "grammy";
+import { Bot, type Context, GrammyError, HttpError } from "grammy";
 import { AUDIT_CHAT_ID, type AuditRefusal, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache, FloodWaitError } from "./admin-cache";
@@ -16,6 +16,8 @@ import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatS
 import type { StatsRecorder } from "./stats";
 import type { TrainingCapture } from "./training-capture";
 import { telegramErrorReason } from "./telegram-errors";
+import type { InlineKeyboardMarkup } from "grammy/types";
+import { html, keyboard, type promos } from "./promo";
 
 export function registerBotHandlers(bot: Bot, {
   classifier,
@@ -29,6 +31,8 @@ export function registerBotHandlers(bot: Bot, {
   spamCache,
   spamThreshold = 0.81,
   repeats = new MemoryRepeatStore(),
+  promo,
+  isNewChat = async () => false,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
@@ -41,6 +45,9 @@ export function registerBotHandlers(bot: Bot, {
   spamCache?: SpamCache;
   spamThreshold?: number;
   repeats?: RepeatStore;
+  // Prime Radiant's reply promos (src/promo.ts): private /start and /status replies only
+  promo?: ReturnType<typeof promos>;
+  isNewChat?: (chatId: number) => Promise<boolean>;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
@@ -426,15 +433,31 @@ export function registerBotHandlers(bot: Bot, {
     },
   );
 
+  // A private reply with the user's promo line or button, if their experiment arm has one
+  async function privateReply(ctx: Context, text: string) {
+    const d = await promo?.decide(ctx.from?.id, ctx.chat?.type, ctx.from?.language_code);
+    await ctx.reply(text + html(d?.promo), {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      reply_markup: keyboard<InlineKeyboardMarkup>(d?.promo),
+    });
+    await promo?.record(d);
+  }
+
   bot.command("start", async (ctx) => {
-    await ctx.reply(
-      "I delete high-confidence Telegram spam using Jev. Add me to a group as an administrator with permission to delete messages.",
-    );
+    const text = "I delete high-confidence Telegram spam using Jev. Add me to a group as an administrator with permission to delete messages.";
+    if (ctx.chat.type !== "private") {
+      await ctx.reply(text);
+      return;
+    }
+    // /start <campaign>-<variant>-<bot> from another bot's promo
+    if (promo && ctx.match) await promo.arrived(ctx.from?.id, ctx.match, await isNewChat(ctx.chat.id));
+    await privateReply(ctx, text);
   });
 
   bot.command("status", async (ctx) => {
     if (ctx.chat.type === "private") {
-      await ctx.reply("Online. Add me to a group as an administrator with permission to delete messages.");
+      await privateReply(ctx, "Online. Add me to a group as an administrator with permission to delete messages.");
       return;
     }
 
@@ -450,6 +473,9 @@ export function registerBotHandlers(bot: Bot, {
       chatType: ctx.chat.type,
       membershipActive: member.status !== "left" && member.status !== "kicked",
     });
+    if (ctx.chat.type === "private" && member.status === "kicked") promo?.blocked(ctx.from?.id);
+    // someone a campaign brought here adds Jev to a group: use
+    if (ctx.chat.type !== "private" && (member.status === "member" || member.status === "administrator")) await promo?.used(ctx.from?.id);
     if (member.status === "left" || member.status === "kicked") return;
 
     const canDelete = member.status === "administrator" && member.can_delete_messages;
