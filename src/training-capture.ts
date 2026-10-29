@@ -14,7 +14,9 @@ export class PostgresTrainingCapture {
   readonly counters = { stored: 0, dropped: 0, failed: 0 };
   constructor(databaseUrl: string, private readonly options: { retentionDays?: number; maxRows?: number } = {}) {
     this.pool = new pg.Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 2_000,
-      statement_timeout: 5_000, idleTimeoutMillis: 10_000, application_name: "jev_antispam_bot_training" });
+      statement_timeout: 5_000, idleTimeoutMillis: 10_000, application_name: "jev_antispam_bot_training",
+      // #277: samples need no fsync wait (it stalls on a busy host disk); losing the last moments on a crash is harmless.
+      options: "-c synchronous_commit=off" });
     this.pool.on("error", () => undefined);
   }
 

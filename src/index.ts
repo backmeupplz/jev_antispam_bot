@@ -6,6 +6,7 @@ import { PostgresSpamCache } from "./spam-cache";
 import { PostgresRepeatStore } from "./repeat-sends";
 import { Bot } from "grammy";
 import { registerBotHandlers } from "./bot";
+import { DeleteRetryQueue } from "./delete-retry";
 import { startWithHandover } from "./handover";
 import { loadConfig } from "./config";
 import { JevSpamClassifier } from "./spam";
@@ -29,6 +30,7 @@ const auditHealthTimer = setInterval(() => {
   }).catch(() => console.error(JSON.stringify({ event: "deletion_audit_health", outcome: "unavailable" })));
 }, 60_000);
 auditHealthTimer.unref();
+const deleteRetries = new DeleteRetryQueue();
 const stats = createStatsRecorder(config.databaseUrl);
 const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
   ? new PostgresSpamCache(config.databaseUrl) : undefined;
@@ -55,7 +57,7 @@ const promo = promos("jev", promoStore);
 promo.start();
 
 registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold, repeats,
-  promo, isNewChat: (chatId) => promoStore.isNewChat(chatId) });
+  promo, isNewChat: (chatId) => promoStore.isNewChat(chatId), deleteRetries });
 
 let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
@@ -65,6 +67,9 @@ function shutdown(): Promise<void> {
       console.info(JSON.stringify({ event: "bot_stopping", ...stats.health() }));
       await drainBot(bot, polling, drainHandlers);
       clearInterval(auditHealthTimer);
+      // Queued deletions are in memory only; a restart drops them (logged as the count at stop).
+      const pendingRetries = deleteRetries.size; await deleteRetries.stop();
+      if (pendingRetries) console.info(JSON.stringify({ event: "delete_retry", outcome: "dropped", reason: "shutdown", count: pendingRetries }));
       await deletionAudit.close();
       await spamCache?.close();
       await repeats.close();

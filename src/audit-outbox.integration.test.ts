@@ -449,3 +449,76 @@ integration("concise rendering and pre-upgrade queued HTML survive restart witho
     expect(await other.prepare(-71, 1, concise)).toBeUndefined();
   } finally { await other.close(); await f.close(); }
 });
+
+integration("#277: a sink-lock holder stalled past the 1s statement budget delays prepare() instead of refusing it", async () => {
+  const f = await fixture(); const holder = await f.pool.connect();
+  try {
+    await f.audit.prepare(-69, 99, "warm-up"); // initialized and connected before the lock is taken
+    await holder.query("BEGIN"); await holder.query("SELECT 1 FROM deletion_audit_sink FOR UPDATE");
+    const reasons: string[] = []; const startedAt = Date.now();
+    const preparing = f.audit.prepare(-69, 1, "fixture", reason => reasons.push(reason));
+    await new Promise(resolve => setTimeout(resolve, 1_500)); await holder.query("COMMIT");
+    const id = await preparing;
+    expect(id).toBeDefined(); expect(reasons).toEqual([]); expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_400);
+    expect((await f.state(id!)).state).toBe("intent");
+  } finally { holder.release(); await f.close(); }
+});
+
+integration("#277: the sink-lock wait is still bounded by stallMs", async () => {
+  const f = await fixture(); const audit = auditor(f.t.api, { ...options, stallMs: 1_000 }); const holder = await f.pool.connect();
+  try {
+    await audit.prepare(-69, 99, "warm-up");
+    await holder.query("BEGIN"); await holder.query("SELECT 1 FROM deletion_audit_sink FOR UPDATE");
+    const reasons: string[] = [];
+    expect(await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason))).toBeUndefined();
+    expect(reasons).toEqual(["database"]);
+    await holder.query("ROLLBACK");
+    expect((await f.pool.query("SELECT COUNT(*)::int AS n FROM deletion_audit_outbox WHERE message_id=1")).rows[0].n).toBe(0);
+  } finally { holder.release(); await audit.close(); await f.close(); }
+});
+
+integration("#277: a retry after an unknown COMMIT outcome reuses its own intent; nobody else's", async () => {
+  const f = await fixture(); const other = auditor(f.t.api, options);
+  // White-box: a landed COMMIT whose response was lost leaves exactly this state behind.
+  const uncertain = (audit: PostgresDeletionAudit) => (audit as unknown as { uncertain: Map<string, string> }).uncertain;
+  try {
+    const landed = (await other.prepare(-69, 1, "fixture"))!;
+    expect(await f.audit.prepare(-69, 1, "fixture")).toBeUndefined(); // someone else's live intent: duplicate
+    uncertain(f.audit).set("-69:1", landed);
+    await f.pool.query("UPDATE deletion_audit_outbox SET lease_until=NOW()+INTERVAL '1 second' WHERE id=$1", [landed]);
+    expect(await f.audit.prepare(-69, 1, "fixture")).toBe(landed);
+    expect((await f.pool.query("SELECT lease_until>NOW()+INTERVAL '60 seconds' AS renewed FROM deletion_audit_outbox WHERE id=$1", [landed])).rows[0].renewed).toBe(true);
+    expect(uncertain(f.audit).size).toBe(0);
+    expect((await f.pool.query("SELECT COUNT(*)::int AS n FROM deletion_audit_parts WHERE audit_id=$1", [landed])).rows[0].n).toBe(1);
+    await f.audit.confirmed(landed); expect((await f.state(landed)).state).toBe("pending");
+    // An own intent whose lease ran out (delete_unknown) is replaced: no deletion ever ran under it.
+    const second = (await other.prepare(-69, 2, "fixture"))!;
+    await f.pool.query("UPDATE deletion_audit_outbox SET state='delete_unknown',lease_until=NULL WHERE id=$1", [second]);
+    expect(await f.audit.prepare(-69, 2, "fixture")).toBeUndefined(); // not ours
+    uncertain(f.audit).set("-69:2", second);
+    expect(await f.audit.prepare(-69, 2, "fixture")).toBe(second);
+    expect((await f.state(second)).state).toBe("intent");
+    // A finished report is never reused, even if remembered.
+    uncertain(f.audit).set("-69:1", landed);
+    expect(await f.audit.prepare(-69, 1, "fixture")).toBeUndefined();
+    // Two callers in this process racing on one remembered id never share the intent it yields.
+    uncertain(f.audit).set("-69:3", randomUUID());
+    const raced = await Promise.all([f.audit.prepare(-69, 3, "fixture"), f.audit.prepare(-69, 3, "fixture")]);
+    expect(raced.filter(Boolean)).toHaveLength(1);
+  } finally { await other.close(); await f.close(); }
+});
+
+integration("#277: a failed prepare() remembers its id, so the retry finds whichever attempt landed", async () => {
+  const f = await fixture(); const holder = await f.pool.connect();
+  const audit = auditor(f.t.api, { ...options, stallMs: 1_000 });
+  const uncertain = (audit as unknown as { uncertain: Map<string, string> }).uncertain;
+  try {
+    await audit.prepare(-69, 99, "warm-up");
+    await holder.query("BEGIN"); await holder.query("SELECT 1 FROM deletion_audit_sink FOR UPDATE");
+    expect(await audit.prepare(-69, 1, "fixture")).toBeUndefined();
+    const remembered = uncertain.get("-69:1"); expect(remembered).toBeDefined();
+    await holder.query("ROLLBACK");
+    expect(await audit.prepare(-69, 1, "fixture")).toBe(remembered!); // nothing landed: same id, fresh insert
+    expect(uncertain.size).toBe(0);
+  } finally { holder.release(); await audit.close(); await f.close(); }
+});

@@ -1,9 +1,10 @@
-import { Bot, type Context, GrammyError, HttpError } from "grammy";
-import { AUDIT_CHAT_ID, type AuditRefusal, type DeletionAudit } from "./audit-outbox";
+import { type Api, Bot, type Context, GrammyError, HttpError } from "grammy";
+import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache, FloodWaitError } from "./admin-cache";
 import { CampaignLedger, campaignPost, campaignText } from "./campaign";
 import { deleteMessages } from "./deletion";
+import { DeleteRetryQueue, prepareIntent, transientIntentFailure, type RetryOutcome } from "./delete-retry";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
 import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
@@ -33,6 +34,7 @@ export function registerBotHandlers(bot: Bot, {
   repeats = new MemoryRepeatStore(),
   promo,
   isNewChat = async () => false,
+  deleteRetries = new DeleteRetryQueue({ logger }),
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
@@ -48,6 +50,8 @@ export function registerBotHandlers(bot: Bot, {
   // Prime Radiant's reply promos (src/promo.ts): private /start and /status replies only
   promo?: ReturnType<typeof promos>;
   isNewChat?: (chatId: number) => Promise<boolean>;
+  // Confirmed deletions whose audit intent could not be written yet (#277).
+  deleteRetries?: DeleteRetryQueue;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
@@ -55,6 +59,10 @@ export function registerBotHandlers(bot: Bot, {
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
   const repeatSnapshots = new RepeatSnapshots();
+  if (deletionAudit) deleteRetries.start();
+  // Built here, not in the update handler, so a queued entry holds only its own report.
+  const queueDeletion = (chatId: number, messageId: number, report: string | string[], source: "cache" | "jev") =>
+    deleteRetries.add(chatId, messageId, () => retryDeletion(chatId, messageId, report, source));
 
   bot.use(async (ctx, next) => {
     // Exclude the sink before stats, enrichment, history, capture and commands.
@@ -86,6 +94,8 @@ export function registerBotHandlers(bot: Bot, {
         await skip(ctx.chat.type === "private" ? "private_chat" : "unsupported_chat_type");
         return;
       }
+      // An edit is moderated afresh under its new content; it supersedes a deletion still waiting for its intent.
+      if ("edited_message" in ctx.update) deleteRetries.forget(ctx.chat.id, ctx.msgId);
 
       const message = toModerationMessage(ctx.msg);
       const mediaOnly = Boolean(message?.mediaOnly);
@@ -365,31 +375,27 @@ export function registerBotHandlers(bot: Bot, {
         .concat(snapshot ? [snapshot, ...repeatCopies.map(c => repeatSnapshots.get(c, snapshot))] : []);
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
 
+      // Once one intent in this update is deferred, the rest are queued without waiting out the same stall.
+      let auditDeferred = false;
       const deleteOne = async (chatId: number, messageId: number) => {
         let intent: string | undefined;
-        let refusal: AuditRefusal | "unavailable" = "unavailable";
         if (deletionAudit) {
           const own = snapshots.find(s => s.chatId === chatId && s.messageId === messageId);
           if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
-          try {
-            intent = await deletionAudit.prepare(chatId, messageId, renderAuditReport(own), reason => { refusal = reason; });
-          } catch { /* Persistence failures never become classifier failures. */ }
-          if (!intent) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "intent_unavailable_delete_skipped", reason: refusal })); throw new Error("Audit intent unavailable"); }
-        }
-        try {
-          const deleted = await ctx.api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<typeof ctx.api.deleteMessage>[2]);
-          if (deleted !== true) throw new Error("Unconfirmed deletion");
-        } catch (error) {
-          if (intent) {
-            try { await deletionAudit!.failed(intent, !(error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500)); }
-            catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "failure_state_unavailable" })); }
+          const report = renderAuditReport(own);
+          const prepared = auditDeferred ? { refusal: "unavailable" as const } : await prepareIntent(deletionAudit, chatId, messageId, report);
+          if ("refusal" in prepared) {
+            // A deletion still never runs without its intent: a transient failure only defers it (#277).
+            const source = cacheHit && chatId === ctx.chat.id && messageId === ctx.msgId ? "cache" : "jev";
+            const deferred = transientIntentFailure(prepared.refusal) && queueDeletion(chatId, messageId, report, source);
+            auditDeferred ||= deferred;
+            logger.error(JSON.stringify({ event: "deletion_audit", outcome: deferred ? "intent_unavailable_delete_deferred" : "intent_unavailable_delete_skipped", reason: prepared.refusal }));
+            throw new Error("Audit intent unavailable");
           }
-          throw error;
+          if (prepared.attempts > 1) logger.info(JSON.stringify({ event: "deletion_audit", outcome: "intent_prepared_after_retry", attempts: prepared.attempts }));
+          intent = prepared.id;
         }
-        if (intent) {
-          try { await deletionAudit!.confirmed(intent); }
-          catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
-        }
+        await deleteUnderIntent(ctx.api, chatId, messageId, intent);
       };
       const handled = async (chatId: number, messageId: number) => {
         campaigns.markHandled(chatId, senderId, messageId);
@@ -491,11 +497,48 @@ export function registerBotHandlers(bot: Bot, {
     admins.update(ctx.chat.id, member.user.id, member.status);
   });
 
+  /** deleteMessage under a prepared intent (if auditing), then records the intent's outcome. */
+  async function deleteUnderIntent(api: Api, chatId: number, messageId: number, intent?: string) {
+    try {
+      const deleted = await api.deleteMessage(chatId, messageId, AbortSignal.timeout(8_000) as Parameters<Api["deleteMessage"]>[2]);
+      if (deleted !== true) throw new Error("Unconfirmed deletion");
+    } catch (error) {
+      if (intent) {
+        try { await deletionAudit!.failed(intent, !(error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500)); }
+        catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "failure_state_unavailable" })); }
+      }
+      throw error;
+    }
+    if (intent) {
+      try { await deletionAudit!.confirmed(intent); }
+      catch { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "confirmation_state_unavailable" })); }
+    }
+  }
+
+  /** One queued attempt: the same intent-then-delete rule as the update handler; content-free outcome. */
+  async function retryDeletion(chatId: number, messageId: number, report: string | string[], source: "cache" | "jev"): Promise<RetryOutcome> {
+    // One prepare() per queued attempt: the queue's own schedule is the retry.
+    const prepared = await prepareIntent(deletionAudit!, chatId, messageId, report, { delaysMs: [] });
+    if ("refusal" in prepared) {
+      return { outcome: transientIntentFailure(prepared.refusal) ? "deferred" : prepared.refusal === "duplicate" ? "duplicate" : "refused", reason: prepared.refusal };
+    }
+    try { await deleteUnderIntent(bot.api, chatId, messageId, prepared.id); }
+    catch (error) { return { outcome: "delete_failed", ...failureClass(error) }; }
+    stats.recordDeletion({ chatId, messageId, source });
+    return { outcome: "deleted" };
+  }
+
   bot.catch(({ error, ctx }) => {
     logFailure("update_failed", error, ctx.chat?.id, ctx.msgId);
   });
 
   function logFailure(event: string, error: unknown, chatId?: number, messageId?: number): void {
+    const { kind, reason } = failureClass(error);
+    const retryAfter = error instanceof GrammyError ? error.parameters?.retry_after : undefined;
+    logger.error(JSON.stringify({ event, kind, ...(reason ? { reason } : {}), ...(retryAfter !== undefined ? { retryAfter } : {}), chatId, messageId }));
+  }
+
+  function failureClass(error: unknown): { kind: string; reason?: string } {
     const kind = error instanceof GrammyError
       ? `telegram_${error.error_code}`
       : error instanceof HttpError
@@ -507,8 +550,7 @@ export function registerBotHandlers(bot: Bot, {
             : "unknown";
     // reason is an allowlisted class of Telegram's description, never the description itself.
     const reason = telegramErrorReason(error);
-    const retryAfter = error instanceof GrammyError ? error.parameters?.retry_after : undefined;
-    logger.error(JSON.stringify({ event, kind, ...(reason ? { reason } : {}), ...(retryAfter !== undefined ? { retryAfter } : {}), chatId, messageId }));
+    return { kind, ...(reason ? { reason } : {}) };
   }
 
   // Shadow verdicts are compared offline (scripts/compare-shadow.ts) and never delete.

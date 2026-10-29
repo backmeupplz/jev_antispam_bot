@@ -74,7 +74,9 @@ export class PostgresSpamCache {
     this.pool = new pg.Pool({ connectionString: databaseUrl, max: 2,
       connectionTimeoutMillis: this.timeout, query_timeout: this.timeout,
       statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 10_000,
-      application_name: "jev_antispam_bot_cache" });
+      application_name: "jev_antispam_bot_cache",
+      // #277: a host-IO fsync stall must not fail a cache write; losing its last moments on a crash is harmless.
+      options: "-c synchronous_commit=off" });
     this.pool.on("error", () => undefined);
     if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 100_000
       || this.ttl < 1 || this.ttl > 86_400_000) throw new Error("Invalid spam cache bounds");

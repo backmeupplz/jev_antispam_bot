@@ -112,7 +112,9 @@ export class PostgresRepeatStore implements RepeatStore {
       connectionTimeoutMillis: this.timeout, query_timeout: this.timeout,
       // Eligible copies are sparse: keep connections warm so a lookup is not a connect.
       statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 15 * 60_000,
-      application_name: "jev_antispam_bot_repeats" });
+      application_name: "jev_antispam_bot_repeats",
+      // #277: a host-IO fsync stall must not fail a repeat write; losing its last moments on a crash only misses a repeat.
+      options: "-c synchronous_commit=off" });
     this.pool.on("error", () => undefined);
     this.timer = setInterval(() => void this.prune(), 10 * 60_000);
     this.timer.unref();

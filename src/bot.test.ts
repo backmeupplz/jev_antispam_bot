@@ -5,6 +5,7 @@ import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
 import type { SpamCache } from "./spam-cache";
 import { registerBotHandlers } from "./bot";
+import { DeleteRetryQueue } from "./delete-retry";
 import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
@@ -58,7 +59,7 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
 
 function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache,
   shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit,
-  repeats?: RepeatStore) {
+  repeats?: RepeatStore, deleteRetries?: DeleteRetryQueue) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -122,6 +123,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   bot.use(async (ctx, next) => { if (ctx.from && !ctx.from.is_bot) humans.add(ctx.from.id); await next(); });
   registerBotHandlers(bot, {
     model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit, ...(repeats ? { repeats } : {}),
+    ...(deleteRetries ? { deleteRetries } : {}),
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
@@ -1914,16 +1916,25 @@ for (const caption of [false, true]) {
 }
 
 
-function auditHarness(cache?: SpamCache, repeats?: RepeatStore) {
+function auditHarness(cache?: SpamCache, repeats?: RepeatStore, { ttlMs }: { ttlMs?: number } = {}) {
   const prepared = new Map<string, string>(); const confirmed: string[] = []; const failed: string[] = [];
-  let unavailable = false; let confirmationFails = false;
+  let unavailable = false; let confirmationFails = false; let databaseFailures = 0; let prepareCalls = 0;
   const audit: DeletionAudit = {
-    prepare: async (_chat, id, report, refused) => { if (unavailable) { refused?.("capacity"); return undefined; } prepared.set(String(id), Array.isArray(report) ? report.join("\n") : report); return String(id); },
+    prepare: async (_chat, id, report, refused) => {
+      prepareCalls++;
+      if (unavailable) { refused?.("capacity"); return undefined; }
+      if (databaseFailures > 0) { databaseFailures--; refused?.("database"); return undefined; }
+      prepared.set(String(id), Array.isArray(report) ? report.join("\n") : report); return String(id);
+    },
     confirmed: async id => { if (confirmationFails) throw new Error("private DB failure"); confirmed.push(id); },
     failed: async id => { failed.push(id); },
   };
-  const h = harness(undefined, undefined, cache, undefined, audit, repeats);
-  return { ...h, prepared, confirmed, failed, unavailable: () => { unavailable = true; }, confirmationFails: () => { confirmationFails = true; } };
+  // Driven by hand: a fake clock and no timer.
+  let now = 0;
+  const retries = new DeleteRetryQueue({ pollMs: 0, now: () => now, ttlMs, logger: { info: line => h.logs.push(JSON.parse(line)) } });
+  const h = harness(undefined, undefined, cache, undefined, audit, repeats, retries);
+  return { ...h, prepared, confirmed, failed, retries, unavailable: () => { unavailable = true; }, confirmationFails: () => { confirmationFails = true; },
+    databaseFailures: (count: number) => { databaseFailures = count; }, prepareCalls: () => prepareCalls, advance: (ms: number) => { now += ms; } };
 }
 
 test("audit covers fresh new/edit and cache deletes with actual actor and own context", async () => {
@@ -1971,10 +1982,73 @@ test("audit sender_chat ignores synthetic sender and forward origin; sink never 
   await h.stats.stop();
 });
 
+test("#277: a transient audit DB failure is retried inline, then the delete runs under its intent", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true)); h.databaseFailures(1);
+  await h.send();
+  expect(h.deletes()).toEqual([1]); expect(h.confirmed).toEqual(["1"]); expect(h.prepareCalls()).toBe(2);
+  expect(h.logs.filter(x => x.event === "deletion_audit").map(x => [x.outcome, x.attempts])).toEqual([["intent_prepared_after_retry", 2]]);
+  expect(h.retries.size).toBe(0);
+  await h.stats.stop();
+});
+
+test("#277: audit DB failing past the inline budget defers the delete; the queue deletes it later with an intent", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true)); h.databaseFailures(3);
+  await h.send();
+  expect(h.deletes()).toEqual([]); expect(h.prepareCalls()).toBe(3);
+  expect(h.logs.filter(x => x.event === "deletion_audit").map(x => [x.outcome, x.reason])).toEqual([["intent_unavailable_delete_deferred", "database"]]);
+  expect(h.logs.some(x => x.event === "spam_deleted")).toBe(false);
+  expect(h.retries.size).toBe(1);
+  await h.retries.runDue(); expect(h.prepareCalls()).toBe(3); // not due yet
+  h.advance(15_000); await h.retries.runDue();
+  expect(h.deletes()).toEqual([1]); expect(h.confirmed).toEqual(["1"]); expect(h.retries.size).toBe(0);
+  expect(h.logs.filter(x => x.event === "delete_retry").map(x => [x.outcome, x.attempts])).toEqual([["queued", 0], ["deleted", 1]]);
+  // Content-free: identities and outcomes only.
+  expect(JSON.stringify(h.logs.filter(x => x.event === "delete_retry"))).not.toContain("ordinary discussion");
+  await h.stats.flush();
+  expect(h.batches.flatMap(batch => batch.deletions).map(item => [item.messageId, item.source])).toEqual([["1", "jev"]]);
+  await h.stats.stop();
+});
+
+test("#277: a deferred delete whose intent never becomes writable expires without deleting", async () => {
+  const h = auditHarness(undefined, undefined, { ttlMs: 20_000 }); h.setAnswer(assessment(true)); h.databaseFailures(1_000);
+  await h.send(); expect(h.retries.size).toBe(1);
+  h.advance(15_000); await h.retries.runDue(); expect(h.retries.size).toBe(1);
+  h.advance(15_000); await h.retries.runDue();
+  expect(h.deletes()).toEqual([]); expect(h.confirmed).toEqual([]); expect(h.retries.size).toBe(0);
+  expect(h.logs.filter(x => x.event === "delete_retry").map(x => [x.outcome, x.reason ?? null])).toEqual([["queued", null], ["deferred", "database"], ["expired", null]]);
+  await h.stats.stop();
+});
+
+test("#277: after one deferral, the update queues its remaining deletions without waiting out the stall again", async () => {
+  const h = auditHarness(); h.databaseFailures(1_000);
+  h.setProfileMetadata({ id: user.id, type: "private", first_name: "private", bio: "earlier own profile" });
+  await h.send({ text: "older own offer" }); await h.send({ text: "middle own offer" });
+  h.setAnswer(assessment(true, [.99, .99]));
+  await h.send({ text: "current own call to action" });
+  expect(h.deletes()).toEqual([]); expect(h.prepareCalls()).toBe(3); // the first id's inline attempts only
+  expect(h.logs.filter(x => x.event === "deletion_audit").map(x => [x.outcome, x.reason])).toEqual([
+    ["intent_unavailable_delete_deferred", "database"], ["intent_unavailable_delete_deferred", "unavailable"], ["intent_unavailable_delete_deferred", "unavailable"]]);
+  h.databaseFailures(0); h.advance(15_000); await h.retries.runDue();
+  expect(h.deletes()).toEqual([1, 2, 3]); expect(h.confirmed).toEqual(["1", "2", "3"]); expect(h.retries.size).toBe(0);
+  await h.stats.stop();
+});
+
+test("#277: an edit supersedes a deferred deletion; a kept edit is never deleted later", async () => {
+  const h = auditHarness(); h.setAnswer(assessment(true)); h.databaseFailures(3);
+  await h.send(); expect(h.retries.size).toBe(1);
+  h.setAnswer(assessment(false)); await h.send({ message_id: 1, text: "edited to something harmless" }, true);
+  expect(h.retries.size).toBe(0);
+  h.advance(15_000); await h.retries.runDue();
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter(x => x.event === "delete_retry").map(x => x.outcome)).toEqual(["queued", "superseded"]);
+  await h.stats.stop();
+});
+
 test("audit persistence unavailable skips destructive action; confirmation failure is not classification failure", async () => {
   const h = auditHarness(); h.setAnswer(assessment(true)); h.unavailable();
   await h.send(); expect(h.deletes()).toEqual([]); expect(h.confirmed).toEqual([]);
   expect(h.logs.filter(x => x.outcome === "intent_unavailable_delete_skipped").map(x => x.reason)).toEqual(["capacity"]);
+  expect(h.retries.size).toBe(0); expect(h.prepareCalls()).toBe(1); // capacity is backpressure, not a transient failure
   const f = auditHarness(); f.setAnswer(assessment(true)); f.confirmationFails(); await f.send();
   expect(f.deletes()).toEqual([1]);
   expect(f.logs.some(x => x.event === "spam_deleted")).toBe(true);

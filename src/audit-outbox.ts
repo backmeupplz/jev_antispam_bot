@@ -14,7 +14,7 @@ export interface DeletionAudit {
 }
 type AuditApi = Pick<Api, "sendMessage">;
 type Options = { capacity?: number; retentionMs?: number; timeoutMs?: number; intentLeaseMs?: number;
-  sendLeaseMs?: number; pollMs?: number; paceMs?: number };
+  sendLeaseMs?: number; pollMs?: number; paceMs?: number; stallMs?: number };
 type Claimed = { id: string; sequence: number; report: string; lease_token: string; attempts: number };
 export const MAX_AUDIT_PARTS = 256;
 /** Retained reports have no hard cap (retention × deletion attempts); above the tested 100k scale, alert. */
@@ -22,6 +22,11 @@ export const RETAINED_REPORTS_ALERT = 100_000;
 /** Parts that may still be sent; the only rows that occupy capacity (exported for the plan test). */
 export const LIVE_PARTS_SQL = "SELECT COUNT(*) FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id WHERE p.state IN ('pending','sending') AND o.state IN ('intent','pending','sending') AND o.expires_at>statement_timestamp()";
 const DAY = 86_400_000;
+const STATEMENT_MS = 1_000;
+/** Intents whose prepare() failed with an unknown COMMIT outcome, kept so the same process can reuse them. */
+const UNCERTAIN_INTENTS = 1_000;
+/** node-postgres honours a per-query query_timeout (lib/client.js); @types/pg does not declare it. */
+const timed = (text: string, timeoutMs: number, values?: unknown[]) => ({ text, values, query_timeout: timeoutMs }) as pg.QueryConfig;
 function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < min || result > max) throw new Error("Invalid audit limit");
@@ -52,6 +57,9 @@ export class PostgresDeletionAudit implements DeletionAudit {
   private work?: Promise<void>;
   private closing = false;
   private closePromise?: Promise<void>;
+  private readonly uncertain = new Map<string, string>();
+  /** (chat, message) keys with a prepare() in flight here: two callers must never share one reused intent. */
+  private readonly preparing = new Set<string>();
   private readonly counters = { prepared: 0, refused: 0, capacityRefused: 0, duplicate: 0, confirmed: 0, deleteFailed: 0,
     deleteUnknown: 0, sent: 0, sendUnknown: 0, retried: 0, terminal: 0, expired: 0, expiredUndelivered: 0, error: 0 };
   constructor(databaseUrl: string, private readonly api: AuditApi, options: Options = {}) {
@@ -63,9 +71,12 @@ export class PostgresDeletionAudit implements DeletionAudit {
       intentLeaseMs: bounded(options.intentLeaseMs, 120_000, 100, 300_000),
       pollMs: bounded(options.pollMs, 1_000, 10, 60_000),
       paceMs: bounded(options.paceMs, 3_100, 1, 60_000),
+      stallMs: bounded(options.stallMs, 3_000, STATEMENT_MS, 30_000),
     };
-    this.pool = new pg.Pool({ connectionString: databaseUrl, max: 2, connectionTimeoutMillis: 2_000,
-      statement_timeout: 1_000, query_timeout: 1_200, idle_in_transaction_session_timeout: 3_000,
+    // The worker tick, the update handler and the bot's delete-retry queue may each wait out a stall on one
+    // connection; the rest keep confirmed()/failed() and the health summary from waiting on them.
+    this.pool = new pg.Pool({ connectionString: databaseUrl, max: 5, connectionTimeoutMillis: 2_000,
+      statement_timeout: STATEMENT_MS, query_timeout: STATEMENT_MS + 200, idle_in_transaction_session_timeout: 3_000,
       idleTimeoutMillis: 10_000, application_name: "jev_deletion_audit" });
     this.pool.on("error", () => { this.counters.error++; });
   }
@@ -88,7 +99,9 @@ export class PostgresDeletionAudit implements DeletionAudit {
     try {
       await client.query("BEGIN");
       const result = await run(client);
-      await client.query("COMMIT");
+      // COMMIT waits for the WAL fsync, which stalls for seconds when the host disk is busy (#277). Giving up
+      // early would only make an outcome that is usually a success unknown.
+      await client.query(timed("COMMIT", this.limits.stallMs + 200));
       return result;
     } catch (error) {
       // Destroy on timeout/uncertain COMMIT; never reuse a possibly open transaction.
@@ -98,8 +111,13 @@ export class PostgresDeletionAudit implements DeletionAudit {
   }
   private async lock(client: pg.PoolClient) {
     // ponytail: one sink row serializes capacity and send pacing across replicas.
-    const lock = await client.query("SELECT chat_id FROM deletion_audit_sink WHERE chat_id=$1 FOR UPDATE", [AUDIT_CHAT_ID]);
+    // Its holder keeps it through COMMIT, so waiting for it gets the fsync-stall budget, not the 1s statement
+    // budget (#277: most audit timeouts were waits here while the holder sat in IO:WALSync).
+    await client.query(`SET LOCAL statement_timeout = ${this.limits.stallMs}`);
+    const lock = await client.query(timed("SELECT chat_id FROM deletion_audit_sink WHERE chat_id=$1 FOR UPDATE",
+      this.limits.stallMs + 200, [AUDIT_CHAT_ID]));
     if (lock.rowCount !== 1) throw new Error("Audit sink unavailable");
+    await client.query(`SET LOCAL statement_timeout = ${STATEMENT_MS}`);
   }
   private async maintain(client: pg.PoolClient) {
     await client.query("UPDATE deletion_audit_parts p SET state='send_unknown',lease_until=NULL,lease_token=NULL FROM deletion_audit_outbox o WHERE p.audit_id=o.id AND p.state='sending' AND o.state='sending' AND o.lease_until<=clock_timestamp()");
@@ -130,13 +148,28 @@ export class PostgresDeletionAudit implements DeletionAudit {
       return refuse("invalid");
     }
     let result: { id: string } | { refusal: AuditRefusal };
+    const key = `${chatId}:${messageId}`;
+    // Another prepare() for this message is in flight here; its outcome is unknown yet, so this is transient:
+    // the caller retries or queues, and meets a real `duplicate` once that one has landed.
+    if (this.preparing.has(key)) return refuse("database");
+    // A retry after an unknown COMMIT outcome reuses that attempt's id, so whichever attempt landed is ours.
+    // It is handed out once: taken here, put back only if this attempt fails too.
+    const id = this.uncertain.get(key) ?? randomUUID();
+    this.uncertain.delete(key); this.preparing.add(key);
     try {
       await this.initialize();
       // Counters/callback run once, after COMMIT settles: a failed COMMIT is only a database refusal.
       result = await this.transaction(async (client): Promise<typeof result> => {
         await this.lock(client); await this.maintain(client);
         const existing = (await client.query("SELECT id,state FROM deletion_audit_outbox WHERE chat_id=$1 AND message_id=$2 FOR UPDATE", [chatId, messageId])).rows[0];
-        if (existing && existing.state !== "delete_failed") return { refusal: "duplicate" };
+        // Our own earlier prepare() whose COMMIT outcome was unknown: its id never reached a caller, so no
+        // deletion ran under it. A live intent is reused; one that went delete_unknown is replaced.
+        const own = existing?.id === id;
+        if (own && existing.state === "intent") {
+          await client.query("UPDATE deletion_audit_outbox SET lease_until=clock_timestamp()+$2*INTERVAL '1 millisecond' WHERE id=$1", [existing.id, this.limits.intentLeaseMs]);
+          return { id: existing.id };
+        }
+        if (existing && existing.state !== "delete_failed" && !(own && existing.state === "delete_unknown")) return { refusal: "duplicate" };
         // Capacity bounds only parts that may still be sent. Sent, terminal, unknown and failed-deletion
         // rows are finished: they stay for dedupe/inspection until retention expiry but never block intents.
         // (A replaced delete_failed intent is therefore already excluded.) Expired reports are never sent either.
@@ -144,8 +177,7 @@ export class PostgresDeletionAudit implements DeletionAudit {
         if (occupied + parts.length > this.limits.capacity) {
           await client.query("UPDATE deletion_audit_sink SET refused=refused+1"); return { refusal: "capacity" };
         }
-        const id = randomUUID();
-        // Replace only known-failed intent, atomically, fencing its old callbacks.
+        // Replace only known-failed (or own never-used) intent, atomically, fencing its old callbacks.
         if (existing) await client.query("DELETE FROM deletion_audit_outbox WHERE id=$1", [existing.id]);
         await client.query(
           "INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at,lease_until) VALUES ($1,$2,$3,$4,'intent',clock_timestamp()+$5*INTERVAL '1 millisecond',clock_timestamp()+$6*INTERVAL '1 millisecond')",
@@ -154,7 +186,13 @@ export class PostgresDeletionAudit implements DeletionAudit {
         await client.query("UPDATE deletion_audit_sink SET prepared=prepared+1");
         return { id };
       });
-    } catch { this.counters.error++; return refuse("database"); }
+    } catch {
+      this.counters.error++;
+      // The COMMIT may still have landed; remember the id (bounded, oldest first out) for a retry.
+      this.uncertain.set(key, id);
+      if (this.uncertain.size > UNCERTAIN_INTENTS) this.uncertain.delete(this.uncertain.keys().next().value!);
+      return refuse("database");
+    } finally { this.preparing.delete(key); }
     if ("refusal" in result) return refuse(result.refusal);
     this.counters.prepared++; return result.id;
   }
