@@ -94,7 +94,7 @@ test("timeout covers pending body/request; oversized and non-HTML failures are b
   const cache = new TelegramPreviewCache({ timeoutMs: 10, request: async (_url, s) => { signal = s; return new Promise((_resolve, reject) => s.addEventListener("abort", () => reject(s.reason), { once: true })); } });
   const start = performance.now();
   expect((await cache.enrich(msg("https://t.me/test")))[0]?.status).toBe("unavailable");
-  expect(signal?.aborted).toBe(true); expect(performance.now() - start).toBeLessThan(200);
+  expect(signal?.aborted).toBe(true); expect(performance.now() - start).toBeLessThan(2_000); // never aborted would hang
   for (const response of [page("x".repeat(PREVIEW_LIMITS.bytes + 1)), { ...page(), headers: { "content-type": "application/json" } }, { ...page(), status: 404 }]) {
     const c = new TelegramPreviewCache({ request: async () => response });
     expect((await c.enrich(msg("https://t.me/test")))[0]?.status).toBe("unavailable");

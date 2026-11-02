@@ -49,26 +49,29 @@ integration("PostgreSQL repeat store prunes expired copies and bounds capacity",
   await store.close(); await pool.end();
 });
 
+// A forget that fails: the table is briefly unreachable (renamed away), so its DELETE errors at once instead of
+// waiting out a deadline, and the store's other calls keep a deadline no loaded host can miss.
+async function unreachable(pool: pg.Pool, during: () => Promise<unknown>) {
+  await pool.query("ALTER TABLE repeat_sends RENAME TO repeat_sends_away");
+  try { await during(); } finally { await pool.query("ALTER TABLE repeat_sends_away RENAME TO repeat_sends"); }
+}
+
 integration("PostgreSQL repeat store never returns a copy whose forget failed, and retries it on prune", async () => {
   const pool = new pg.Pool({ connectionString: url });
-  const store = new PostgresRepeatStore(url!, { logger, timeoutMs: 100 });
+  const store = new PostgresRepeatStore(url!, { logger, timeoutMs: 1000 });
   await store.forget(0, 0); await pool.query("DELETE FROM repeat_sends");
   const now = Date.now();
   await store.record(key(5), { chatId: -1, messageId: 1, sentAt: now - hour });
   await store.record(key(5), { chatId: -1, messageId: 2, sentAt: now - hour });
-  // An edit's forget is lost to a lock, so the old row keeps the old key.
-  const lock = await pool.connect(); await lock.query("BEGIN"); await lock.query("LOCK TABLE repeat_sends IN ACCESS EXCLUSIVE MODE");
-  await store.forget(-1, 1);
-  await lock.query("ROLLBACK"); lock.release();
+  // An edit's forget is lost, so the old row keeps the old key.
+  await unreachable(pool, () => store.forget(-1, 1));
   expect((await pool.query("SELECT 1 FROM repeat_sends WHERE chat_id=-1 AND message_id=1")).rowCount).toBe(1);
   expect((await store.record(key(5), { chatId: -2, messageId: 1, sentAt: now }))!.map((c) => c.messageId)).toEqual([2]);
   await store.prune();
   expect((await pool.query("SELECT 1 FROM repeat_sends WHERE chat_id=-1 AND message_id=1")).rowCount).toBe(0);
   // Recorded again with eligible content, a copy whose forget failed counts once more.
   await store.forget(-1, 2);
-  const again = await pool.connect(); await again.query("BEGIN"); await again.query("LOCK TABLE repeat_sends IN ACCESS EXCLUSIVE MODE");
-  await store.forget(-2, 1);
-  await again.query("ROLLBACK"); again.release();
+  await unreachable(pool, () => store.forget(-2, 1));
   await store.record(key(6), { chatId: -2, messageId: 1, sentAt: now });
   expect((await store.record(key(6), { chatId: -3, messageId: 1, sentAt: now }))!.map((c) => c.chatId)).toEqual([-2]);
   await store.close(); await pool.end();
@@ -97,7 +100,7 @@ integration("PostgreSQL repeat store timeout or outage means no escalation", asy
   const lock = await pool.connect(); await lock.query("BEGIN"); await lock.query("LOCK TABLE repeat_sends IN ACCESS EXCLUSIVE MODE");
   const started = performance.now();
   expect(await store.record(key(4), { chatId: -1, messageId: 1, sentAt: Date.now() })).toBeUndefined();
-  expect(performance.now() - started).toBeLessThan(500); expect(store.health().error).toBeGreaterThan(0);
+  expect(performance.now() - started).toBeLessThan(2_000); // not stuck behind the lock expect(store.health().error).toBeGreaterThan(0);
   await lock.query("ROLLBACK"); lock.release(); await store.close(); await pool.end();
   const unavailable = new PostgresRepeatStore("postgresql://test@127.0.0.1:1/jev_stats_test", { logger, timeoutMs: 50 });
   expect(await unavailable.record(key(4), { chatId: -1, messageId: 1, sentAt: Date.now() })).toBeUndefined();

@@ -14,6 +14,17 @@ import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnown
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
+// Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI runner can exceed a bound once,
+// while backtracking is slow on every run. A warm run takes ~20 ms here (55 ms on the Easypanel build host) and
+// catastrophic backtracking takes seconds; the bound sits between, with room for a runner shared with ~10x its
+// cores of other work (320 ms seen).
+const LINEAR_MS = 1_000;
+function fastest(run: () => unknown): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) { const started = performance.now(); run(); best = Math.min(best, performance.now() - started); }
+  return best;
+}
+
 const plain = (text: string, patch: Partial<ModerationMessage> = {}): ModerationMessage => ({ text, embeddedLinks: [], isForwarded: false, ...patch });
 const memberReply = (source: string): Partial<ModerationMessage> => ({ preview: [{ kind: "reply", origin: "same_chat",
   sourceKind: "user", sourceAuthor: "other_author", isForwarded: false, text: source, embeddedLinks: [] }] });
@@ -80,18 +91,8 @@ test("matching stays linear on long adversarial input", () => {
     // Round 6: many question sentences, conditional calls, refused DMs and venues.
     "a?".repeat(2048), "кто продаёт usdt? где?".repeat(180), "куплю usdt. " + "если есть вопрос ".repeat(240) + "пишите",
     "куплю usdt, " + "в лс не ".repeat(500) + "торгую", "i buy btc " + "on the ".repeat(580) + "binance, best rates"];
-  // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI
-  // runner can exceed the bound once, while backtracking is slow on every run.
-  // The bound allows for the slower Easypanel build host (55 ms best warm run
-  // there vs ~20 ms locally); catastrophic backtracking takes seconds.
   for (const text of inputs) {
-    let best = Infinity;
-    for (let run = 0; run < 3; run++) {
-      const started = performance.now();
-      promoPattern(plain(text));
-      best = Math.min(best, performance.now() - started);
-    }
-    expect(best).toBeLessThan(250);
+    expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }
 });
 
@@ -231,9 +232,7 @@ test("adult promo matching stays fast on 4,096-character adversarial input", () 
     "zz " + ("guys" + ",".repeat(300)).repeat(3) + "porn bot @x_bot in the comments", "zz " + ("ребят" + ".".repeat(300)).repeat(3) + "в комментах порно бот @x_bot"].map((text) => text.slice(0, 4096));
   // Every input with and without buttons: without them the content-call, DM-call and arrow funnels run too.
   for (const [i, text] of inputs.flatMap((text) => [text, text]).entries()) {
-    const start = performance.now();
-    promoPattern(plain(text, i % 2 ? {} : { inlineButtons: adultPromoIncidentButtons }));
-    expect(performance.now() - start).toBeLessThan(250);
+    expect(fastest(() => promoPattern(plain(text, i % 2 ? {} : { inlineButtons: adultPromoIncidentButtons })))).toBeLessThan(LINEAR_MS);
   }
 });
 
@@ -273,8 +272,6 @@ test("free-copy matching stays fast on 4,096-character adversarial input", () =>
     // A lead-in counts only before the first read verb (#153 review 6).
     "а ".repeat(1000) + "послушал. опять: послушал ".repeat(80), "опять: послушал книгу, скину. ".repeat(136)].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
-    const start = performance.now();
-    promoPattern(plain(text));
-    expect(performance.now() - start).toBeLessThan(250);
+    expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }
 });

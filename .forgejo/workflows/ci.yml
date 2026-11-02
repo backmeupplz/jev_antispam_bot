@@ -64,7 +64,8 @@ jobs:
           fi
           echo "$dir" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
-      # `bun run check` (typecheck && test), with both halves in parallel. The tests refuse any
+      # `bun run check` (typecheck && test), with both halves in parallel, and the test files in
+      # parallel worker processes (each with its own schema, src/test-schema.ts). The tests refuse any
       # database host but 127.0.0.1/localhost.
       - run: |
           if [ "$RUNNER_OS" = macOS ]; then
@@ -102,5 +103,5 @@ jobs:
           export TEST_DATABASE_URL=postgres://jev_stats_test:test-only-password@127.0.0.1:$port/jev_stats_test
           export AUDIT_TEST_DATABASE_URL=$TEST_DATABASE_URL
           bun run typecheck & typecheck=$!
-          bun test & tests=$!
+          bun test --parallel & tests=$!
           for job in $typecheck $tests; do wait $job || exit 1; done

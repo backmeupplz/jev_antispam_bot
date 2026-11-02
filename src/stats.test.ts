@@ -181,7 +181,8 @@ test("shutdown respects retry backoff when the database is immediately offline",
   const startedAt = performance.now();
   const health = await stats.stop();
 
-  expect(performance.now() - startedAt).toBeLessThan(250);
+  // Ruling out only the broken outcome (a wait on the blocked write/lock/request), not a slow loaded host
+  expect(performance.now() - startedAt).toBeLessThan(2_000);
   expect(store.batches).toHaveLength(1);
   expect(store.closed).toBe(true);
   expect(health.pendingDeletions).toBe(1);
@@ -250,7 +251,8 @@ test("shutdown is deadline-bounded, idempotent, and ignores late enqueue", async
 
   const startedAt = performance.now();
   await Promise.all([stats.stop(), stats.stop()]);
-  expect(performance.now() - startedAt).toBeLessThan(250);
+  // Ruling out only the broken outcome (a wait on the blocked write/lock/request), not a slow loaded host
+  expect(performance.now() - startedAt).toBeLessThan(2_000);
 
   const healthAtStop = stats.health();
   stats.observeChat({ chatId: -1006 });

@@ -5,7 +5,7 @@ import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
 import type { SpamCache } from "./spam-cache";
 import { registerBotHandlers } from "./bot";
-import { DeleteRetryQueue } from "./delete-retry";
+import { DeleteRetryQueue, type prepareIntent } from "./delete-retry";
 import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
 import { cryptoRecoveryControls, cryptoRecoveryPitches, cryptoRecoverySplit } from "./fixtures/crypto-recovery";
@@ -59,7 +59,7 @@ function assessment(deleteIt = false, links: number[] = []): SpamAssessment {
 
 function harness(classify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, previewRequest: PageRequest = async () => ({ status: 404, headers: {}, body: "" }), spamCache?: SpamCache,
   shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit,
-  repeats?: RepeatStore, deleteRetries?: DeleteRetryQueue) {
+  repeats?: RepeatStore, deleteRetries?: DeleteRetryQueue, intentRetry?: Parameters<typeof prepareIntent>[4]) {
   const bot = new Bot("123:local-test-only", { botInfo });
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
@@ -123,7 +123,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   bot.use(async (ctx, next) => { if (ctx.from && !ctx.from.is_bot) humans.add(ctx.from.id); await next(); });
   registerBotHandlers(bot, {
     model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit, ...(repeats ? { repeats } : {}),
-    ...(deleteRetries ? { deleteRetries } : {}),
+    ...(deleteRetries ? { deleteRetries } : {}), intentRetry,
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
@@ -1932,7 +1932,8 @@ function auditHarness(cache?: SpamCache, repeats?: RepeatStore, { ttlMs }: { ttl
   // Driven by hand: a fake clock and no timer.
   let now = 0;
   const retries = new DeleteRetryQueue({ pollMs: 0, now: () => now, ttlMs, logger: { info: line => h.logs.push(JSON.parse(line)) } });
-  const h = harness(undefined, undefined, cache, undefined, audit, repeats, retries);
+  // The inline intent retry's waits advance the same fake clock instead of sleeping
+  const h = harness(undefined, undefined, cache, undefined, audit, repeats, retries, { now: () => now, sleep: async ms => { now += ms; } });
   return { ...h, prepared, confirmed, failed, retries, unavailable: () => { unavailable = true; }, confirmationFails: () => { confirmationFails = true; },
     databaseFailures: (count: number) => { databaseFailures = count; }, prepareCalls: () => prepareCalls, advance: (ms: number) => { now += ms; } };
 }

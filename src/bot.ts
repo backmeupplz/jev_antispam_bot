@@ -35,6 +35,7 @@ export function registerBotHandlers(bot: Bot, {
   promo,
   isNewChat = async () => false,
   deleteRetries = new DeleteRetryQueue({ logger }),
+  intentRetry,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
@@ -52,6 +53,8 @@ export function registerBotHandlers(bot: Bot, {
   isNewChat?: (chatId: number) => Promise<boolean>;
   // Confirmed deletions whose audit intent could not be written yet (#277).
   deleteRetries?: DeleteRetryQueue;
+  // The inline intent retry's clock (prepareIntent's defaults: real time); tests drive it by hand.
+  intentRetry?: Parameters<typeof prepareIntent>[4];
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
@@ -383,7 +386,7 @@ export function registerBotHandlers(bot: Bot, {
           const own = snapshots.find(s => s.chatId === chatId && s.messageId === messageId);
           if (!own) { logger.error(JSON.stringify({ event: "deletion_audit", outcome: "snapshot_missing" })); throw new Error("Audit snapshot unavailable"); }
           const report = renderAuditReport(own);
-          const prepared = auditDeferred ? { refusal: "unavailable" as const } : await prepareIntent(deletionAudit, chatId, messageId, report);
+          const prepared = auditDeferred ? { refusal: "unavailable" as const } : await prepareIntent(deletionAudit, chatId, messageId, report, intentRetry);
           if ("refusal" in prepared) {
             // A deletion still never runs without its intent: a transient failure only defers it (#277).
             const source = cacheHit && chatId === ctx.chat.id && messageId === ctx.msgId ? "cache" : "jev";

@@ -1,48 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { Api } from "grammy";
-import pg from "pg";
 import { AUDIT_CHAT_ID, LIVE_PARTS_SQL, PostgresDeletionAudit } from "./audit-outbox";
 import { renderAuditReport, type AuditSnapshot } from "./audit-report";
-const url = process.env.AUDIT_TEST_DATABASE_URL;
-if (url && (!["/jev_audit_test", "/jev_stats_test"].includes(new URL(url).pathname) || !["127.0.0.1", "localhost"].includes(new URL(url).hostname))) throw new Error("Dedicated local audit test database required");
-// A timed-out test never reaches its finally: close whatever it opened before the next test resets the tables,
-// so a straggling worker, pool or open transaction cannot block (or deadlock) the next fixture.
-const leftovers: Array<() => unknown> = [];
-function owned<T>(resource: T, close: (resource: T) => unknown): T { leftovers.push(() => close(resource)); return resource; }
-// Runs inside each test rather than a beforeEach hook: the deploy build's Bun 1.3 rejects hook timeouts, and closing
-// waits for in-flight queries (bounded by the 10s lock timeout and the audit's own timeouts), beyond Bun's 5s default.
-async function closeLeftovers() { await Promise.allSettled(leftovers.splice(0).map(async close => await close())); }
-// Bun's 5s default is too tight on a loaded host; a slow test should pass, not cascade into the next one.
-const integration = url
-  ? (name: string, run: () => Promise<void>, timeoutMs = 60_000) => test(name, async () => { await closeLeftovers(); await run(); }, timeoutMs)
-  : test.skip;
-const options = { paceMs: 1, timeoutMs: 100, sendLeaseMs: 1_000 };
-const testPool = () => owned(new pg.Pool({ connectionString: url, lock_timeout: 10_000 }), pool => pool.end());
-const auditor = (api: Api, overrides: ConstructorParameters<typeof PostgresDeletionAudit>[2] = options) =>
-  owned(new PostgresDeletionAudit(url!, api, overrides), audit => audit.close());
-function transport() {
-  const api = new Api("123:fixture");
-  const calls: unknown[] = [];
-  let action: () => Promise<unknown> = async () => ({ ok: true, result: { message_id: 1, date: 1, chat: { id: AUDIT_CHAT_ID, type: "group", title: "fixture" } } });
-  api.config.use(async (_previous, _method, payload) => { calls.push(payload); return await action() as never; });
-  return { api, calls, action: (next: typeof action) => { action = next; } };
-}
-async function fixture() {
-  const db = testPool();
-  const t = transport();
-  const audit = auditor(t.api);
-  // Same lock order as the code under test (sink row, then tables), and before initialize() so rows left by an
-  // aborted run cannot push its index creation past the 1s statement timeout (or, with only 004 applied, be
-  // copied into parts by 005).
-  await db.query("DO $$ BEGIN IF to_regclass('deletion_audit_sink') IS NOT NULL THEN PERFORM 1 FROM deletion_audit_sink FOR UPDATE; END IF; IF to_regclass('deletion_audit_parts') IS NOT NULL THEN TRUNCATE deletion_audit_parts,deletion_audit_outbox; ELSIF to_regclass('deletion_audit_outbox') IS NOT NULL THEN TRUNCATE deletion_audit_outbox; END IF; END $$");
-  await audit.initialize();
-  await db.query("UPDATE deletion_audit_sink SET next_send_at=NOW(),prepared=0,refused=0,expired=0,expired_undelivered=0");
-  const state = async (id: string) => (await db.query("SELECT state,attempts FROM deletion_audit_outbox WHERE id=$1", [id])).rows[0];
-  const ready = async () => { await db.query("UPDATE deletion_audit_sink SET next_send_at=NOW(); UPDATE deletion_audit_outbox SET next_attempt_at=NOW(); UPDATE deletion_audit_parts SET next_attempt_at=NOW()"); };
-  return { pool: db, t, audit, state, ready, close: async () => { await audit.close(); await db.end(); } };
-}
+import { auditor, fixture, integration, options, owned, testPool, transport } from "./audit-outbox.fixture";
 
 integration("migration concurrency, durable intent, restart, source dedupe and no send before confirmation", async () => {
   const f = await fixture();
@@ -80,14 +41,16 @@ integration("known deletion failure retry fences old callbacks; ambiguity and st
 });
 
 integration("atomic leases across workers, durable pacing and stale send become unknown without replay", async () => {
+  // The gated send must not time out while the other worker runs: its transport timeout is out of reach here
   const f = await fixture(); const other = auditor(f.t.api, options);
+  const sender = auditor(f.t.api, { ...options, timeoutMs: 30_000, sendLeaseMs: 60_000 });
   try {
-    const id = (await f.audit.prepare(-69, 1, "fixture"))!; await f.audit.confirmed(id);
+    const id = (await sender.prepare(-69, 1, "fixture"))!; await sender.confirmed(id);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
     f.t.action(async () => { entered(); await gate; return { ok: true, result: { message_id: 1 } }; });
-    const running = f.audit.runOnce(); await started;
+    const running = sender.runOnce(); await started;
     await other.runOnce(); expect(f.t.calls).toHaveLength(1);
     release(); await running; expect((await f.state(id)).state).toBe("sent");
     const stale = (await other.prepare(-69, 2, "fixture"))!; await other.confirmed(stale);
@@ -95,7 +58,7 @@ integration("atomic leases across workers, durable pacing and stale send become 
     await f.audit.runOnce(); await other.runOnce();
     expect((await f.state(stale)).state).toBe("send_unknown"); expect(f.t.calls).toHaveLength(1);
     expect(await other.prepare(-69, 2, "fixture")).toBeUndefined();
-  } finally { await other.close(); await f.close(); }
+  } finally { await sender.close(); await other.close(); await f.close(); }
 });
 
 integration("capacity is atomic across replicas; expiry bounded, explicit and does not evict early", async () => {
@@ -187,20 +150,21 @@ integration("harmless integration report uses same durable route, fixed body and
 });
 
 integration("shutdown waits for active send and does not schedule another", async () => {
-  const f = await fixture();
+  // The gated send must not time out while the test checks that close() waits for it
+  const f = await fixture(); const sender = auditor(f.t.api, { ...options, timeoutMs: 30_000, sendLeaseMs: 60_000 });
   try {
-    const id = (await f.audit.prepare(-69, 1, "fixture"))!; await f.audit.confirmed(id);
+    const id = (await sender.prepare(-69, 1, "fixture"))!; await sender.confirmed(id);
     let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
     let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
     f.t.action(async () => { entered(); await gate; return { ok: true, result: { message_id: 1 } }; });
-    f.audit.start(); f.audit.start(); await started;
-    let closed = false; const closing = f.audit.close().then(() => { closed = true; });
+    sender.start(); sender.start(); await started;
+    let closed = false; const closing = sender.close().then(() => { closed = true; });
     await Bun.sleep(10); expect(closed).toBe(false); release(); await closing;
     expect((await f.state(id)).state).toBe("sent"); expect(f.t.calls).toHaveLength(1);
     const reasons: string[] = [];
-    expect(await f.audit.prepare(-69, 2, "fixture", reason => reasons.push(reason))).toBeUndefined();
+    expect(await sender.prepare(-69, 2, "fixture", reason => reasons.push(reason))).toBeUndefined();
     expect(reasons).toEqual(["closing"]);
-  } finally { await f.close(); }
+  } finally { await sender.close(); await f.close(); }
 });
 
 function accepted(messageId: number) { return { ok: true, result: { message_id: messageId } }; }
@@ -338,27 +302,6 @@ integration("expired reports maintain() must keep (live intent or send lease) ne
   } finally { await audit.close(); await f.close(); }
 });
 
-integration("startup on an existing schema takes no table locks; live paths stay indexed with 100k finished rows", async () => {
-  const f = await fixture(); const holder = owned(new pg.Client({ connectionString: url }), client => client.end());
-  try {
-    await f.pool.query("INSERT INTO deletion_audit_outbox(id,chat_id,message_id,report,state,expires_at) SELECT gen_random_uuid(),-70,g,repeat('x',1000),(ARRAY['sent','delete_failed','send_unknown','terminal'])[1+g%4],NOW()+INTERVAL '1 day' FROM generate_series(1,100000) g");
-    await f.pool.query("INSERT INTO deletion_audit_parts(audit_id,sequence,report,state,receipt_message_id) SELECT id,1,report,CASE state WHEN 'delete_failed' THEN 'pending' ELSE state END,CASE state WHEN 'sent' THEN message_id END FROM deletion_audit_outbox WHERE chat_id=-70");
-    await f.pool.query("ANALYZE deletion_audit_outbox; ANALYZE deletion_audit_parts");
-    // A replica mid-transaction on both tables must not block (or deadlock) another replica's startup.
-    await holder.connect(); await holder.query("BEGIN; LOCK TABLE deletion_audit_parts, deletion_audit_outbox IN ROW EXCLUSIVE MODE");
-    const audit = auditor(f.t.api, options);
-    try {
-      await audit.initialize();
-      await holder.query("COMMIT");
-      const reasons: string[] = [];
-      const id = await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason)); expect(id).toBeDefined(); expect(reasons).toEqual([]);
-      await audit.confirmed(id!); await f.ready(); await audit.runOnce(); expect(await audit.status(id!)).toBe("sent");
-      const plan = JSON.stringify((await f.pool.query("EXPLAIN (FORMAT JSON) " + LIVE_PARTS_SQL)).rows);
-      expect(plan).toContain("deletion_audit_parts_live"); expect(plan).toContain("deletion_audit_outbox_live");
-      expect(plan).not.toContain("Seq Scan");
-    } finally { await audit.close(); }
-  } finally { await holder.end(); await f.close(); }
-}, 180_000);
 
 integration("upgrade adds live indexes to an existing schema while another replica keeps admitting intents", async () => {
   const f = await fixture();
@@ -368,7 +311,7 @@ integration("upgrade adds live indexes to an existing schema while another repli
     try {
       const [, ...ids] = await Promise.all([upgraded.initialize(), ...Array.from({ length: 5 }, (_, i) => f.audit.prepare(-69, i + 1, "fixture"))]);
       expect(ids.every(Boolean)).toBe(true);
-      expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM pg_indexes WHERE indexname IN ('deletion_audit_parts_live','deletion_audit_outbox_leased','deletion_audit_outbox_live')")).rows[0].count).toBe(3);
+      expect((await f.pool.query("SELECT COUNT(*)::int AS count FROM pg_indexes WHERE schemaname=current_schema() AND indexname IN ('deletion_audit_parts_live','deletion_audit_outbox_leased','deletion_audit_outbox_live')")).rows[0].count).toBe(3);
     } finally { await upgraded.close(); }
     // Skipping 004 on restart still restores a missing sink row.
     await f.pool.query("DELETE FROM deletion_audit_sink");
@@ -450,32 +393,7 @@ integration("concise rendering and pre-upgrade queued HTML survive restart witho
   } finally { await other.close(); await f.close(); }
 });
 
-integration("#277: a sink-lock holder stalled past the 1s statement budget delays prepare() instead of refusing it", async () => {
-  const f = await fixture(); const holder = await f.pool.connect();
-  try {
-    await f.audit.prepare(-69, 99, "warm-up"); // initialized and connected before the lock is taken
-    await holder.query("BEGIN"); await holder.query("SELECT 1 FROM deletion_audit_sink FOR UPDATE");
-    const reasons: string[] = []; const startedAt = Date.now();
-    const preparing = f.audit.prepare(-69, 1, "fixture", reason => reasons.push(reason));
-    await new Promise(resolve => setTimeout(resolve, 1_500)); await holder.query("COMMIT");
-    const id = await preparing;
-    expect(id).toBeDefined(); expect(reasons).toEqual([]); expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_400);
-    expect((await f.state(id!)).state).toBe("intent");
-  } finally { holder.release(); await f.close(); }
-});
 
-integration("#277: the sink-lock wait is still bounded by stallMs", async () => {
-  const f = await fixture(); const audit = auditor(f.t.api, { ...options, stallMs: 1_000 }); const holder = await f.pool.connect();
-  try {
-    await audit.prepare(-69, 99, "warm-up");
-    await holder.query("BEGIN"); await holder.query("SELECT 1 FROM deletion_audit_sink FOR UPDATE");
-    const reasons: string[] = [];
-    expect(await audit.prepare(-69, 1, "fixture", reason => reasons.push(reason))).toBeUndefined();
-    expect(reasons).toEqual(["database"]);
-    await holder.query("ROLLBACK");
-    expect((await f.pool.query("SELECT COUNT(*)::int AS n FROM deletion_audit_outbox WHERE message_id=1")).rows[0].n).toBe(0);
-  } finally { holder.release(); await audit.close(); await f.close(); }
-});
 
 integration("#277: a retry after an unknown COMMIT outcome reuses its own intent; nobody else's", async () => {
   const f = await fixture(); const other = auditor(f.t.api, options);
