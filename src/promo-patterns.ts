@@ -842,7 +842,9 @@ const CONSUMED = any("‹(?:по|про|до|пере)?слуша(?:л|ла|ли
   "‹(?:i (?:just |recently |finally )?(?:read|listened|finished|loved|enjoyed|liked|discovered|recommend|took (?:[\\p{L}-]+ ){0,2}?courses?›)|(?:just|recently) (?:read|finished|listened|discovered)|(?<=(?:^|[.!?\\n]\\s?))listened to|listening to|highly recommend|changed my|loved|enjoyed|liked|devoured)›");
 // A title right after the verb is the work too ("Прочитал «Путь наименьшего сопротивления»"), though quotes are removed.
 // A quoted document or talk is no title: "Прочитала «Положение о летнем лагере»", "Прочитали «Устав ТСЖ»".
-const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„](?!\\s?(?:положени|правил|устав|требовани|порядо?к|услови|чек-лист|спис|меню|расписани|техзадани|задани|сценари|программ|договор|регламент|инструкци|приказ|постановлени|закон|кодекс|памятк|объявлени|протокол|бесед|проповед|вебинар|лекци|семинар|подкаст|интервью|урок|рекомендаци|методичк|распоряжени|письм)\\p{L}*)`);
+const TITLED = re(`(?:${CONSUMED.source})\\s?[«"“„](?!\\s?(?:положени|правил|устав|требовани|порядо?к|услови|чек-лист|спис|меню|расписани|техзадани|задани|сценари|программ|договор|регламент|инструкци|приказ|постановлени|закон|кодекс|памятк|объявлени|протокол|бесед|проповед|вебинар|лекци|семинар|подкаст|интервью|урок|рекомендаци|методичк|распоряжени|письм|газет|журнал|ведомост|коммерсант|известия|новост|сводк|обзор|выпуск|дайджест)\\p{L}*)`);
+// A long review's title has a few words: "«Искусство наживать деньги»", not "«Ведомости»" or "«Коммерсантъ»".
+const LONG_TITLE = re(`(?:${TITLED.source})[^«»"“”„\n]{1,200}?\\s[^«»"“”„\n]{1,200}?[»"“”]`);
 // A first-person offer to send it: "могу скинуть", "готов поделиться", "отправлю", "перешлю", "I can send", "I'll share".
 // "не могу скинуть" refuses.
 const SEND = "(?:скинуть|кинуть|переслать|отправить|прислать|выслать|сбросить|поделиться)";
@@ -929,7 +931,87 @@ function praisesIt(part: string): boolean {
   const tail = part.slice(words[at]!.index + words[at]![0].length);
   return plainWords(tail) || PRAISE_TAIL.test(tail);
 }
-function sendsTheWork(told: string, start: number, end: number): boolean {
+// A long review closing on an offer sentence of its own sends the work it opened with (#430): "Недавно дочитал «Искусство
+// наживать деньги» Ротшильда. Это база для финансового мышления. … И самое интересное - ловишь себя на тех же ошибках. Могу
+// переслать кому интересно, пишите в личные сообщения." Only plain words come before the offer in its sentence, the
+// sentence that reads the work points back at it as an offer right after it would (an author may follow a read title), and
+// no sentence between them does or names something else to send ("Испекла пирог", "Сделала конспект", "Сходила на семинар",
+// "Нашла там таблицу режима"), has or is given anything but the book ("Есть хороший консультант"), names a format or lesson
+// rather than the book ("Lessons are available for members"), calls for interest or offers again. The bound keeps many offers in a long text linear.
+const OTHER_THING = any("‹(?:сделал|составил|записал|собрал|нашл|нашёл|нашел|сохранил|скачал|сфоткал|сфотографировал|перев[её]л|выписал|законспектировал"
+  + "|набросал|подготовил|оформил|нарисовал|сн(?:ял|яла|яли)|купил|заказал|распечатал|отсканировал|переписал|испек|пекл|приготовил|сварил|сшил|связал|вязал"
+  + "|посмотрел|смотрел|продаю|прода[мл]|отда[мюл]|прислал|скинул|получил|завел|завёл|провёл|провел|организовал|создал|написал|напечатал|запустил)\\p{L}*",
+  "‹(?:веду|вела|ведём|ведем|проводим|провожу|организуем|организую|собираем|сходил[аи]?|ходил[аи]?|made|wrote|saved|put together|took|baked|cooked|watched|bought"
+  + "|sold|got|keep|kept|went|attended)›",
+  "‹(?:конспект|рецепт|спис(?:ок|к)|таблиц|табличк|эксел|эксель|excel|шпаргалк|памятк|гайд|пометк|фотк|семинар|мастер-класс|выступлени|консультаци|консультант|брокер|специалист|юрист|бухгалтер|риелтор|советник|психолог|коуч|наставник|ментор|репетитор|врач|доктор|задач|схем|шаблон|чек-?лист|заметк|фото|видео|ролик|ссылк|ссылочк|презентаци|скрин|карт(?:а|у|ы|ой|очк)|подборк"
+  + "|выжимк|саммари|тезис|цитат|расписани|программ|упражнени|задани|контакт|номер|адрес|канал|чат|групп|сайт|приложени|промокод|скидк|купон|подкаст"
+  + "|вебинар|лекци|фильм|сериал|мультфильм|отзыв|рецензи|интервью|сочинени|проект|раскраск|меню|трекер|документ|гугл|тетрад|дневник|календар|бланк|анкет"
+  + "|разбор|клуб|кружок|кружк|марафон|эфир|трансляци)\\p{L}*",
+  "‹(?:встреч(?:а|у|и|ей|ах)|форм(?:а|у|ы|ой)|расч[её]т(?:ы|а|ом)?|мастер(?:а|у|ом)?|тренер(?:а|у|ом)?|пример(?:ы|ом|ов)?|план(?:ы|а|у|ом)?|ответ(?:ы|ов)?|пост(?:ы|а|у|ом)?|стать(?:я|ю|и|ей))›",
+  "‹(?:notes?|summar\\p{L}*|recipes?|lists?|tables?|links?|photos?|videos?|templates?|slides?|quotes?|plans?|channels?|groups?|apps?|codes?|discounts?"
+  + "|answers?|podcasts?|webinars?|lectures?|movies?|films?|reviews?|articles?|posts?|spreadsheets?|worksheets?|guides?|cheat ?sheets?|seminars?|workshops?|talks?"
+  + "|advisors?|advisers?|brokers?|coach|coaches|contacts?|forms?)›");
+// Something had or given in between is another thing to send, unless it is the book: "Есть хороший финансовый консультант",
+// "Подруга посоветовала брокера", "My advisor gave me…", but "Есть хорошая аудиоверсия".
+const HAS_OTHER = re("‹(?:есть|у меня|у нас|дал[аи]?|посоветовал[аи]?|порекомендовал[аи]?|подарил[аи]?|have|has|had|gave|given)›");
+const OFFERS = re(COPY_OFFER.source, "iu");
+// What a review's middle tells: the work or what it did ("Это база…", "После неё…", "Книга про то…", "Автор разбирает…",
+// "Дом теперь другой!"), what anyone starts to notice ("Начинаешь замечать…", "ловишь себя…", "You start noticing…"), what
+// the author made of it ("Многое переосмыслил"), praise or the reading ("Очень понравилось", "Слушал в машине"), or a word or
+// three ("Сильно.", "Очень отрезвляет."). Anything else ("Подруга подсказала психолога", "Открыла вклад в Тинькофф",
+// "Пользуюсь приложухой для бюджета", "I found a great planner") tells of something else the offer may send.
+const REFLECTS = any("‹(?:эт(?:о|а|от|у|ой|им|ого)|она|её|ее|неё|нее|ней|нею|он|его|него|нём|нем|теперь|после|по-другому|иначе)›",
+  "‹(?:книг|книжк|автор|вывод|мысл|иде|глав|литератур)\\p{L}*", "‹[\\p{L}-]+(?:ешь|ёшь|ишь)(?:ся)?›",
+  "‹(?:переосмысл|понял|осозна|задумал|узнал|заметил|пересмотрел|поменял|изменил|перевернул|цепля|зацепил)\\p{L}*",
+  "‹(?:it|this|the book|the author|after it|differently|you (?:start|notice|realize|realise|see|begin|catch|understand)\\p{L}*)›");
+const AUTHOR = re("^\\s?[\\p{L}-]+(?:\\s[\\p{L}-]+){0,2}\\s?$");
+// When the review read it: "Недавно дочитал", "На днях прочитала", "Наконец дослушал".
+const WHEN = re("‹(?:недавно|вчера|наконец|на днях|только что|сегодня|на выходных|за выходные|recently|finally|yesterday)›", "giu");
+// A middle sentence where the author or someone else acts tells of what the offer sends: "Открыла вклад, теперь коплю",
+// "После неё подруга подсказала финансиста", "Пользуюсь приложухой", "Я теперь в сообществе", "I use YNAB for it now". What
+// anyone starts to notice ("Начинаешь замечать, как люди тратят"), reading, praise and insight ("Многое переосмыслил",
+// "так не цепляла") still tell of the work, but not alongside an action ("Пользуюсь приложухой, сразу видишь все траты").
+const PAST = re("^\\p{L}+[аеиоуыяё]л(?:а|и|о)?(?:сь|ся)?$");
+const KEPT_PAST = re("^(?:был|стал[оа]?$|переосмысл|понял|осозна|задумал|узнал|заметил|пересмотрел|изменил|перевернул|цеплял|зацепил|удивил|впечатлил|вдохновил"
+  + "|мотивировал|научил[аи]?$|помогл[аои]?$|понравил|зашл|прочитал|прочел|прочёл|читал|дочитал|перечитал|слушал|послушал|прослушал|дослушал|переслушал|закончил"
+  + "|капитал|материал|идеал|сигнал|стол$|пол$|футбол|сил[аы]$|дел[аоу]$|тел[аоу]$|цел[иь]$|мал[оа]$|мил[оа]$|смел[оа]$|весел[оа]$|правил|школ|зл[оа]$|масл)");
+const ACTOR = any("‹(?:мы|подруг\\p{L}*|друг|друга|другу|друзья|муж|мужа|мужу|жен[аеуы]|сын\\p{L}*|доч\\p{L}*|мам[аеуы]|пап[аеуы]|брат\\p{L}*|сестр\\p{L}*|коллег\\p{L}*"
+  + "|знаком\\p{L}*|сосед\\p{L}*)›",
+  "‹я›(?!\\s(?:(?:теперь|тоже|сразу|наконец|реально|правда|вдруг)\\s)?(?:понял|осознал|переосмыслил|задумал|узнал|заметил|увидел)\\p{L}*)",
+  "‹(?:пользуюсь|использую|коплю|экономлю|инвестирую|вкладываю|откладываю|плачу|покупаю|хожу|занимаюсь|работаю|подписан\\p{L}*|сижу|живу|учусь)›",
+  // "he" is left out: "не" folds to it.
+  "‹(?:a |my |our |her |his )?(?:friend|husband|wife|partner|mom|mum|dad|brother|sister|colleague|coworker|advisor|adviser|neighbou?r)s?›",
+  "‹(?:i|we|my|our|she|they)\\s(?:(?:also|now|just|then|even|really|finally|recently)\\s)?(?!(?:read|loved|liked|enjoyed|think|thought|realized|realised|learned"
+  + "|understood|noticed|feel|felt|see|saw|was|am|can|could|would|will|highly|recommend)›)");
+const NOT = re("^(?:не|ни|not|never|didn)$");
+// An English past action: "set up an account", "joined a community"; reading, praise and insight are none.
+const DONE = /^[a-z]{2,}ed$/u;
+const KEPT_DONE = /^(?:loved|liked|enjoyed|finished|listened|realized|realised|learned|noticed|changed|inspired|motivated|surprised|impressed|amazed|helped|recommended|needed|wanted|interested|discovered|devoured|related|based|called|named|titled|written|aimed|focused|packed|filled|explained|described|covered|talked)$/u;
+// "Открыл для себя" reads; "Открыла вклад" acts. English "he" only counts in an English sentence: "не" folds to it.
+const OPENED = re("^открыл");
+const FOR_ME = re("^для себя");
+const HE = re("‹(?:he|his)\\s");
+function acts(part: string): boolean {
+  if (ACTOR.test(part) || HE.test(part) && !/\p{Script=Cyrillic}/u.test(part)) return true;
+  const words = [...part.matchAll(WORDS)].map(([word]) => word);
+  const read = (word: string, i: number) => READ_WORD.test(word) && (!OPENED.test(word) || FOR_ME.test(words.slice(i + 1, i + 3).join(" ")));
+  return words.some((word, i) => (PAST.test(word) && !KEPT_PAST.test(word) && !read(word, i) || DONE.test(word) && !KEPT_DONE.test(word))
+    && !NOT.test(words[i - 1] ?? ""));
+}
+function reviewsThenOffers(head: string, readsTitle: boolean): boolean {
+  const parts = sentences(head);
+  const own = /[.!?\n]\s*$/u.test(parts.at(-1) ?? "") ? "" : parts.pop()!;
+  if (!plainWords(own)) return false;
+  const at = parts.findIndex((part) => CONSUMED.test(part) && (namesBook(part) || readsTitle));
+  return at >= 0 && pointsBack(parts.slice(0, at + 1).join(""), readsTitle)
+    && parts.slice(at + 1).every((part) => {
+      const words = [...part.matchAll(WORDS)].map(([word]) => word);
+      return (REFLECTS.test(part) || CONSUMED.test(part) || words.length <= 3) && !acts(part) && !OTHER_THING.test(part) && !INTEREST.test(part) && !OFFERS.test(part)
+        && words.every((word) => !COPY_NAME.test(word) || BOOK_NAME.test(word))
+        && (!HAS_OTHER.test(part) || words.some((word) => BOOK_NAME.test(word)));
+    });
+}
+function sendsTheWork(told: string, start: number, end: number, longTitle: boolean): boolean {
   // A copy named ends the check at the end of its clause: "скину аудиоверсию, пишите", not "скину файл с дневником".
   let named = false;
   // An offer ending its line sends what the next line names: "Если кому надо, могу скинуть\nрецепт хлеба".
@@ -941,9 +1023,12 @@ function sendsTheWork(told: string, start: number, end: number): boolean {
     if (COPY_NAME.test(word)) named = true;
     else if (!BETWEEN_WORD.test(word) && !READ_WORD.test(word)) return false;
   }
-  if (named) return true;
   // The work is named close by; the bound keeps many offers in a long text linear.
-  const before = start > 400 ? told.slice(start - 400, start).replace(/^[\p{L}\p{N}]+/u, "") : told.slice(0, start);
+  const window = (size: number) => start > size ? told.slice(start - size, start).replace(/^[\p{L}\p{N}]+/u, "") : told.slice(0, start);
+  return named || pointsBack(window(400)) || reviewsThenOffers(window(1000), longTitle);
+}
+// What stands before an offer points back at the work.
+function pointsBack(before: string, authored = false): boolean {
   const words = [...before.matchAll(WORDS)];
   const last = (test: RegExp) => words.filter(([word]) => test.test(word)).at(-1);
   const anchor = last(COPY_NAME) ?? last(READ_WORD);
@@ -956,21 +1041,26 @@ function sendsTheWork(told: string, start: number, end: number): boolean {
   const head = clause(before.slice(0, anchor.index));
   // The author or title runs to the next punctuation or "и"/"а"/"and": "Прочитала книгу и нашла там схему" names the scheme.
   const [rest, ...clauses] = before.slice(anchor.index + anchor[0].length).split(BREAK);
-  clauses.unshift(...rest!.split(COORD).slice(1));
-  // A read or praise verb standing for a quoted title names nothing after it: "Прочитала «…», понравилась таблица оттуда".
-  if (!COPY_NAME.test(anchor[0]) && !plainWords(rest!) && !PRAISE_TAIL.test(rest!)) return false;
+  const [named, ...coordinated] = rest!.split(COORD);
+  clauses.unshift(...coordinated);
+  // A read or praise verb standing for a quoted title names nothing after it: "Прочитала «…», понравилась таблица оттуда";
+  // a long review may name the title's author ("Недавно дочитал «…» Ротшильда.").
+  if (!COPY_NAME.test(anchor[0]) && !plainWords(rest!) && !PRAISE_TAIL.test(rest!)
+    && !(authored && AUTHOR.test(named!) && !OTHER_THING.test(named!) && !OF_IT.test(named!))) return false;
   // A format, unlike the book, has no author or title after it: "Есть pdf с билетами ПДД" sends the tickets.
-  if (COPY_NAME.test(anchor[0]) && !BOOK_NAME.test(anchor[0]) && !plainWords(rest!.split(COORD)[0]!)) return false;
-  return plainWords(clause(before)) && (plainWords(head) || readsIt(head)) && clauses.every((part) => plainWords(part)
+  if (COPY_NAME.test(anchor[0]) && !BOOK_NAME.test(anchor[0]) && !plainWords(named!)) return false;
+  return plainWords(clause(before)) && (plainWords(authored ? head.replace(WHEN, " ") : head) || readsIt(head)) && clauses.every((part) => plainWords(part)
     || !INTEREST_CLAUSE.test(part) && praisesIt(part));
 }
 
 function bookCopyOffer(message: ModerationMessage, raw: string, text: string): boolean {
   if (ADDRESS.test(text) || ADDRESSED.test(text) || PUBLIC_COPY.test(text) || BOOK_REQUEST.test(text) || BOOK_REPORT.test(text) || pastesAd(promoText(raw))) return false;
   const told = sentences(text).filter((part) => !isQuestion(part)).join("");
-  if (!namesBook(told, raw) && !TITLED.test(promoText(raw)) || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
+  const readsTitle = TITLED.test(promoText(raw));
+  const readsLongTitle = LONG_TITLE.test(promoText(raw));
+  if (!namesBook(told, raw) && !readsTitle || !CONSUMED.test(told) || !INTEREST.test(told) && !callsToDm(told)) return false;
   if (![...told.matchAll(COPY_OFFER)].some((match) => A_COPY.test(told.slice(match.index + match[0].length, match.index + match[0].length + 60))
-    && sendsTheWork(told, match.index, match.index + match[0].length))) return false;
+    && sendsTheWork(told, match.index, match.index + match[0].length, readsLongTitle))) return false;
   return !answersRequest(message, (source) => WORK.test(source));
 }
 

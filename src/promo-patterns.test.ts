@@ -9,7 +9,7 @@ import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCor
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
 import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
-import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyParaphrases } from "./fixtures/book-copy-offer";
+import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyLongReview, bookCopyParaphrases } from "./fixtures/book-copy-offer";
 import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnownMisses } from "./fixtures/book-copy-corpus";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
@@ -241,6 +241,11 @@ test("the #153 free-copy bait matches standalone, as a channel-post comment and 
   for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(bookCopyIncident, patch))).toBe(book);
 });
 
+test.each(bookCopyLongReview)("the #430 long-review bait matches standalone, as a channel-post comment and forwarded: %s", (text) => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(text, patch))).toBe(book);
+  expect(promoPattern(plain(text, memberReply("Кто читал Ротшильда? Скиньте книгу, пожалуйста")))).toBeUndefined();
+});
+
 test.each([...bookCopyFamily, ...bookCopyParaphrases])("free-copy bait variant matches: %s", (text) => {
   expect(promoPattern(plain(text))).toBe(book);
 });
@@ -266,6 +271,9 @@ test("free-copy matching stays fast on 4,096-character adversarial input", () =>
     // Every offer looks back over a bounded window at the last work word (#153 review 2).
     "прочитал книгу, очень понравилась, если кому надо, скину, ".repeat(70), "книга и ".repeat(512), "могу скинуть\n".repeat(315),
     "i read the book and loved it, if anyone wants it i can send it, ".repeat(64), "есть " + "очень ".repeat(800) + "книга, скину",
+    // A long review before each offer is read over a bounded window (#430).
+    "Дочитал книгу. " + "Это база. Испекла пирог. Могу скинуть, пишите. ".repeat(86), "Дочитал книгу" + ". ".repeat(2040) + "Могу скинуть, пишите",
+    "Недавно дочитал «Искусство наживать деньги» " + "а ".repeat(2000) + ". Могу скинуть кому интересно",
     // Lead-ins, "в аудио" and formats (#153 review 5).
     "опять снова тот же вижу: ".repeat(164), "Опять снова снова снова снова: послушай ".repeat(103), "послушал " + "а ".repeat(2000) + "в аудио",
     "i just read the pdf rules, i can send it ".repeat(100),
