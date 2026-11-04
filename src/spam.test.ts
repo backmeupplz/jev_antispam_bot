@@ -120,6 +120,55 @@ describe("JevSpamClassifier", () => {
     expect((await classifier.classify(message)).shouldDelete).toBe(false);
   });
 
+  test("media-only URL buttons are the post's own words: labels stand in for its text (#428)", async () => {
+    const sent: any[] = [];
+    let probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {};
+    const classifier = new JevSpamClassifier("test-key", {
+      model: "jev-1.13.0", threshold: 0.8, timeoutMs: 1_000,
+      fetch: async (_url, init) => { sent.push(JSON.parse(String(init?.body))); return Response.json(response(probabilities)); },
+    });
+    const inlineButtons = [
+      { kind: "url" as const, text: "BINANCE AIRDROP", url: "https://claim-rewards.example/airdrop" },
+      { kind: "url" as const, text: "CLAIM $100 BONUS", url: "https://claim-rewards.example/claim-100" },
+    ];
+    const message = { text: "", embeddedLinks: [], inlineButtons, isForwarded: false, mediaOnly: true };
+    probabilities = { scam_or_phishing: 0.86 };
+    expect(await classifier.classify(message)).toMatchObject({ strongestSignal: "scam_or_phishing", probability: 0.86, shouldDelete: true });
+    // Only the request's copy changes; key order stays the bot's (text first).
+    expect(sent[0].state.message).toEqual({ ...message, text: "BINANCE AIRDROP\nCLAIM $100 BONUS" });
+    expect(Object.keys(sent[0].state.message)[0]).toBe("text");
+    expect(message.text).toBe("");
+    for (const question of Object.values(sent[0].questions) as { instructions: string }[]) {
+      expect(question.instructions).toContain("the URL buttons attached to this post are its only words");
+    }
+    // The profile funnel still counts; below the gate everywhere keeps.
+    probabilities = { media_profile_funnel: 0.9 };
+    expect(await classifier.classify(message)).toMatchObject({ strongestSignal: "media_profile_funnel", probability: 0.9, shouldDelete: true });
+    // A single copied score (Laya) is credited to the buttons' text signal, not the funnel.
+    probabilities = Object.fromEntries(Object.keys(SPAM_QUESTIONS).map(key => [key, 0.865]));
+    expect(await classifier.classify(message)).toMatchObject({ probability: 0.865, shouldDelete: true });
+    expect((await classifier.classify(message)).strongestSignal).not.toBe("media_profile_funnel");
+    probabilities = { scam_or_phishing: 0.79, media_profile_funnel: 0.5 };
+    expect(await classifier.classify(message)).toMatchObject({ probability: 0.79, shouldDelete: false });
+
+    // Without buttons: unchanged text, no note, funnel only. Reply-source buttons never count.
+    const plain = { text: "", embeddedLinks: [], isForwarded: false, mediaOnly: true };
+    const sourceOnly = { ...plain, preview: [{ kind: "reply" as const, origin: "same_chat" as const, sourceKind: "user" as const,
+      sourceAuthor: "other_author" as const, isForwarded: false, embeddedLinks: [], inlineButtons }] };
+    for (const [index, item] of [plain, sourceOnly].entries()) {
+      probabilities = { scam_or_phishing: 0.99, media_profile_funnel: 0.1 };
+      expect(await classifier.classify(item)).toMatchObject({ strongestSignal: "media_profile_funnel", shouldDelete: false });
+      const request = sent.at(-1);
+      expect(request.state.message.text).toBe("");
+      expect(JSON.stringify(request.questions)).not.toContain("are its only words");
+      expect(index === 0 ? request.state.message : request.state.message.preview[0].inlineButtons).toEqual(index === 0 ? plain : inlineButtons);
+    }
+    // Captioned posts with buttons keep their own caption as text.
+    probabilities = {};
+    await classifier.classify({ text: "Release notes", embeddedLinks: [], inlineButtons, isForwarded: false });
+    expect(sent.at(-1).state.message.text).toBe("Release notes");
+  });
+
   test("sends message state and all spam questions to TypeSafe", async () => {
     let sentBody: unknown;
     const classifier = new JevSpamClassifier("test-key", {

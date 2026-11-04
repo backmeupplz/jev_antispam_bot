@@ -32,6 +32,7 @@ import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } 
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
+import { airdropButtons } from "./fixtures/media-buttons";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -1865,6 +1866,84 @@ test("bot policy: sender_chat resolution precedes even self/admin-looking from",
   expect(h.deletes()).toEqual([1]);
   expect(h.skipped().map(log => log.reason)).toEqual(["anonymous_group_admin", "official_linked_channel"]);
   expect(h.calls.some(call => call.method === "getChatMember")).toBe(false);
+  await h.stats.stop();
+});
+
+// #428: a picture whose only words are its own URL buttons is classified even without a sender profile.
+const airdropKeyboard = { inline_keyboard: [airdropButtons.slice(0, 3), airdropButtons.slice(3)].map(row => row.map(({ text, url }) => ({ text, url }))) };
+const photo = [{ file_id: "safe-fixture", file_unique_id: "safe-fixture", width: 1, height: 1 }];
+const buttonVerdict = async (message: CurrentModerationMessage, recent: ModerationMessage[]) =>
+  message.inlineButtons?.some(b => b.text === "BINANCE AIRDROP") ? assessment(true, recent.map(() => 0.99)) : assessment(false, recent.map(() => 0.99));
+for (const sender of ["bot", "human"] as const) {
+  test(`#428 ${sender}-sent uncaptioned photo with airdrop URL buttons is classified; DELETE removes only it`, async () => {
+    const h = harness(buttonVerdict);
+    const from = sender === "bot" ? inlineHelper : user;
+    const earlier = await h.send({ from, text: "Has anyone finished the new research tree yet?" });
+    const spam = await h.send({ from, text: undefined, photo, reply_markup: airdropKeyboard,
+      reply_to_message: { message_id: earlier, date: 1, chat: group, from: { ...user, id: 31 }, text: "Has anyone finished the new research tree yet?" } });
+    const control = await h.send({ from, text: undefined, photo,
+      reply_markup: { inline_keyboard: [[{ text: "Play", url: "https://t.me/fixture_game_bot?startapp=play" }]] } });
+    expect(h.skipped()).toEqual([]);
+    expect(h.classifications).toHaveLength(3);
+    const media = h.classifications[1]!.message;
+    expect(media).toMatchObject({ text: "", mediaOnly: true, inlineButtons: airdropButtons.map(b => ({ kind: "url", ...b })) });
+    expect(media.senderProfile).toBeUndefined();
+    expect(h.classifications[1]!.recent.map(m => m.text)).toEqual(["Has anyone finished the new research tree yet?"]);
+    expect(h.classifications[2]!.message).toMatchObject({ mediaOnly: true, inlineButtons: [{ text: "Play" }] });
+    // Only the current media goes, despite 0.99 linkage on the earlier text; the control stays.
+    expect(h.deletes()).toEqual([spam]);
+    expect(control).toBe(spam + 1);
+    const started = h.logs.filter(log => log.event === "message_analysis_started");
+    expect(started.slice(1).map(({ mediaOnly, inlineButtonCount, senderProfilePresent }) => ({ mediaOnly, inlineButtonCount, senderProfilePresent })))
+      .toEqual([{ mediaOnly: true, inlineButtonCount: 6, senderProfilePresent: false }, { mediaOnly: true, inlineButtonCount: 1, senderProfilePresent: false }]);
+    // Bots never get human profile lookups; a human's empty profile is looked up and found empty.
+    const profileCalls = h.calls.filter(({ method, payload }) => method === "getChat" && payload.chat_id === from.id);
+    expect(profileCalls.length > 0).toBe(sender === "human");
+    const logged = JSON.stringify(h.logs);
+    for (const { text, url } of airdropButtons) { expect(logged).not.toContain(text); expect(logged).not.toContain(url); }
+    expect(logged).not.toContain("fixture_game_bot");
+    await h.stats.stop();
+  });
+}
+
+test("#428 media without its own URL buttons still needs a sender profile", async () => {
+  for (const from of [inlineHelper, user]) {
+    const h = harness(buttonVerdict);
+    const source = { message_id: 99, date: 1, chat: group, from: { ...user, id: 31 }, text: "ad source", reply_markup: airdropKeyboard };
+    await h.send({ from, text: undefined, photo });
+    await h.send({ from, text: undefined, sticker });
+    // Callback buttons carry no URL; a reply source's buttons belong to the source.
+    await h.send({ from, text: undefined, photo, reply_markup: { inline_keyboard: [[{ text: "BINANCE AIRDROP", callback_data: "claim" }]] } });
+    await h.send({ from, text: undefined, photo, reply_to_message: source });
+    expect(h.skipped().map(log => log.reason)).toEqual(Array(4).fill("media_profile_unavailable"));
+    expect(h.classifications).toEqual([]);
+    expect(h.deletes()).toEqual([]);
+    await h.stats.stop();
+  }
+});
+
+test("#428 media URL buttons keep admin, anonymous-admin, linked-channel and bot_itself exemptions", async () => {
+  const media = { text: undefined, photo, reply_markup: airdropKeyboard };
+  const admin = harness(buttonVerdict); admin.setMemberStatus("administrator");
+  // Humans first: the harness lists the humans seen so far as the chat's administrators.
+  await admin.send(media);
+  await admin.send({ ...media, from: inlineHelper });
+  expect(admin.skipped().map(log => log.reason)).toEqual(["group_admin", "group_admin"]);
+  await admin.stats.stop();
+  const h = harness(buttonVerdict);
+  await h.send({ ...media, from: botInfo });
+  await h.send({ ...media, sender_chat: group, from: synthetic });
+  h.setMetadata({ ...group, linked_chat_id: channel.id });
+  await h.send({ ...media, sender_chat: channel, from: synthetic });
+  expect(h.skipped().map(log => log.reason)).toEqual(["bot_itself", "anonymous_group_admin", "official_linked_channel"]);
+  expect([...admin.classifications, ...h.classifications]).toEqual([]);
+  expect([...admin.deletes(), ...h.deletes()]).toEqual([]);
+  // An unlinked channel posting the same media is classified on its buttons, never a synthetic user profile.
+  h.setMetadata({ ...group, accent_color_id: 0, max_reaction_count: 1 });
+  const id = await h.send({ ...media, sender_chat: channel, from: synthetic });
+  expect(h.classifications.map(c => c.message.senderProfile)).toEqual([undefined]);
+  expect(h.calls.some(({ method, payload }) => method === "getChat" && payload.chat_id === synthetic.id)).toBe(false);
+  expect(h.deletes()).toEqual([id]);
   await h.stats.stop();
 });
 

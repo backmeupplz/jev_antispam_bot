@@ -190,8 +190,9 @@ export function registerBotHandlers(bot: Bot, {
           logFailure("profile_metadata_failed", error, ctx.chat.id, ctx.msgId);
         }
       }
-      // Uncaptioned media needs actual sender-owned profile metadata.
-      if (mediaOnly && !senderProfile) {
+      // Uncaptioned media needs actual sender-owned profile metadata, unless the
+      // post carries its own URL buttons (#428): those are the author's content.
+      if (mediaOnly && !senderProfile && !message.inlineButtons?.length) {
         await skip("media_profile_unavailable");
         return;
       }
