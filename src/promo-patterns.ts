@@ -6,7 +6,8 @@ import type { ModerationMessage } from "./spam";
 // #142 adds a third: an unsolicited P2P crypto trade ask (buy/sell intent + a crypto asset + a deal cue).
 // #145 adds a fourth: explicit adult-content promotion (explicit porn/XXX content + a funnel to a button, site, bot or DM).
 // #153 adds a fifth: free-copy bait (a first-person book or course review + an offer to send a copy + an interest or DM cue).
-export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo" | "book_copy_offer";
+// #470 adds a sixth, judged on the sender's profile rather than the text: see profile-funnel.ts.
+export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo" | "book_copy_offer" | "profile_channel_funnel";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
 export const PATTERN_MIN_SCORE = 0.2;

@@ -2739,3 +2739,73 @@ test("adult promo controls at 0.79 stay kept; the incident under the floor only 
   ]);
   await h.stats.stop();
 });
+
+// #470: a short comment from an account whose personal channel is a lone teaser funnel (captured 0.2612).
+import { funnelIncident, funnelProfiles, ordinaryProfiles } from "./fixtures/profile-funnel";
+import type { SenderProfile } from "./spam";
+function profileHarness() {
+  let page = "";
+  const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+  const h = harness(undefined, async target => target.includes("/s/")
+    ? { status: 200, headers: { "content-type": "text/html" }, body: page }
+    : { status: 404, headers: {}, body: "" });
+  let next = 100;
+  // A fresh sender (no cached profile) and a fresh public channel page per case.
+  const sendAs = async (text: string, profile: SenderProfile | undefined, patch: Record<string, unknown> = {}) => {
+    const from = { ...user, id: ++next };
+    const posts = profile?.personalChannel?.posts;
+    const username = "funnel_case_" + next;
+    page = (posts ?? []).map(p => '<div class="tgme_widget_message" data-post="' + username + "/" + p.url.split("/").at(-1) + '"><div class="tgme_widget_message_text">'
+      + escape(p.text) + p.embeddedLinks.map(url => '<a href="' + escape(url) + '"></a>').join("") + "</div></div>").join("");
+    h.setProfileMetadata({ id: from.id, type: "private", bio: profile?.bio, personal_chat: profile?.personalChannel ? personalChannel : undefined });
+    h.setPersonalChannelMetadata({ ...personalChannel, title: profile?.personalChannel?.title, description: profile?.personalChannel?.description, ...(posts ? { username } : {}) });
+    return h.send({ from, text, reply_to_message: { message_id: 900, date: 1, chat: group, from: synthetic, sender_chat: channel, text: "started building an ai trading bot in public" }, ...patch });
+  };
+  return { h, sendAs };
+}
+
+test("the reply-guy comment backed by a funnel channel is deleted at its captured 0.2612; telemetry carries no profile text", async () => {
+  const { h, sendAs } = profileHarness();
+  h.setAnswer(keepAt(0.2612));
+  const id = await sendAs(funnelIncident.text, funnelIncident.profile);
+  expect(h.classifications[0]?.message.senderProfile?.personalChannel?.posts?.map(p => p.text)).toEqual(funnelIncident.profile.personalChannel!.posts!.map(p => p.text));
+  expect(h.deletes()).toEqual([id]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: id, isEdited: false, pattern: "profile_channel_funnel", confidence: 0.2612, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount]))
+    .toEqual([[id, "profile_channel_funnel", 1]]);
+  const telemetry = JSON.stringify(h.logs);
+  for (const sensitive of ["top came off", "SyntheticInvite01", "Shorts stayed", "half the outfit", funnelIncident.text]) expect(telemetry).not.toContain(sensitive);
+  await h.stats.stop();
+});
+
+test("every funnel shape deletes through the handler; ordinary profiles at 0.79, forwards and the floor stay kept", async () => {
+  const { h, sendAs } = profileHarness();
+  h.setAnswer(keepAt(0.5));
+  const funnels = [];
+  for (const { text, profile } of funnelProfiles) funnels.push(await sendAs(text, profile));
+  expect(h.deletes()).toEqual(funnels);
+  const before = h.deletes().length;
+  h.setAnswer(keepAt(0.79));
+  for (const { text, profile } of ordinaryProfiles) await sendAs(text, profile);
+  await sendAs(funnelIncident.text, funnelIncident.profile, { forward_origin: forwarded });
+  h.setAnswer(keepAt(0.19));
+  const floor = await sendAs(funnelIncident.text, funnelIncident.profile);
+  expect(h.deletes().length).toBe(before);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected" && log.decision === "keep")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "profile_channel_funnel", confidence: 0.19, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+test("an unavailable channel page never deletes on profile shape", async () => {
+  const h = harness(undefined, async () => ({ status: 503, headers: {}, body: "" }));
+  h.setAnswer(keepAt(0.5));
+  h.setProfileMetadata({ id: user.id, type: "private", personal_chat: personalChannel });
+  h.setPersonalChannelMetadata({ ...personalChannel, ...funnelIncident.profile.personalChannel, posts: undefined, username: "funnel_down" });
+  await h.send({ text: funnelIncident.text });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([]);
+  await h.stats.stop();
+});

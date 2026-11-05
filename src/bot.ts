@@ -11,6 +11,7 @@ import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./tele
 import { SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
 import { PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
+import { profileChannelFunnel } from "./profile-funnel";
 import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatSnapshots, type RepeatCopy, type RepeatStore } from "./repeat-sends";
@@ -315,9 +316,11 @@ export function registerBotHandlers(bot: Bot, {
       }
       const effective = escalatedScore(probability ?? 0, copies.length);
       const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
-      // Ad shapes Laya keeps under the gate (#126, #142, #145): side-gig recruitment, first-person @…bot
-      // testimonials, P2P crypto trade asks and explicit adult-content promotion, unless the model is confident it is benign.
-      const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined : promoPattern(message);
+      // Ad shapes Laya keeps under the gate (#126, #142, #145, #153): side-gig recruitment, first-person @…bot
+      // testimonials, P2P crypto trade asks, explicit adult-content promotion and free-copy bait, plus (#470) any
+      // comment from an account whose personal channel is a lone teaser funnel, unless the model is confident it is benign.
+      const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined
+        : promoPattern(message) ?? (profileChannelFunnel(message, senderProfile) ? "profile_channel_funnel" : undefined);
       const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
       if (pattern) logger.info(JSON.stringify({
         event: "promo_pattern_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, pattern,
