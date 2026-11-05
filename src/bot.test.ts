@@ -32,6 +32,7 @@ import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } 
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
+import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
 
 const botInfo: UserFromGetMe = {
@@ -2723,6 +2724,39 @@ test("free-copy controls at 0.79 stay kept; the bait under the floor only logs",
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
     { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "book_copy_offer", confidence: 0.19, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+// #465: the trading-guru testimonial at its captured 0.7956 and a family copy in another chat at its captured 0.7611.
+test("the profit testimonial is deleted by its pattern, forwarded or not; telemetry carries no text", async () => {
+  const h = auditHarness();
+  h.setAnswer(keepAt(0.7956));
+  await h.send({ text: profitTestimonialIncident, from: forwardedUser, forward_origin: forwarded });
+  h.setAnswer(keepAt(0.7611));
+  await h.send({ chat: groupB, text: profitTestimonialFamily[0] });
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "profit_testimonial", confidence: 0.7956, decision: "pattern_delete" },
+    { event: "promo_pattern_detected", chatId: groupB.id, messageId: 2, isEdited: false, pattern: "profit_testimonial", confidence: 0.7611, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount]))
+    .toEqual([[1, "profit_testimonial", 1], [2, "profit_testimonial", 1]]);
+  expect(JSON.stringify(h.logs)).not.toContain("38,600");
+  await h.stats.stop();
+});
+
+test("profit testimonial controls at 0.79 stay kept; the incident under the floor only logs", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of profitTestimonialControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  // A member asked for a trading mentor: the reply recommending one with the author's own result answers the request.
+  await h.send({ text: profitTestimonialAnswer, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: profitTestimonialRequest } });
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: profitTestimonialIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "profit_testimonial", confidence: 0.19, decision: "keep" },
   ]);
   await h.stats.stop();
 });

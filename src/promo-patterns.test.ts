@@ -11,6 +11,8 @@ import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adul
 import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyLongReview, bookCopyParaphrases } from "./fixtures/book-copy-offer";
 import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnownMisses } from "./fixtures/book-copy-corpus";
+import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialControls, profitTestimonialFamily, profitTestimonialIncident,
+  profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -279,6 +281,43 @@ test("free-copy matching stays fast on 4,096-character adversarial input", () =>
     "i just read the pdf rules, i can send it ".repeat(100),
     // A lead-in counts only before the first read verb (#153 review 6).
     "а ".repeat(1000) + "послушал. опять: послушал ".repeat(80), "опять: послушал книгу, скину. ".repeat(136)].map((text) => text.slice(0, 4096));
+  for (const text of inputs) {
+    expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
+  }
+});
+
+const profit = "profit_testimonial";
+test("the #465 trading-guru testimonial matches standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(profitTestimonialIncident, patch))).toBe(profit);
+});
+
+test.each([...profitTestimonialFamily, ...profitTestimonialParaphrases, ...profitTestimonialReviewAds, ...profitTestimonialArrowAds])("profit testimonial variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(profit);
+});
+
+test("a profit claim with a call reaches its contact through buttons or a text link too", () => {
+  const claim = "Mrs Kate turned my $300 into $9,450 in 3 days of trading. Click the link below and thank me later";
+  expect(promoPattern(plain(claim))).toBeUndefined();
+  expect(promoPattern(plain(claim, { embeddedLinks: ["https://t.me/+KateProfits"] }))).toBe(profit);
+  expect(promoPattern(plain(claim, { inlineButtons: [{ kind: "url", text: "Join", url: "https://t.me/+KateProfits" }] }))).toBe(profit);
+});
+
+test("profit testimonial controls never match: trading talk, warnings, victims, jokes, prices and conversions", () => {
+  expect(profitTestimonialControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("a profit testimonial answering another member's trading request is a requested answer", () => {
+  expect(promoPattern(plain(profitTestimonialAnswer, memberReply(profitTestimonialRequest)))).toBeUndefined();
+  expect(promoPattern(plain(profitTestimonialAnswer, memberReply("How did you earn so much?")))).toBeUndefined();
+  expect(promoPattern(plain(profitTestimonialAnswer, memberReply("Как дела у всех?")))).toBe(profit);
+  expect(promoPattern(plain(profitTestimonialAnswer))).toBe(profit);
+});
+
+test("profit testimonial matching stays fast on 4,096-character adversarial input", () => {
+  const inputs = ["turned my $500 to ".repeat(228), "€1 ".repeat(1366), "1 000 000 ".repeat(410), "i invested $1 and ".repeat(228),
+    "made $9 from only only ".repeat(178), "my $1 " + "only ".repeat(800) + "$900", "contact him ".repeat(342), "t.me/+".repeat(683),
+    "i turned my $500 into $38,600, " + "a ".repeat(2000) + "click the link t.me/+abc", "1".repeat(4096), "1.".repeat(2048),
+    "Mr. ".repeat(1024), "i invested $500 " + "x".repeat(4000) + " got $9000", "@aaaa\n".repeat(682)].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
     expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }

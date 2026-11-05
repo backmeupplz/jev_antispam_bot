@@ -316,9 +316,10 @@ export function registerBotHandlers(bot: Bot, {
       }
       const effective = escalatedScore(probability ?? 0, copies.length);
       const repeatDelete = !modelDelete && copies.length > 0 && effective >= spamThreshold;
-      // Ad shapes Laya keeps under the gate (#126, #142, #145, #153): side-gig recruitment, first-person @…bot
-      // testimonials, P2P crypto trade asks, explicit adult-content promotion and free-copy bait, plus (#470) any
-      // comment from an account whose personal channel is a lone teaser funnel, unless the model is confident it is benign.
+      // Ad shapes Laya keeps under the gate (#126, #142, #145, #153, #465): side-gig recruitment, first-person @…bot
+      // testimonials, P2P crypto trade asks, explicit adult-content promotion, free-copy bait and investment-profit
+      // testimonials, plus (#470) any comment from an account whose personal channel is a lone teaser funnel, unless the
+      // model is confident it is benign.
       const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined
         : promoPattern(message) ?? (profileChannelFunnel(message, senderProfile) ? "profile_channel_funnel" : undefined);
       const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;

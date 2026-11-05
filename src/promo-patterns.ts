@@ -7,7 +7,15 @@ import type { ModerationMessage } from "./spam";
 // #145 adds a fourth: explicit adult-content promotion (explicit porn/XXX content + a funnel to a button, site, bot or DM).
 // #153 adds a fifth: free-copy bait (a first-person book or course review + an offer to send a copy + an interest or DM cue).
 // #470 adds a sixth, judged on the sender's profile rather than the text: see profile-funnel.ts.
-export type PromoPattern = "side_gig_offer" | "bot_testimonial" | "crypto_trade_ask" | "adult_content_promo" | "book_copy_offer" | "profile_channel_funnel";
+// #465 adds a seventh: an investment-profit testimonial (a first-person claim that a stake grew + a contact call + an invite or contact link).
+export type PromoPattern =
+  | "side_gig_offer"
+  | "bot_testimonial"
+  | "crypto_trade_ask"
+  | "adult_content_promo"
+  | "book_copy_offer"
+  | "profit_testimonial"
+  | "profile_channel_funnel";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
 export const PATTERN_MIN_SCORE = 0.2;
@@ -1065,6 +1073,224 @@ function bookCopyOffer(message: ModerationMessage, raw: string, text: string): b
   return !answersRequest(message, (source) => WORK.test(source));
 }
 
+// #465: the investment-testimonial funnel ("…sir Charles Johnson who turned my €500 to €38,600 within 48 hours … contact him
+// … Click the link below and thank me later 👇 https://t.me/+…"), kept at 0.7956. It needs a first-person claim that a stake
+// grew at least twofold, a contact or click call, and an invite, channel or contact link.
+// An amount is a number with an optional scale and currency; at least one side of a claim carries a currency.
+const NUMBER = "\\d{1,3}(?:[ .,]\\d{3}){1,3}(?:[.,]\\d{1,2})?(?!\\d)|\\d{1,9}(?:[.,]\\d{1,2})?(?!\\d)";
+const SCALE = "(?:k|к|тыс\\p{L}*\\.?|тысяч\\p{L}*|thousand|grand|m|mln|млн|million)›";
+const CURRENCY = "(?:\\p{Sc}|usdt?›|eur›|euros?›|dollars?›|bucks›|pounds?›|gbp›|naira›|руб\\p{L}*|р\\.|р›|долл\\p{L}*|бакс\\p{L}*|евро›|грн›|гривен\\p{L}*|гривн\\p{L}*|тенге›)";
+const MONEY = re(`(?<![\\p{L}\\p{N}.,])(?:(\\p{Sc})\\s?(${NUMBER})(?:\\s?(${SCALE}))?|(${NUMBER})(?:\\s?(${SCALE}))?(?:\\s?(${CURRENCY}))?)`, "giu");
+type Amount = { start: number; end: number; value: number; money: boolean; currency?: string };
+// A conversion is no gain ("поменял 100 usdt в 9500₽"): the result names a currency, and the stake names the same one or none.
+// Marks are folded text ("рублей" reads "pyблeй"), so the patterns are folded too.
+const CURRENCIES: [RegExp, string][] = [[re("^(?:\\$|usdt?|dollar|buck|долл|бакс)"), "usd"], [re("^(?:€|eur|евро)"), "eur"], [re("^(?:₽|руб|р\\.?$)"), "rub"],
+  [re("^(?:£|pound|gbp)"), "gbp"], [re("^(?:₴|грн|гривн|гривен)"), "uah"], [re("^₹"), "inr"], [re("^(?:₦|naira)"), "ngn"], [re("^(?:₸|тенге)"), "kzt"]];
+const currencyOf = (mark: string) => CURRENCIES.find(([pattern]) => pattern.test(mark))?.[1] ?? mark;
+// "38,600", "38.600", "38 600" and "1,250.50" group thousands; a separator before one or two final digits is a decimal point.
+function amountValue(number: string): number {
+  const digits = number.replace(/ /g, "");
+  const fraction = /[.,](\d{1,2})$/u.exec(digits);
+  return Number((fraction ? digits.slice(0, fraction.index) : digits).replace(/[.,]/gu, "")) + (fraction ? Number(`0.${fraction[1]}`) : 0);
+}
+function amounts(sentence: string): Amount[] {
+  return [...sentence.matchAll(MONEY)].map((match) => {
+    const scale = match[3] ?? match[5];
+    // Text and patterns are folded, so "млн" reads "mлh" and "тыс" reads "tыc".
+    const value = amountValue((match[2] ?? match[4])!) * (!scale ? 1 : scale.startsWith("m") ? 1e6 : 1e3);
+    const mark = match[1] ?? match[6];
+    return { start: match.index, end: match.index + match[0].length, value, money: Boolean(mark), currency: mark && currencyOf(mark) };
+  });
+}
+// The claim's verbs, right before the first amount (within four words) or between the two.
+const NEAR = "(?:\\s[\\p{L}'’]+){0,4}\\s?$";
+const GROWN = re(`‹(?:turn(?:ed|s|ing)?|grew|grow(?:n|s|ing)?|flip(?:ped|s|ping)?|multipl\\p{L}*|increas\\p{L}*|boost\\p{L}*|превратил\\p{L}*|превращ\\p{L}*|увеличил\\p{L}*|приумножил\\p{L}*|поднял\\p{L}*|разогнал\\p{L}*)›${NEAR}`);
+// A bare range tells no gain by itself: "Маникюр с 1500₽ до 3000₽", "My premium went from $800 to $1,900". It counts only for
+// the author's own stake ("took my $500 to…"), an earning verb in its clause, the author or their account as its subject with a
+// trading word or a titled guru in its clause ("I went from $500 to $12,000 trading with Mrs Anna"), or as the opener
+// ("From $200 to $7,800 in 5 days!!!").
+const RANGED = re(`‹(?:took|taken|went|gone|from|из|с|со)›${NEAR}`);
+const EARNS = re("‹(?:earn(?:ed|ing|s)?|made|making|profit\\p{L}*|заработал\\p{L}*|заработа[лв]|зарабатыва\\p{L}*)›");
+// The author or the author's account as the subject of the range: "I went from $500 to…", "Мой счёт вырос с 1000$ до…".
+const RANGED_SUBJECT = re("‹(?:i|we|i['’]ve|we['’]ve|i have|we have|я|мы|(?:my|our|мой|наш)\\s(?:account|balance|deposit|portfolio|сч[её]т|депозит|баланс|портфель))\\s(?:went|gone|вырос)\\s(?:from|с|со)\\s?$");
+// A titled guru in the range's clause ("…with sir David"); "благодаря новому тарифу" or "as a coach" credits no one.
+const HONORIFIC = re("‹(?:sir|mr|mrs|ms|miss|madam|сэр|мистер|миссис)›");
+const GROWN_GAP = re("^\\s?(?:[\\p{L}'’]+\\s){0,3}?(?:to|into|in to|до|в)\\s?$");
+// "My $250 became $6,800", "мои 500$ превратились в 38 600$".
+const OWNED = re("‹(?:my|our|мои|мой|моих|мою|моя|наши|свои|своих)(?:\\s[\\p{L}'’]+){0,2}\\s?$");
+// The author's own money right before the amount: "took my $500 to…", "с моих 500$ до…" ("My premium went from…" is no stake).
+const OWN_STAKE = re("‹(?:my|our|мои|моих|свои|своих|наши|наших)(?:\\s(?:only|just|initial|small|little|first|всего|лишь|только|первые|первых))?\\s?$");
+const BECAME_GAP = re("^\\s?(?:[\\p{L}'’]+\\s){0,2}?(?:became|become|turned into|grew (?:to|into)|grown (?:to|into)|is now|are now|now|превратил\\p{L}* в|стал[аио]?|выросл?\\p{L}* до|увеличил\\p{L}* до)\\s?$");
+const STAKED = re(`‹(?:invest(?:ed|ing)?|deposit(?:ed|ing)?|put in|put|started with|start with|staked|funded|вложил\\p{L}*|вложив|инвестировал\\p{L}*|внес\\p{L}*|внёс\\p{L}*|закинул\\p{L}*|пополнил\\p{L}*|начал\\p{L}* с|начинал\\p{L}* с)›${NEAR}`);
+const PAID_GAP = re("^.{0,80}?‹(?:got|get|gotten|received|receive|earned|earn|made|make|withdrew|withdraw|withdrawn|cashed out|profit(?:ed)?(?: of)?|returns? of|paid (?:me )?out|have|has|получил\\p{L}*|получаю|заработал\\p{L}*|вывел\\p{L}*|вывожу|снял\\p{L}*|забрал\\p{L}*|пришл\\p{L}*|стало|имею|у меня)›(?:\\s[\\p{L}'’]+){0,3}?\\s?$");
+const EARNED = re(`‹(?:earned|made|received|got|withdrew|cashed out|profit(?:ed)?(?: of)?|заработал\\p{L}*|получил\\p{L}*|вывел\\p{L}*|поднял\\p{L}*|сделал\\p{L}*)›${NEAR}`);
+const FROM_GAP = re("^\\s?(?:[\\p{L}'’]+\\s){0,3}?(?:from|with|off|out of|on|by investing|after investing|investing|depositing|с|со|из|вложив|имея|при вложении(?: в)?)(?:\\s(?:only|just|a|an|my|мои|моих|всего|лишь|только|initial|small|little|tiny))*\\s?$");
+const CLAIM_GUARD = re("‹(?:if|wish|hope|hoping|want(?:ed|s)? to|trying to|try to|promis\\p{L}*|claim\\p{L}*|says?|said|supposed\\p{L}*|allegedly|pretend\\p{L}*|если|бы|хоч\\p{L}*|хотел\\p{L}*|обеща\\p{L}*|якобы|говорил\\p{L}*|говорит|сказал\\p{L}*)›");
+// "не" folds to "he", so the Russian negations count only in a sentence with Cyrillic: "he turned my $500…" is no "не".
+const NEGATED_EN = re("‹(?:not|never|didn['’]?t|did not|can['’]?t|cannot|won['’]?t|don['’]?t|do not)\\s(?:[\\p{L}'’]+\\s)?$");
+const NEGATED_RU = re("‹(?:not|never|не|ни|никогда)\\s(?:[\\p{L}'’]+\\s)?$");
+const negated = (head: string, sentence: string) => (CYRILLIC.test(sentence) ? NEGATED_RU : NEGATED_EN).test(head);
+const FIRST_EN = re("‹(?:i|i['’](?:m|ve|d)|im|me|my|mine|myself|we|we['’](?:ve|re)|our|us)›");
+const FIRST_RU = re("‹(?:я|мне|меня|мной|мой|моя|мои|моих|моим|мою|моего|мы|нам|нас|наш\\p{L}*|сама?)›");
+// "Вложила 500$, через 2 дня вывела 15 000$": a sentence opening with the author's own past verb.
+const FIRST_RU_VERB = re("^\\s?(?:(?:недавно|вчера|сегодня|когда-то|однажды|просто|лично)\\s)*(?:вложил|инвестировал|внес|внёс|закинул|пополнил|начал|начинал|заработал|получил|вывел|поднял|превратил|увеличил|приумножил)\\p{L}*›");
+const PRICE = "(?:rent|bills?|prices?|costs?|fees?|tax(?:es)?|salary|wages?|tuition|mortgage|fundrais\\p{L}*|donations?|аренд\\p{L}*|квартплат\\p{L}*|коммуналк\\p{L}*|цен[аыуе]›|стоимост\\p{L}*|зарплат\\p{L}*|налог\\p{L}*|тариф\\p{L}*|сбор›)";
+const PRICED = re(`‹(?:${PRICE}|pay›|paying|плач\\p{L}*|плати\\p{L}*)`);
+// A price named right after the result ("from $1,000 to $2,000 in rent", "с 30 000₽ до 60 000₽ аренду"), not "…with zero fees".
+const PRICED_AFTER = re(`^\\s?(?:(?:a|per|в|за) (?:month|year|week|месяц|год|неделю)\\s)?(?:(?:in|on|for|за|на)\\s(?:[\\p{L}'’]+\\s)?)?‹${PRICE}`);
+// "From $200 to $7,800 in 5 days!!! I'm so grateful…" opens with the claim.
+const OPENS_FROM = re("^\\s?(?:from|с|со|из)\\s?$");
+const CYRILLIC = /\p{Script=Cyrillic}/u;
+const firstPerson = (sentence: string) => (CYRILLIC.test(sentence) ? FIRST_RU : FIRST_EN).test(sentence) || FIRST_RU_VERB.test(sentence);
+// Sentences end at ! ? and line breaks, and at a period that is no decimal point ("€38.600") or abbreviation ("Mr. Smith").
+const claimSentences = (text: string) => text.split(/(?<=[!?\n]|(?<!(?:^|[^\p{L}])(?:mr|mrs|ms|dr|sr|st))\.(?!\d))(?![.!?\n])/u);
+// The claim is the author's: a first-person word in its own clause, or a sentence that opens with it and a first-person word in the
+// next ("From $200 to $7,800 in 5 days!!! I'm so grateful…").
+function claimsProfit(sentence: string, next = ""): boolean {
+  if (isQuestion(sentence) || !firstPerson(sentence) && !firstPerson(next)) return false;
+  const found = amounts(sentence);
+  // The result is the next amount, or the next one with a currency: "Вложила 10 000 ₽, через 2 дня вывела 150 000 ₽".
+  return found.some((a, i) => [found[i + 1], found.slice(i + 1).find((next) => next.money)].some((b) => {
+    // The result is money ("got 5,000 kWh", "100 usdt в 9500" are no gain), in the stake's currency if it names one.
+    // A hypothetical or someone's claim guards the claim's own clause, up to its result: "…$38,600 in 48 hours, if you want the
+    // same contact him" still claims it.
+    if (!b || !b.money || a.currency && a.currency !== b.currency || CLAIM_GUARD.test(sentence.slice(0, b.end))) return false;
+    const before = sentence.slice(Math.max(0, a.start - 60), a.start);
+    const gap = sentence.slice(a.end, b.start);
+    // The claim's own clause: "Bitcoin went from $16k to $100k, I'm holding" or "I saw a post: sir X turned his $500…" is
+    // no claim of the author's, and a price is no stake ("My rent went from $1,000 to $2,000").
+    const lead = sentence.slice(Math.max(0, a.start - 120), a.start);
+    const tail = sentence.slice(b.end, b.end + 120);
+    const stake = () => lead.slice(Math.max(...[",", ":", ";"].map((mark) => lead.lastIndexOf(mark))) + 1) + gap;
+    const clause = () => stake() + tail.split(/[,:;]/u)[0];
+    const mine = () => firstPerson(clause()) || OPENS_FROM.test(sentence.slice(0, a.start));
+    const cue = (lead: RegExp) => {
+      const match = lead.exec(before);
+      const head = match && sentence.slice(0, a.start - before.length + match.index);
+      return head !== null && !negated(head, sentence);
+    };
+    const ranged = () => cue(RANGED) && (OWN_STAKE.test(before) || EARNS.test(clause()) || OPENS_FROM.test(sentence.slice(0, a.start))
+      || RANGED_SUBJECT.test(before) && (TRADING.test(clause()) || HONORIFIC.test(clause())));
+    const grew = b.value >= 2 * a.value && a.value > 0
+      && ((cue(GROWN) || ranged()) && GROWN_GAP.test(gap) || OWNED.test(before) && BECAME_GAP.test(gap) || cue(STAKED) && PAID_GAP.test(gap));
+    // A price on the stake's side is no stake; an ad's "…with zero fees" after the result is still an ad.
+    return (grew || a.value >= 2 * b.value && b.value > 0 && cue(EARNED) && FROM_GAP.test(gap)) && mine() && !PRICED.test(stake()) && !PRICED_AFTER.test(tail);
+  }));
+}
+const CONTACT_CALL = any(
+  "‹(?:contact|reach out to|reach|message|text|write to|dm|pm|inbox|call|chat with|talk to|get in touch with|connect with|whatsapp) (?:him|her|them|sir|mr|mrs|ms|miss|madam|ma['’]?am|the (?:expert|admin|manager|mentor|coach|trader|broker|team|account manager))›",
+  "‹thank me later›",
+  // An endorsement aimed at the contact: "would recommend @Mentor_…", "all thanks to @…".
+  "‹(?:recommend\\p{L}*|thanks to|grateful to)\\s(?:[\\p{L}'’.-]+\\s){0,3}?(?=@[a-z]|t\\.me/|wa\\.me/|telegram\\.me/)",
+  "‹(?:свяжитесь|связывайтесь|свяжись|обращайтесь|обратитесь|обратись|пишите|напишите|пиши|напиши) (?:с ним|с ней|ему|ей|к нему|к ней)›",
+  "‹(?:потом|позже) (?:скажете|скажешь) (?:мне )?спасибо|‹спасибо (?:мне )?(?:скажете|скажешь) (?:потом|позже)");
+const CONTACT_CALL_ALL = new RegExp(CONTACT_CALL.source, "giu");
+// A call to click, tap, follow or join only points, like an arrow: "Join my channel t.me/my_notes", "link in bio @my_notes" share the
+// author's own channel; "Click the link below … t.me/+…" points at a private invite.
+const POINTER_CALL = any(
+  "‹click (?:on )?(?:the |this |my )?(?:link|below|here|button)", "‹(?:tap|follow|use|open|visit) (?:on )?(?:the|this|my) link›", "‹links? (?:below|here|in (?:my |the )?bio)›",
+  "‹join (?:the|his|her|their|my|this|our) (?:channel|group|community|team)›", "‹join (?:now|today|here|us)›",
+  "‹(?:переходите|переходи|перейдите|перейди|жмите|жми|нажмите|нажми|кликайте) (?:по |на )?(?:ссылк|кнопк)", "‹ссылк\\p{L}* (?:ниже|внизу|в профиле|в био)");
+const ARROW = new RegExp(ARROWS.source, "u");
+// A public link the author labels as their own right before it, at most three filler words between ("My channel 👇 @…", "My notes
+// are here: t.me/…", "Мой канал тут 👇", "Join my channel t.me/…",
+// "link in my bio @…", "Мой канал 👇") shares, even after thanking a public figure: "Thanks Mr Buffett 😄 My notes 👇 t.me/my_brk_notes".
+// Only "my": "our group" is the chat the ad is posted in, and a label elsewhere in the text ("he commented on my page") labels no
+// link, nor does "my page" inside the credit ("Sir Daniel turned my page around 👇"). A private invite stays a funnel whatever its
+// label.
+const OWN_LINK = re(`‹(?:my|мой|мои|моя)\\s(?:own\\s|personal\\s|личн\\p{L}*\\s)?(?:channel|notes|blog|journal|diary|newsletter|substack|page|bio|telegram|канал|блог|заметки|дневник|страниц\\p{L}*|телеграм\\p{L}*)›(?:[^\\p{L}\\p{N}@\\n]{1,6}(?:is|are|here|below|link|links|free|on|in|telegram|тут|здесь|ниже|вот|ссылка|бесплатно|в|телеграм\\p{L}*)›){0,3}[^\\p{L}\\p{N}@]{0,12}(?:https?://)?(?:${"(?:t\\.me|telegram\\.(?:me|dog))/"}|@[a-z])`);
+// An arrow is a call only toward a private invite or a third party the message credits ("sir X… 👇", "thanks to Mr…"); "Good book on
+// it 👇 t.me/…" or "My channel 👇 @…" shares content.
+// The credited third party is a named person: a title before a name ("sir Daniel", "Mrs Kate", "Мистер Джон", "all thanks to miss
+// zala horvat" as the prod copies write it) or a role word right before a capitalised name in the same sentence ("mentor Anna",
+// "Expert Sarah", "EXPERT SARAH", "с ментором Анной", "Спасибо ментору Ольге"). A bare role or thanks word credits no one: "As a
+// trader I turned…", "I'm a swing trader. Patience…", "I'm no expert", "via my broker in 2015", "Thanks to compound interest",
+// "Спасибо, что читаете". Noun cases only ("с ментором Анной"), not adjectives such as "экспертный совет"; bare pronouns ("его",
+// "she") are in most messages. Both are look-aheads, so "my mentor mr ben" still reaches "mr ben".
+const TITLE_CREDIT = re("‹(sir|mr|mrs|ms|miss|madam|(?:сэр|мистер)(?:[аеуы]|ом)?|миссис)›(?=\\.? (\\p{L}+))", "giu");
+const ROLE_CREDIT = re("‹(mentors?|experts?|coach|trader|account manager|(?:ментор|эксперт|трейдер)(?:[аеуы]|ом|ов|ам|ами|ах)?)(?= (\\p{L}+))", "giu");
+// A capitalised word after a role names a tool or a product, not a person: "Expert Advisor", "Mr Market". A broker is a firm ("my
+// broker Revolut"), so it credits no one without a title.
+const NOT_NAME = re("^(?:advisors?|advice|level|mode|tips?|signals?|team|group|channel|course|program|bot|trading|trader|investor|account|market)$");
+// A function word is no name, even capitalised elsewhere: "I miss my old portfolio… My notes 👇", "yes sir I turned…".
+const FUNCTION_WORD = re("^(?:i|me|my|you|your|he|him|his|she|her|it|its|we|us|our|they|them|their|the|a|an|this|that|these|those|and|or|but|so|if|to|of|in|on|at|for|with|from|by|out|up|is|was|are|were|be|been|do|did|have|has|had|not|no|yes|what|how|who|why|when|then|just|all|any|some|i['’]m|я|мне|меня|мой|мои|ты|вы|он|она|они|мы|и|а|но|не|да|нет|что|как|это|в|на|с|за|по)$");
+const NO_CREDIT_EN = re("‹(?:no|not|never|without|any)\\s(?:[\\p{L}'’]+\\s)?$");
+const NO_CREDIT_RU = re("‹(?:no|not|never|without|без|ни|не|никаких|никакого|никакой)\\s(?:[\\p{L}'’]+\\s)?$");
+// "miss" is a verb unless it follows words that take a person ("all thanks to miss zala", "with miss…") or is written "Miss" mid-sentence
+// or before a capitalised name: "I miss Bitcoin at $3k", "…and miss nothing" and "Miss buying BTC…" credit no one. "sir" and "madam"
+// after "yes", "no" or "ok" address the reader ("Yes, sir…"); "Thank you sir Daniel" credits him.
+const MISS_LEAD = re("‹(?:(?:thanks|thank|grateful) to|with|by|from|via|met|meet|contact|thank|thanks)\\s$");
+const MISS = re("^miss$");
+const VOCATIVE = re("^(?:sir|madam)$");
+// A capital "Miss" opening a sentence is the verb ("Miss buying BTC at $3k"), unless a capitalised name follows ("Miss Vera turned…").
+const capitalMiss = (raw: string) => new Set([...raw.matchAll(/(?<![\p{L}\p{N}])(?:Miss|MISS)[ \t\u00a0\u202f]+(\p{L}+)/gu)]
+  .filter(({ index, 1: name }) => /^\p{Lu}/u.test(name!) || !/(?:^|[.!?\n])\s*$/u.test(raw.slice(0, index)))
+  .map(([, name]) => promoText(name!)));
+const VOCATIVE_LEAD = re("‹(?:yes|yeah|no|ok|okay|da|да|нет)[,!]?\\s$");
+// Adjacent word pairs of the raw text, folded, whose second word is capitalised ("mentor Anna") or both are in capitals ("EXPERT
+// SARAH"): case is gone from the folded text the patterns read. A look-ahead keeps every overlapping pair.
+function namedPairs(raw: string): Set<string> {
+  const pairs = new Set<string>();
+  for (const [, first, second] of raw.matchAll(/(?<![\p{L}\p{N}_@/])(?=(\p{L}+)[ \t\u00a0\u202f]+(\p{Lu}\p{Ll}+|\p{Lu}{2,})(?![\p{L}\p{N}]))/gu)) {
+    if (/^\p{Lu}+$/u.test(second!) && first !== first!.toUpperCase()) continue;
+    pairs.add(`${promoText(first!)} ${promoText(second!)}`);
+  }
+  return pairs;
+}
+function thirdParty(text: string, raw: string): boolean {
+  const pairs = namedPairs(raw);
+  const lead = CYRILLIC.test(text) ? NO_CREDIT_RU : NO_CREDIT_EN;
+  const credited = (match: RegExpMatchArray, ok: (before: string) => boolean) => {
+    const before = text.slice(Math.max(0, match.index! - 40), match.index);
+    return !NOT_NAME.test(match[2]!) && !FUNCTION_WORD.test(match[2]!) && !lead.test(before) && ok(before);
+  };
+  return [...text.matchAll(TITLE_CREDIT)].some((match) => credited(match, (before) => {
+    if (MISS.test(match[1]!)) return MISS_LEAD.test(before) || capitalMiss(raw).has(match[2]!);
+    return !VOCATIVE.test(match[1]!) || !VOCATIVE_LEAD.test(before);
+  })) || [...text.matchAll(ROLE_CREDIT)].some((match) => credited(match, () => pairs.has(`${match[1]!.split(" ").at(-1)} ${match[2]}`)));
+}
+// A private invite or a direct contact is a funnel nobody uses to share a post or their own public channel.
+const PRIVATE_INVITE = re("(?:t\\.me|telegram\\.(?:me|dog))/(?:\\+|joinchat/)|wa\\.me/|chat\\.whatsapp\\.com/");
+// A channel post's permalink ("t.me/finance_books/12", "t.me/c/123/45") shares a post like a web link: no funnel.
+const TG_CHAT = "(?:t\\.me|telegram\\.(?:me|dog))/(?![a-z0-9_]+/\\d)";
+// An invite, channel or contact link: t.me or WhatsApp, a handle (not an e-mail), a phone number, or URL buttons.
+const CONTACT_LINK = re(`${TG_CHAT}|(?:wa\\.me|chat\\.whatsapp\\.com)/|(?<![\\p{L}\\p{N}._])@[a-z][a-z0-9_]{3,}›|(?<![\\p{L}\\p{N}])\\+\\d(?:[ -]?\\d){9,13}(?![\\p{L}\\p{N}])`);
+// A contact on the message's last line, alone or after a label: "…all thanks to miss X.\n@message_Admin_…".
+const CLOSING_LINK = re(`(?:^|\\n)\\s?(?:(?:contact|whatsapp|telegram|tg|контакт\\p{L}*|телеграм|тг|ватсап)\\s?:?\\s?)?(?:https?://)?(?:(?:${TG_CHAT}|wa\\.me/|chat\\.whatsapp\\.com/)\\S+|@[a-z][a-z0-9_]{3,}|\\+\\d(?:[ -]?\\d){9,13})\\s?$`);
+// A contact verb or label right before the link or handle calls on its own: "Contact @…", "Пишите в телеграм @…", "Связь: @…",
+// "Join t.me/…", "My contact: @…"; "here" or "Details:" before it only points, and so does the author's own Telegram or WhatsApp
+// ("My Telegram 👇 @…").
+const NAMED_CALL = re(`‹(?:contact|write(?: to)?|message|text|(?<!‹(?:my|мой|мои)\\s)(?:whatsapp|telegram)|join|пиши(?:те)?|напиши(?:те)?|связь|контакт\\p{L}*|обращайтесь|жми(?:те)?|переходи(?:те)?|(?:свяжитесь|свяжись|связывайтесь|обратитесь|обращайтесь) (?:с|со|к) \\p{L}+(?: \\p{L}+)?)(?:\\s(?:в|on|in|via)\\s(?:telegram|whatsapp|телеграм\\p{L}*|тг|ватсап\\p{L}*))?\\s?:?\\s?(?:https?://)?(?:@[a-z]|${TG_CHAT}|wa\\.me/)`);
+const LINKED_URL = re(`${TG_CHAT}|(?:wa\\.me|whatsapp\\.com)/`);
+// Gain and trading words inside a handle or link ("@trade_mike", "t.me/invest_ru") tell nothing.
+const HANDLES = /@[\p{L}\p{N}_]+|(?<![\p{L}\p{N}.\/-])(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+[a-z]{2,}\/\S*/giu;
+// A victim's story or a warning: "…promised to turn my $500 into $38,000, I lost everything", "это обман".
+// Talk about such posts, or a joke about them: "lol who falls for these posts", "такие сообщения уже достали".
+const ABOUT_ADS = any("‹(?:falls? for|who believes|ads? like|posts? like|messages? like|such (?:posts|ads|messages)|these (?:ads|posts|messages)|this (?:ad|post)›|lol›|lmao|a?(?:ha|ха){2,}h?›|лол›|такие (?:посты|сообщения|объявления)|подобн\\p{L}* (?:посты|сообщения|объявления)|эти (?:посты|сообщения|объявления))");
+const VICTIM = any("‹(?:fraud\\p{L}*|ponzi|pyramid|warning|warn(?:ed|s)?›|avoid|lost (?:my|all|everything|it|money|\\p{Sc}|\\d)|stole|stolen|stealing|thie(?:f|ves)|police|обман\\p{L}*|лохотрон\\p{L}*|пирамид\\p{L}*|потерял\\p{L}*|украл\\p{L}*|полици\\p{L}*)");
+// Gains, not prices: "My rent went from $1,000 to $2,000, contact the landlord @…" tells no profit.
+const GAIN = any("‹(?:earn\\p{L}*|profit\\p{L}*|multipl\\p{L}*|приумнож\\p{L}*|торговл\\p{L}*|income|returns?›|withdr\\p{L}*|pay(?:s|out)›|paid out|my account|massive\\p{L}*|заработ\\p{L}*|доход\\p{L}*|прибыл\\p{L}*|вывел\\p{L}*|вывела|вывод\\p{L}*)",
+  // Money paid out to a card, not "оплата/перевод на карту" in a classified ad.
+  "‹(?:пришл\\p{L}*|пришел|зачисл\\p{L}*|упал\\p{L}*|капнул\\p{L}*)(?:\\s[\\p{L}\\p{N}\\p{Sc}.,]+){0,4}?\\sна (?:сч[её]т|карт\\p{L}*)");
+const TRADING = any("‹(?:trad(?:e|er|ers|ing)›|invest\\p{L}*|влож\\p{L}*|crypto\\p{L}*|bitcoin|btc›|forex|signals?›|broker\\p{L}*|mentor\\p{L}*|account manager|portfolio|profit\\p{L}*|трейд\\p{L}*|инвест\\p{L}*|крипт\\p{L}*|биткоин\\p{L}*|форекс|сигнал\\p{L}*|брокер\\p{L}*|ментор\\p{L}*|прибыл\\p{L}*|доход\\p{L}*|заработ\\p{L}*)");
+function profitTestimonial(message: ModerationMessage, raw: string, text: string): boolean {
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || VICTIM.test(text.replace(DENIAL, " ")) || ABOUT_ADS.test(text) || /😂|🤣|😹/u.test(raw)) return false;
+  const told = claimSentences(text).filter((part) => !isQuestion(part));
+  const words = text.replace(HANDLES, " ");
+  if (!GAIN.test(words) && !TRADING.test(words) || !told.some((part, i) => claimsProfit(part, told[i + 1]))) return false;
+  const linked = CONTACT_LINK.test(text) || (message.inlineButtons?.length ?? 0) > 0 || message.embeddedLinks.some((url) => LINKED_URL.test(url));
+  if (!linked) return false;
+  // A link or handle pointed at ("Details: t.me/…", "here @…", a closing @handle, 👇, "Join my channel", "Click the link") is a call
+  // only toward a private invite or a third party the message credits: "Wrote about it here t.me/my_notes" or tagging a friend shares
+  // or addresses, and so does a public link labelled as the author's own.
+  // "DM me" and "пиши в лс" call on their own, so they are also read with links and handles stripped.
+  const pointed = callsToDm(told.join("")) || CLOSING_LINK.test(text) || ARROW.test(raw) || POINTER_CALL.test(told.join(""));
+  const funnel = PRIVATE_INVITE.test(text) || !OWN_LINK.test(text) && thirdParty(words, raw);
+  const calls = told.some((part) => [...part.matchAll(CONTACT_CALL_ALL)].some((match) => !negated(part.slice(0, match.index), part)))
+    || callsToDm(told.join("").replace(HANDLES, " ")) || NAMED_CALL.test(told.join("")) || pointed && funnel;
+  return calls && !answersRequest(message, (source) => TRADING.test(source) || GAIN.test(source));
+}
+
 // What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
 // OnlyFans, is it worth it?". Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
 function toldPart(text: string): string {
@@ -1099,6 +1325,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (cryptoTradeAsk(message, text)) return "crypto_trade_ask";
   if (adultPromo(message, raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
+  if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;
