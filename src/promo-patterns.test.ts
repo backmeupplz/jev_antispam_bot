@@ -11,7 +11,9 @@ import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adul
 import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyLongReview, bookCopyParaphrases } from "./fixtures/book-copy-offer";
 import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnownMisses } from "./fixtures/book-copy-corpus";
-import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialControls, profitTestimonialFamily, profitTestimonialIncident,
+import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialControls, profitTestimonialEnglishGuardAds, profitTestimonialFamily,
+  profitTestimonialFrDeControls, profitTestimonialFrDeIncidents, profitTestimonialFrDeParaphrases, profitTestimonialFrDePointerAds,
+  profitTestimonialFrDePointerControls, profitTestimonialFrDeReviewAds, profitTestimonialFrDeReviewControls, profitTestimonialIncident,
   profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
@@ -306,10 +308,33 @@ test("profit testimonial controls never match: trading talk, warnings, victims, 
   expect(profitTestimonialControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
 });
 
+test.each([...profitTestimonialFrDeIncidents, ...profitTestimonialFrDeParaphrases, ...profitTestimonialFrDeReviewAds, ...profitTestimonialFrDePointerAds])(
+  "#468 French or German profit testimonial matches: %s", (text) => {
+    for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(text, patch))).toBe(profit);
+  });
+
+test("#468 French and German controls never match: trading talk, warnings, victims, negations, questions, prices and conversions", () => {
+  expect(profitTestimonialFrDeControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#468 French and German pointers toward the author's own channel, a friend or a public link never match", () => {
+  expect(profitTestimonialFrDePointerControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#468 English claims stay with the English lexicon, and its review controls never match", () => {
+  expect(profitTestimonialEnglishGuardAds.filter((text) => promoPattern(plain(text)) !== profit)).toEqual([]);
+  expect(profitTestimonialFrDeReviewControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
 test("a profit testimonial answering another member's trading request is a requested answer", () => {
   expect(promoPattern(plain(profitTestimonialAnswer, memberReply(profitTestimonialRequest)))).toBeUndefined();
   expect(promoPattern(plain(profitTestimonialAnswer, memberReply("How did you earn so much?")))).toBeUndefined();
   expect(promoPattern(plain(profitTestimonialAnswer, memberReply("Как дела у всех?")))).toBe(profit);
+  // #468: French and German topic words count only in a French or German request ("retired", "placement" and "Handel" are English too).
+  for (const request of ["Anyone here retired early?", "How do you plan for retirement?", "Anyone know a good job placement agency?", "Who likes Handel?"]) {
+    expect(promoPattern(plain(profitTestimonialAnswer, memberReply(request)))).toBe(profit);
+  }
+  expect(promoPattern(plain(profitTestimonialAnswer, memberReply("Vous connaissez un bon courtier pour les placements ?")))).toBeUndefined();
   expect(promoPattern(plain(profitTestimonialAnswer))).toBe(profit);
 });
 
@@ -317,7 +342,15 @@ test("profit testimonial matching stays fast on 4,096-character adversarial inpu
   const inputs = ["turned my $500 to ".repeat(228), "€1 ".repeat(1366), "1 000 000 ".repeat(410), "i invested $1 and ".repeat(228),
     "made $9 from only only ".repeat(178), "my $1 " + "only ".repeat(800) + "$900", "contact him ".repeat(342), "t.me/+".repeat(683),
     "i turned my $500 into $38,600, " + "a ".repeat(2000) + "click the link t.me/+abc", "1".repeat(4096), "1.".repeat(2048),
-    "Mr. ".repeat(1024), "i invested $500 " + "x".repeat(4000) + " got $9000", "@aaaa\n".repeat(682)].map((text) => text.slice(0, 4096));
+    "Mr. ".repeat(1024), "i invested $500 " + "x".repeat(4000) + " got $9000", "@aaaa\n".repeat(682),
+    // #468: French and German.
+    "ich nicht nicht 9.000 € mit 1 € ".repeat(128), "j'ai transformé 500 € en ".repeat(164), "Ich habe 500 € investiert und ".repeat(136),
+    "aus 1 € wurden in 5 Tagen ".repeat(157), "M. ".repeat(1365), "mein Investment in einen Gewinn von 1 € ".repeat(102),
+    "Après avoir investi la somme de 1000 €, j'ai réalisé un bénéfice de " + "très ".repeat(780) + "10 500 € t.me/+abc",
+    "Grâce à M. " + "Dupont ".repeat(580) + "t.me/x", "Mes notes ici " + ": ".repeat(2000) + "t.me/x",
+    // #468 review 5: a line of told calls, each read with its own negations and clause.
+    "Ich habe 500 € investiert und 9.000 € erzielt, " + "er und schreibt mir, ".repeat(190) + "@abcd_x",
+    "J'ai investi 500 € et j'ai obtenu 9 000 € en trading. " + "j'ai contacté M. ".repeat(230)].map((text) => text.slice(0, 4096));
   for (const text of inputs) {
     expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }

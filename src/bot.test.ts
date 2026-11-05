@@ -32,7 +32,8 @@ import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } 
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
-import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
+import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
+  profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
 
 const botInfo: UserFromGetMe = {
@@ -2757,6 +2758,22 @@ test("profit testimonial controls at 0.79 stay kept; the incident under the floo
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
     { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "profit_testimonial", confidence: 0.19, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+// #468: the French and German copies at their captured 0.705 and 0.696; their controls stay kept at 0.79.
+test("French and German profit testimonials are deleted by the pattern; their controls stay kept", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.705));
+  await h.send({ text: profitTestimonialFrDeIncidents[0] });
+  h.setAnswer(keepAt(0.696));
+  await h.send({ chat: groupB, text: profitTestimonialFrDeIncidents[2] });
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of profitTestimonialFrDeControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  expect(h.deletes().length).toBe(2);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.chatId, log.pattern, log.confidence, log.decision])).toEqual([
+    [group.id, "profit_testimonial", 0.705, "pattern_delete"], [groupB.id, "profit_testimonial", 0.696, "pattern_delete"],
   ]);
   await h.stats.stop();
 });

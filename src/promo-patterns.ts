@@ -8,6 +8,7 @@ import type { ModerationMessage } from "./spam";
 // #153 adds a fifth: free-copy bait (a first-person book or course review + an offer to send a copy + an interest or DM cue).
 // #470 adds a sixth, judged on the sender's profile rather than the text: see profile-funnel.ts.
 // #465 adds a seventh: an investment-profit testimonial (a first-person claim that a stake grew + a contact call + an invite or contact link).
+// #468 reads its claims and calls in French and German too.
 export type PromoPattern =
   | "side_gig_offer"
   | "bot_testimonial"
@@ -1135,26 +1136,181 @@ const FIRST_RU = re("‹(?:я|мне|меня|мной|мой|моя|мои|мо
 // "Вложила 500$, через 2 дня вывела 15 000$": a sentence opening with the author's own past verb.
 const FIRST_RU_VERB = re("^\\s?(?:(?:недавно|вчера|сегодня|когда-то|однажды|просто|лично)\\s)*(?:вложил|инвестировал|внес|внёс|закинул|пополнил|начал|начинал|заработал|получил|вывел|поднял|превратил|увеличил|приумножил)\\p{L}*›");
 const PRICE = "(?:rent|bills?|prices?|costs?|fees?|tax(?:es)?|salary|wages?|tuition|mortgage|fundrais\\p{L}*|donations?|аренд\\p{L}*|квартплат\\p{L}*|коммуналк\\p{L}*|цен[аыуе]›|стоимост\\p{L}*|зарплат\\p{L}*|налог\\p{L}*|тариф\\p{L}*|сбор›)";
+// #468: French and German, read only in French and German sentences ("don't" reads "don", "courses" is English too).
+const PRICE_FR_DE = `(?:${PRICE}`
+  + "|loyers?›|prix›|frais›|couts?›|factures?›|impots?›|salaires?›|tarifs?›|abonnements?›|cotisations?›|dons?›"
+  + "|assurance\\p{L}*|prets?›|mensualit\\p{L}*|creche\\p{L}*|electricite|chauffage|essence›|courses›|miete\\p{L}*|preis\\p{L}*|kosten›|nebenkosten|versicherung\\p{L}*|kredit\\p{L}*|kita\\p{L}*|strom\\p{L}*|heizung\\p{L}*|benzin|sprit›|einkauf\\p{L}*|gebuhr\\p{L}*|steuer\\p{L}*|gehalt\\p{L}*|lohn›|lohne›|rechnung\\p{L}*|beitrag\\p{L}*|spende\\p{L}*)";
 const PRICED = re(`‹(?:${PRICE}|pay›|paying|плач\\p{L}*|плати\\p{L}*)`);
+const PRICED_FR_DE = re(`‹(?:${PRICE_FR_DE}|pay›|paying|pay(?:e|er|ez|ons|ait)›|paie›|paies›|bezahl\\p{L}*)`);
 // A price named right after the result ("from $1,000 to $2,000 in rent", "с 30 000₽ до 60 000₽ аренду"), not "…with zero fees".
 const PRICED_AFTER = re(`^\\s?(?:(?:a|per|в|за) (?:month|year|week|месяц|год|неделю)\\s)?(?:(?:in|on|for|за|на)\\s(?:[\\p{L}'’]+\\s)?)?‹${PRICE}`);
+const PRICED_AFTER_FR_DE = re(`^\\s?(?:(?:a|per|par|pro|im|chaque) (?:month|year|week|mois|an|annee|semaine|monat|jahr|woche)\\s)?`
+  + `(?:(?:in|on|for|de|d'|en|pour|fur|als)\\s?(?:[\\p{L}'’]+\\s)?)?‹${PRICE_FR_DE}`);
 // "From $200 to $7,800 in 5 days!!! I'm so grateful…" opens with the claim.
 const OPENS_FROM = re("^\\s?(?:from|с|со|из)\\s?$");
 const CYRILLIC = /\p{Script=Cyrillic}/u;
 const firstPerson = (sentence: string) => (CYRILLIC.test(sentence) ? FIRST_RU : FIRST_EN).test(sentence) || FIRST_RU_VERB.test(sentence);
 // Sentences end at ! ? and line breaks, and at a period that is no decimal point ("€38.600") or abbreviation ("Mr. Smith").
 const claimSentences = (text: string) => text.split(/(?<=[!?\n]|(?<!(?:^|[^\p{L}])(?:mr|mrs|ms|dr|sr|st))\.(?!\d))(?![.!?\n])/u);
+// French and German titles end no sentence either: "J'ai investi 1 000 € avec M. Petit et j'ai obtenu…", "Hr. Weber", "Fr. Lang".
+const claimSentencesFrDe = (text: string) => text.split(/(?<=[!?\n]|(?<!(?:^|[^\p{L}])(?:mr|mrs|ms|dr|sr|st|m|mme|mlle|hr|hrn|fr|frl))\.(?!\d))(?![.!?\n])/u);
+
+// #468: the same claims in French and German. Each language has its own words for the claim; English and Russian share one
+// lexicon and tell each other apart by script. German puts the verb last ("Ich habe lediglich 2.000 $ investiert und einen
+// Gewinn von 20.072,06 $ erzielt", "aus 500 € 5.000 € gemacht"), so its claims may also read the verb after an amount.
+type Lexicon = {
+  first: (sentence: string) => boolean; negated: (head: string, sentence: string) => boolean; guard: RegExp;
+  grown: RegExp; grownGap: RegExp; owned: RegExp; becameGap: RegExp; staked: RegExp; paidGap: RegExp; earned: RegExp; fromGap: RegExp;
+  opensFrom: RegExp;
+  // The opener alone ("De 250 € à 6 900 €…") claims only next to a trading word: "De 15 € à 30 € la manucure" is a price list.
+  opensFromTraded?: boolean;
+  // A growth verb the claim must carry somewhere ("aus 500 € wurden…", "von 500 € auf 5.000 € gesteigert").
+  done?: RegExp;
+  // A negation between the amounts: "…investiert und keinen Gewinn von 5.000 € erzielt".
+  gapNegated?: RegExp;
+  // A stake verb right after the stake ("2.000 $ investiert und…"), a payout verb right after the result ("…33.000 Euro
+  // erhalten"), the join between them, and a profit verb right after the profit ("5.000 € eingebracht – und das mit nur 500 €").
+  stakedAfter?: RegExp; paidLast?: RegExp; joinGap?: RegExp; earnedAfter?: RegExp;
+  // The stake told in the previous sentence: "…investiert – konkret einen Betrag von 1.000 €. Innerhalb von 72 Stunden hat sie
+  // mein Investment in einen Gewinn von 10.780 € verwandelt!"
+  backref?: RegExp; stakeWord?: RegExp;
+  // A price on the stake's side or right after the result.
+  priced: RegExp; pricedAfter: RegExp;
+  // A negation after a call: German imperatives negate after the verb ("Kontaktiert sie nicht").
+  negatedAfter?: RegExp;
+  // The author's own stake that paid the result: "Meine Investition von 1.000 € hat mir 15.000 € eingebracht".
+  stakeOwnedGap?: RegExp;
+  // A loss, a debt or someone else's payout named with the result: "5.000 € Verlust gemacht", "5.000 € von mir bekommen".
+  lostAfter?: RegExp;
+  // A withdrawal refused or impossible in the result's sentence.
+  blockedAfter?: RegExp;
+  // The same named before the result: "…et aujourd'hui je dois 7 450 €", "…und heute fehlen 7.450 € auf meinem Konto".
+  lostBefore?: RegExp;
+};
+const EN_RU: Lexicon = { first: firstPerson, negated, guard: CLAIM_GUARD, grown: GROWN, grownGap: GROWN_GAP, owned: OWNED,
+  becameGap: BECAME_GAP, staked: STAKED, paidGap: PAID_GAP, earned: EARNED, fromGap: FROM_GAP, opensFrom: OPENS_FROM, priced: PRICED,
+  pricedAfter: PRICED_AFTER };
+// Text is folded: "transformé" reads "transforme", "bénéfice" "benefice", "für" "fur".
+const FR_CAPITAL = "(?:capital|investissement|compte|portefeuille|solde|mise|depot|placement)s?";
+// A loss word after a negation is none: "sans aucune perte", "sans la moindre perte", "sans avoir perdu un centime", "nichts verloren", "ohne Verlust".
+const UNLOST = "(?<!‹(?:sans|zero|aucune?|pas|jamais|ni|rien|nichts|kein\\p{L}*|ohne|null)\\s(?:[\\p{L}'’]+\\s){0,2})";
+const NEGATED_FR = re("‹(?:pas|jamais|aucun\\p{L}*|nullement|ne)\\s(?:[\\p{L}'’]+\\s)?$");
+const FRENCH: Lexicon = {
+  first: (sentence) => FIRST_FR.test(sentence),
+  // "je n'ai pas transformé", "je n'ai jamais investi"; "je n'ai investi que 300 €" is a claim.
+  negated: (head) => NEGATED_FR.test(head),
+  guard: re("‹(?:si|s['’]il|aimerais|voudrais|souhaiterais|esper\\p{L}*|promet\\p{L}*|promis|pretend\\p{L}*|soi[- ]disant|aurait|auraient|disait|disent|dit|affirm\\p{L}*|veux|veut|veulent|voulais|voulait)›"),
+  // "passé de … à" only for a capital: "Mon assurance est passée de 800 € à 1 900 €" is a price.
+  grown: re(`‹(?:transform\\p{L}*|multipli\\p{L}*|fructifi\\p{L}*|fait fructifier|fait passer|double|triple|decuple|${FR_CAPITAL} (?:est |sont |a |ont )?pass\\p{L}*)›${NEAR}`),
+  grownGap: re("^\\s?(?:‹(?:en|dans|apres|au bout de)(?: seulement| moins de| a peine)? (?:\\d+|\\p{L}+) (?:jours?|semaines?|mois|heures?|ans?)›\\s)?(?:[\\p{L}'’]+\\s){0,3}?(?:en|a|jusqu['’]a)\\s?$"),
+  owned: re("‹(?:mes|mon|ma|nos|notre)(?:\\s[\\p{L}'’]+){0,2}\\s?$"),
+  becameGap: re("^\\s?(?:[\\p{L}'’]+\\s){0,2}?(?:sont devenu\\p{L}*|est devenu\\p{L}*|devenu\\p{L}*|se sont transforme\\p{L}* en|s['’]est transforme\\p{L}* en|m['’]ont rapporte|ont rapporte|m['’]a rapporte|a rapporte)\\s?$"),
+  staked: re(`‹(?:investi|investis|investit|investissant|depose|deposant|place|placant|mis|commence avec|commencant avec|debute avec|demarre avec|mise de|mise initiale de|apport de|depot de|investissement de)›${NEAR}`),
+  paidGap: re("^.{0,80}?‹(?:recu|recois|retire|gagne|obtenu|encaisse|touche|realise|empoche|recolte|rapporte|benefices?|profits?|gains?|retour|rendement|recupere|pu retirer)›(?:\\s[\\p{L}'’]+){0,3}?\\s?$|‹(?:maintenant|aujourd['’]hui),? j['’](?:en )?(?:ai|avais)(?:\\s(?:un|mon) (?:capital|solde|portefeuille) de)?(?:\\s(?:deja|plus de|pres de|environ|au moins|presque))*\\s?$"),
+  earned: re(`‹(?:gagne|recu|retire|encaisse|touche|realise|empoche|obtenu|fait)›${NEAR}`),
+  fromGap: re("^\\s?(?:[\\p{L}'’]+\\s){0,3}?(?:avec|a partir de|en partant de|en investissant|en misant|en placant|grace a|apres avoir investi|d['’]un investissement de|pour un investissement de)(?:\\s(?:seulement|juste|que|mes|mon|ma|un|une|petit|petite|modeste|initial|initiale|simple|investissement de|mise de|depot de))*\\s?$"),
+  opensFrom: re("^\\s?(?:de|d['’])\\s?$"), opensFromTraded: true,
+  gapNegated: re("‹(?:pas|jamais|aucun\\p{L}*)›|‹rien (?:pu |su )?(?:recu|touche|toucher|obtenu|retire|retirer|recuperer|vu|eu|percu|encaisse|recupere)›"
+    + "|‹n(?:e\\s|['’])(?:(?:peux|peut|pouvons|pouvez|peuvent|arrive|arrivons|arrivent|parviens|parvient|ai|avons|a)\\s)?plus\\s(?:a\\s)?"
+    + "(?:recu|retirer|retire|toucher|touche|recevoir|rien|acces|pu)›|‹n(?:e\\s|['’])(?:touche|touchons|touchent|recois|recoit|recevons|vois|voit|voyons)\\splus›|‹impossible d(?:e\\s|['’])(?:retir|recup|touch|recev|obten)\\p{L}*"
+    + "|‹(?:que|quand|si|des que|lorsque) je retire›"),
+  backref: re("‹(?:transform\\p{L}*|multipli\\p{L}*|fructifi\\p{L}*|fait passer)\\s(?:[\\p{L}'’]+\\s)?(?:mon|ma|mes|notre|nos) (?:investissement|capital|depot|mise|argent|placement)s?\\s(?:initial\\p{L}*\\s)?(?:en|a)\\s(?:(?:un|une) (?:benefice|profit|gain|somme) de\\s)?$"),
+  stakeWord: re("‹(?:investi\\p{L}*|depose|place|mise|depot)›"),
+  priced: PRICED_FR_DE, pricedAfter: PRICED_AFTER_FR_DE,
+  // "…7 450 € sont bloqués sur mon compte", "…9 000 € de dettes".
+  // A negated loss ("sans aucune perte", "zéro perte", "sans rien perdre") is none, "en moins de 48 heures" is a duration, and "dois"
+  // owes only right before the amount or a repayment ("je dois 7 450 €", "je dois rembourser 7 450 €", not "je dois dire merci" or "que je dois à M. Dupont").
+  lostAfter: re(`${UNLOST}‹(?:dettes?|pertes?|bloque\\p{L}*|gele\\p{L}*|perdu\\p{L}*|de (?:penalit\\p{L}*|decouvert|amendes?)|a (?:leur |lui )?(?:payer|regler|rembourser|verser|envoyer))›`),
+  // A balance the author can't withdraw, anywhere in the result's sentence: "…2 000 € sur le compte, impossible de les retirer".
+  blockedAfter: re(`${UNLOST}‹(?:impossible d(?:e\\s|['’])(?:les |le |l['’]|en |y )?(?:(?:retir|recup|touch|acced|sortir|debloqu|encaiss|utilis|transfer|vir|disposer)\\p{L}*|faire (?:de |un |des )?retraits?)`
+    + `|n(?:e\\s|['’])(?:peux|peut|pouvons|pouvez|peuvent|pourrai\\p{L}*|parviens|parvient|arrive) (?:toujours |encore )?(?:pas|plus|rien)(?:\\s(?:toujours|encore|jamais|vraiment))? (?:a\\s)?(?:les |le |l['’]|en |y )?(?:(?:retir|recup|touch|acced|sortir|debloqu|encaiss|utilis|transfer|vir|disposer)\\p{L}*|faire (?:de |un |des )?retraits?)`
+    + `|(?:pas (?:moyen|possible) d(?:e\\s|['’])|sans pouvoir |(?:jamais|pas) pu )(?:les |le |l['’]|en |y )?(?:(?:retir|recup|touch|acced|sortir|debloqu|encaiss|utilis|transfer|vir|disposer)\\p{L}*|faire (?:de |un |des )?retraits?)›(?!\\s(?:autant|aussi|(?:si|plus) (?:vite|facilement|rapidement|simplement)|ailleurs)›)`
+    + "|(?:refus|bloqu)\\p{L}* (?:toujours |encore )?(?:le |mon |les |mes )?retraits?|retraits? (?:a ete |ont ete |est |sont )?(?:bloque\\p{L}*|refuse\\p{L}*|impossible)"
+    + "|retraits? (?:n['’](?:est|a) (?:toujours )?(?:pas|jamais) (?:possible|autorise\\p{L}*|accepte\\p{L}*|valide\\p{L}*|passe\\p{L}*|abouti|arrive\\p{L}*|fonctionne|parvenu\\p{L}*|recu\\p{L}*|credite\\p{L}*"
+    + "|ete (?:valide|accepte|effectue|traite|verse)\\p{L}*)|ne passe\\p{L}* pas|ne sont pas (?:possibles?|autorise\\p{L}*|acceptes?|valides?|passes?)))›"),
+  lostBefore: re(`(?:${UNLOST}‹(?:perdu|perdre|dettes? de|pertes? de|manquent|manque|bloque\\p{L}*|gele\\p{L}*)(?:\\s[\\p{L}'’]+){0,2}|‹(?:dois|doit|devons|devez|doivent)(?:\\s(?:encore|toujours|maintenant|plus de|pres de|environ|rembourser|rendre|verser|regler|payer)){0,2})\\s?$`),
+};
+const DE_NEGATION = "‹(?:nicht|nie|niemals|kein\\p{L}*)";
+const DE_TIME = "‹(?:in|innerhalb|nach|binnen)(?: von)?(?: nur| weniger als| knapp| gerade mal)? (?:\\d+|\\p{L}+) (?:tag\\p{L}*|woche\\p{L}*|monat\\p{L}*|stunde\\p{L}*|jahr\\p{L}*)›";
+const NEGATED_DE = re(`${DE_NEGATION}\\s(?:[\\p{L}'’]+\\s){0,2}$`);
+const DE_PAID_VERB = "(?:erhalten|erzielt|verdient|bekommen|gemacht|ausgezahlt|abgehoben|zuruckbekommen|zuruckerhalten|eingebracht|zuruck|abheben|auf meinem konto|auf mein konto)";
+const GERMAN: Lexicon = {
+  first: (sentence) => FIRST_DE.test(sentence),
+  negated: (head) => NEGATED_DE.test(head),
+  // "würde" and "hätte" fold to "wurde" (became) and "hatte" (had), which claims use.
+  guard: re("‹(?:wenn|falls|hoffe|hoffentlich|mochte|mochten|will|wollte|wollten|verspricht|versprach|versprochen|angeblich|behauptet\\p{L}*|sagte|sagt|soll|sollen|sollte|sollten|meinte|meint)›"),
+  // No "von … auf … gestiegen": that is how a price rises ("Meine Versicherung ist von 800 € auf 1.900 € gestiegen").
+  grown: re(`‹(?:verwandel\\p{L}*|umgewandelt|vermehr\\p{L}*|machte|gemacht|verdoppel\\p{L}*|verzehnfach\\p{L}*|aus)›${NEAR}`),
+  // A time may stand between the amounts: "Aus 400 € wurden in 5 Tagen 9.000 €", "meine 300 € in nur einer Woche in 6.200 €".
+  grownGap: re(`^\\s?(?:(?:wurden|wurde|sind)\\s)?(?:${DE_TIME}\\s?)?(?:(?:[\\p{L}'’]+\\s){0,3}?(?:in|zu|auf|bis auf|wurden|wurde|machte ich|habe ich)\\s?)?$`),
+  owned: re("‹(?:mein|meine|meinen|meiner|unser\\p{L}*)(?:\\s[\\p{L}'’]+){0,2}\\s?$"),
+  becameGap: re(`^\\s?(?:${DE_TIME}\\s)?(?:[\\p{L}'’]+\\s){0,2}?(?:wurden zu|wurden|wurde zu|wurde|sind (?:jetzt |nun )?|in|zu|auf)\\s?(?:${DE_TIME}\\s?)?$`),
+  stakeOwnedGap: re(`^\\s?(?:[\\p{L}'’]+\\s){0,2}?(?:hat|haben) (?:mir|uns)\\s?(?:${DE_TIME}\\s?)?$`),
+  lostAfter: re(`${UNLOST}‹(?:verlust\\p{L}*|minus|miese|schulden|arger|strafe\\p{L}*|zinsen|statt|anstatt|von mir|von uns|eingefroren|gesperrt|blockiert|fehl\\p{L}*)›`),
+  lostBefore: re(`${UNLOST}‹(?:fehl\\p{L}*|schulde\\p{L}*|verlor\\p{L}*|verlust von|minus von|schulden von|eingefroren|gesperrt|blockiert)(?:\\s[\\p{L}'’]+){0,2}\\s?$`),
+  // "Meine Investition von 1.000 € hat mir 15.000 € eingebracht", "…geholfen, aus 300 € 6.000 € zu machen".
+  done: re("‹(?:verwandel\\p{L}*|umgewandelt|vermehr\\p{L}*|machte|gemacht|machen|wurden|wurde|verdoppel\\p{L}*|verzehnfach\\p{L}*|eingebracht|erwirtschaftet)›"),
+  staked: re(`‹(?:investierte|investiere|zahlte|steckte|mit|einzahlung von|einsatz von|investition von|einlage von|startete mit|begann mit|anfing mit|angefangen mit)›${NEAR}`),
+  paidGap: re("^.{0,80}?‹(?:erhielt|erhalte|bekam|bekomme|verdiente|verdiene|erzielte|erziele|machte|hob|habe jetzt|habe nun|habe heute|gewinn\\p{L}*(?: in hohe)? von|profit von|rendite von|auszahlung von|ertrag von)›(?:\\s[\\p{L}'’]+){0,3}?\\s?$"),
+  earned: re(`‹(?:verdiente|verdiene|erzielte|erziele|erhielt|bekam|gewann|machte|hob)›${NEAR}`),
+  fromGap: re("^\\s?(?:[\\p{L}'’]+\\s){0,3}?(?:mit|durch|bei)(?:\\s(?:nur|lediglich|gerade|mal|einer?|einem|meinen?|meiner|meinem|anfanglich\\p{L}*|kleinen?|einsatz von|investition von|einlage von))*\\s?$"),
+  opensFrom: re("^\\s?aus\\s?$"), opensFromTraded: true,
+  gapNegated: re(`${DE_NEGATION}›|‹nichts (?:von|davon|vom)›|‹nichts (?:\\p{L}+ )?(?:erhalten|bekommen|ausgezahlt|abgehoben|zuruckbekommen|zuruckerhalten|gesehen)›`),
+  stakedAfter: re("^\\s?(?:investiert|eingezahlt|angelegt|eingesetzt|angefangen|begonnen|gestartet|eingestiegen)(?:\\s(?:habe|hatte))?›"),
+  paidLast: re(`^\\s?(?:[\\p{L}'’]+\\s){0,3}?${DE_PAID_VERB}›`),
+  // "…investiert und … erhalten", or verb-second "Mit nur 300 € habe ich in einer Woche 7.500 € verdient".
+  joinGap: re("^\\s?(?:(?:[\\p{L}'’]+\\s){0,2}?und\\s[^.!?\\n]{0,80}|(?:habe|hab|hatte) ich(?:\\s(?!(?:und|aber|doch|dann|sondern|weil|statt|er|man)›)[\\p{L}\\p{N}'’]+){0,8}\\s?)?$"),
+  earnedAfter: re(`^\\s?(?:[\\p{L}'’]+\\s)?${DE_PAID_VERB}\\s?(?:[,–—-]\\s?)?(?:und (?:das|zwar)\\s)?(?:mit|durch|bei)(?:\\s(?:nur|lediglich|gerade|mal|einer?|einem|meinen?|meiner|meinem))*\\s?$`),
+  backref: re("‹(?:mein|meine|meinen|unser\\p{L}*) (?:investment|investition|einsatz|einlage|kapital|geld)\\s(?:in|zu|auf)\\s(?:(?:einen|ein|eine) (?:gewinn|profit|betrag|summe) von\\s)?$"),
+  stakeWord: re("‹(?:investiert\\p{L}*|eingezahlt|einzahlung|investition|einsatz|einlage|angelegt)›"),
+  priced: PRICED_FR_DE, pricedAfter: PRICED_AFTER_FR_DE,
+  negatedAfter: re("^\\s?(?:[\\p{L}'’]+\\s){0,2}?(?:nicht|nie|niemals|keinesfalls|auf keinen fall)›"),
+};
+type Language = "en" | "fr" | "de";
+const LEXICONS: Record<Language, Lexicon> = { en: EN_RU, fr: FRENCH, de: GERMAN };
+// Function words name a sentence's language; a sentence with none takes the message's, and a tie stays English.
+const MARKS: [Language, RegExp][] = [
+  ["en", re("‹(?:the|and|is|are|was|to|of|with|my|i|you|it|that|for|have|this|me|on|just|so|we|our|us|he|she|his|her|him|they|their|from|into|after|within)›", "giu")],
+  ["fr", re("‹(?:je|vous|nous|avec|pour|dans|les|des|une|est|et|que|tres|mais|grace|merci|apres|avoir|ai|mon|ma|mes|cette|du|au|aux|sur|pas|ce|en|le|la)›|‹[ljcdmnsq]u?['’](?=\\p{L})", "giu")],
+  ["de", re("‹(?:ich|und|der|die|das|nicht|mit|ist|ein|eine|einen|einem|habe|hat|von|zu|auf|fur|sie|wir|mir|mich|mein|meine|dass|auch|euch|ihr|den|dem|bei|nur|innerhalb|sich|aus|wurde|wurden|dank|seinem|seine|seinen|ihrem|ihre|ihren|nach|wie|noch)›", "giu")],
+];
+function language(sentence: string, fallback: Language): Language {
+  if (CYRILLIC.test(sentence)) return "en";
+  const counts = MARKS.map(([name, marks]) => ({ name, count: sentence.match(marks)?.length ?? 0 }));
+  const best = Math.max(...counts.map(({ count }) => count));
+  if (!best) return fallback;
+  const top = counts.filter(({ count }) => count === best).map(({ name }) => name);
+  return top.length === 1 ? top[0]! : top.includes("en") ? "en" : fallback;
+}
+const FIRST_FR = re("‹(?:je|moi|me|mon|ma|mes|nous|notre|nos)›|‹[jm]['’](?=\\p{L})");
+const FIRST_DE = re("‹(?:ich|mich|mir|mein|meine|meinen|meinem|meiner|meines|wir|uns|unser\\p{L}*)›");
+// "…mein Investment in einen Gewinn von 10.780 € verwandelt", "…transformé mon investissement en 8 000 €": the stake is in the
+// sentence before.
+const BACKREF = re("‹(?:mein|meine|meinen|unser\\p{L}*|mon|ma|mes|notre|nos) (?:investment|investition|einsatz|einlage|kapital|geld|investissement|capital|depot|mise|placement)s?\\s(?:initial\\p{L}*\\s)?(?:in|zu|auf|en|a)›");
+
 // The claim is the author's: a first-person word in its own clause, or a sentence that opens with it and a first-person word in the
 // next ("From $200 to $7,800 in 5 days!!! I'm so grateful…").
-function claimsProfit(sentence: string, next = ""): boolean {
-  if (isQuestion(sentence) || !firstPerson(sentence) && !firstPerson(next)) return false;
+// A sentence of an English message, or one with a word only English has, is also read in English, as before #468: "Mrs Ursula Von
+// Der Leyen-Aus turned my $500 into $9,000 trading" counts more German marks.
+const ENGLISH_ONLY = re("‹(?:the|and|is|are|was|to|of|with|my|i|you|it|that|for|have|this|just|we|our|he|she|his|her|him|they|their|from|into|after|within)›");
+function claimsProfit(sentence: string, next = "", fallback: Language = "en"): boolean {
   const found = amounts(sentence);
+  if (found.length < 2 || isQuestion(sentence)) return false;
+  // The "me" of a t.me/ link is no English word, and a French or German sentence in an English message is also read in its own language.
+  const guess = language(sentence.replace(HANDLES, " "), fallback);
+  const lex = fallback === "en" ? EN_RU : LEXICONS[guess];
+  return claimsIn(lex, sentence, next, fallback, found) || lex !== EN_RU && ENGLISH_ONLY.test(sentence) && claimsIn(EN_RU, sentence, next, fallback, found)
+    // The English guard still holds over that reading: "…Message her @… if you want the flat J'ai investi…".
+    || lex === EN_RU && guess !== "en" && !CLAIM_GUARD.test(sentence) && claimsIn(LEXICONS[guess], sentence, next, fallback, found);
+}
+function claimsIn(lex: Lexicon, sentence: string, next: string, fallback: Language, found: Amount[]): boolean {
+  if (!lex.first(sentence) && !LEXICONS[language(next, fallback)].first(next)) return false;
   // The result is the next amount, or the next one with a currency: "Вложила 10 000 ₽, через 2 дня вывела 150 000 ₽".
   return found.some((a, i) => [found[i + 1], found.slice(i + 1).find((next) => next.money)].some((b) => {
     // The result is money ("got 5,000 kWh", "100 usdt в 9500" are no gain), in the stake's currency if it names one.
     // A hypothetical or someone's claim guards the claim's own clause, up to its result: "…$38,600 in 48 hours, if you want the
     // same contact him" still claims it.
-    if (!b || !b.money || a.currency && a.currency !== b.currency || CLAIM_GUARD.test(sentence.slice(0, b.end))) return false;
+    if (!b || !b.money || a.currency && a.currency !== b.currency || lex.guard.test(sentence.slice(0, b.end))) return false;
     const before = sentence.slice(Math.max(0, a.start - 60), a.start);
     const gap = sentence.slice(a.end, b.start);
     // The claim's own clause: "Bitcoin went from $16k to $100k, I'm holding" or "I saw a post: sir X turned his $500…" is
@@ -1163,18 +1319,34 @@ function claimsProfit(sentence: string, next = ""): boolean {
     const tail = sentence.slice(b.end, b.end + 120);
     const stake = () => lead.slice(Math.max(...[",", ":", ";"].map((mark) => lead.lastIndexOf(mark))) + 1) + gap;
     const clause = () => stake() + tail.split(/[,:;]/u)[0];
-    const mine = () => firstPerson(clause()) || OPENS_FROM.test(sentence.slice(0, a.start));
+    const opensFrom = lex.opensFrom.test(sentence.slice(0, a.start)) && (!lex.opensFromTraded || TRADING.test(sentence) || TRADING_FR_DE.test(sentence));
+    const mine = () => lex.first(clause()) || opensFrom;
     const cue = (lead: RegExp) => {
       const match = lead.exec(before);
       const head = match && sentence.slice(0, a.start - before.length + match.index);
-      return head !== null && !negated(head, sentence);
+      return head !== null && !lex.negated(head, sentence);
     };
-    const ranged = () => cue(RANGED) && (OWN_STAKE.test(before) || EARNS.test(clause()) || OPENS_FROM.test(sentence.slice(0, a.start))
-      || RANGED_SUBJECT.test(before) && (TRADING.test(clause()) || HONORIFIC.test(clause())));
+    if (lex.gapNegated?.test(gap)) return false;
+    // English and Russian ranges ("I went from $500 to…") need the author's stake, an earning verb or a trading subject; a French or
+    // German sentence opening with the range needs a trading word.
+    const ranged = () => lex === EN_RU ? cue(RANGED) && (OWN_STAKE.test(before) || EARNS.test(clause()) || opensFrom
+      || RANGED_SUBJECT.test(before) && (TRADING.test(clause()) || HONORIFIC.test(clause()))) : opensFrom;
+    const done = !lex.done || lex.done.test(before.slice(-40) + gap + tail.slice(0, 60));
+    // German verbs after the stake: "Ich habe nicht 2.000 $ investiert" is negated before the stake.
+    const stakedAfter = () => lex.stakedAfter?.test(gap) && !lex.negated(sentence.slice(0, a.start), sentence);
+    // "…investiert und 10.000 € nie erhalten": the negation stands between the result and the verb.
+    const paidAfter = () => { const paid = lex.paidLast?.exec(tail); return Boolean(paid) && !lex.gapNegated?.test(paid![0]); };
+    const paidLast = () => paidAfter() && lex.joinGap!.test(gap);
     const grew = b.value >= 2 * a.value && a.value > 0
-      && ((cue(GROWN) || ranged()) && GROWN_GAP.test(gap) || OWNED.test(before) && BECAME_GAP.test(gap) || cue(STAKED) && PAID_GAP.test(gap));
+      && ((cue(lex.grown) || ranged()) && lex.grownGap.test(gap) && done || lex.owned.test(before) && (lex.becameGap.test(gap) || lex.stakeOwnedGap?.test(gap) && lex.stakeWord!.test(before)) && done
+        || (cue(lex.staked) || stakedAfter()) && (lex.paidGap.test(gap) || paidLast())
+        || lex.backref?.test(gap) && lex.stakeWord!.test(before) && done);
+    const earned = a.value >= 2 * b.value && b.value > 0 && (cue(lex.earned) && lex.fromGap.test(gap)
+      || Boolean(lex.earnedAfter?.test(gap) || lex.paidLast && lex.fromGap.test(gap) && paidAfter()) && !lex.negated(sentence.slice(0, a.start), sentence));
     // A price on the stake's side is no stake; an ad's "…with zero fees" after the result is still an ad.
-    return (grew || a.value >= 2 * b.value && b.value > 0 && cue(EARNED) && FROM_GAP.test(gap)) && mine() && !PRICED.test(stake()) && !PRICED_AFTER.test(tail);
+    return (grew || earned) && mine() && !lex.priced.test(stake()) && !lex.pricedAfter.test(tail)
+      && !lex.lostAfter?.test(tail.split(/[,;:.!?–—]/u)[0]!.slice(0, 40)) && !lex.blockedAfter?.test(tail.split(/[.!?]/u)[0]!)
+      && !lex.lostBefore?.test(gap);
   }));
 }
 const CONTACT_CALL = any(
@@ -1185,12 +1357,69 @@ const CONTACT_CALL = any(
   "‹(?:свяжитесь|связывайтесь|свяжись|обращайтесь|обратитесь|обратись|пишите|напишите|пиши|напиши) (?:с ним|с ней|ему|ей|к нему|к ней)›",
   "‹(?:потом|позже) (?:скажете|скажешь) (?:мне )?спасибо|‹спасибо (?:мне )?(?:скажете|скажешь) (?:потом|позже)");
 const CONTACT_CALL_ALL = new RegExp(CONTACT_CALL.source, "giu");
+// #468: French words that tell rather than call before "contacte" or "écris": the tu-imperative folds into the participle ("j'ai
+// contacté M. X", "m'a contacté moi aussi") and the first person ("j'écris à M. X", "je contacte M. X").
+// "après avoir contacté", "je l'ai déjà contacté", "je les ai tous contactés".
+const TOLD_WORDS_FR = "‹(?:j['’]|(?:je|tu|il|elle|on|a|ai|as|ont|avons|avez|avait|avais|ete|avoir|deja|aussi|tous|toutes)\\s)";
+// An adverb may stand between: "J'ai personnellement contacté M. Dupont".
+const TOLD_FR = `(?<!${TOLD_WORDS_FR}(?:(?:\\p{L}+ment|deja|aussi|enfin|hier|souvent|bien|tous|toutes|plusieurs fois|moi-meme|lui-meme|elle-meme)\\s){0,2})`;
+// A French infinitive calls only after an imperative: "N'hésitez pas à le contacter", "veuillez contacter M. X"; "Impossible de le
+// contacter", "j'ai voulu contacter M. X" tell.
+const URGED_FR = "‹(?:veuillez|hesitez pas a|hesite pas a|il suffit de|pensez a|vous pouvez|tu peux|(?:je|nous) (?:vous|te) (?:conseill\\p{L}*|recommand\\p{L}*) de|(?:je|nous) (?:vous|te) invit\\p{L}* a)\\s";
+// French and German calls aimed at a person, read only in a French or German message: "contactez-le", "contactez M.", "contactez-moi",
+// "n'hésitez pas à le contacter", "écrivez-lui", "rejoignez-le", "Kontaktieren Sie den Administrator", "Kontaktieren Sie mich",
+// "schreibt ihr", "schreibt mir", "setzt euch … in Verbindung", "nehmt Kontakt auf". A pronoun is the object only when hyphenated
+// ("contactez le service client" or "écrivez leur nom" name a thing), and the formal "Sie" is the subject ("Kontaktieren Sie den
+// Kundenservice" calls no one). A bank's adviser is no funnel ("contactez le conseiller de votre banque", "den Berater"). "Kontaktiert",
+// "schreibt" and "wendet" call only first in their clause ("Seitdem schreibt mir jemand" tells, and so does a clause whose subject is a
+// third person: see thirdPersonTold), and "kontaktiere" or "schreib" only without "ich". "Rejoignez le groupe" or "cliquez sur le lien"
+// only point (POINTER_CALL).
+const CONTACT_CALL_FR_DE = any(
+  "‹(?:contactez|contacte)-(?:le|la|les|lui|leur|moi)›", `‹contactez moi›|${TOLD_FR}‹contacte moi›`,
+  `(?:‹contactez|${TOLD_FR}‹contacte|${URGED_FR}contacter) (?:m|mr|mme|mlle|monsieur|madame|l['’]expert\\p{L}*|l['’]administrat\\p{L}*|le (?:gestionnaire|mentor|coach|trader|courtier)|la (?:gestionnaire|mentore|coach))›`,
+  "‹(?:ecrivez|ecris)-(?:lui|leur|moi)›", `(?:‹ecrivez|${TOLD_FR}‹ecris) (?:lui|moi|a (?:m|mr|mme|mlle|monsieur|madame))›`, "‹(?:rejoignez|joignez)-(?:le|la|les)›", "‹(?:rejoignez|joignez) (?:m|mr|mme|mlle|monsieur|madame)›",
+  `${URGED_FR}(?:le|la|les|lui|leur) (?:contacter|ecrire|joindre|rejoindre)›`,
+  "‹(?:remerciez-moi|me remercier(?:ez)?|me remercierez) (?:plus tard|ensuite|apres)|‹(?:vous|tu) (?:me remercierez|me remercieras|pourrez ensuite me remercier)",
+  "‹(?:kontaktieren|schreiben|wenden) sie (?:sich )?(?:an )?(?:ihn|ihr|ihm|sie|mich|mir|frau|herrn?|den (?:administrator|admin|manager|mentor|experten|trader|broker)|die (?:administratorin|managerin|mentorin|expertin|traderin|brokerin))›",
+  "(?:(?<=^\\s?|[,:;–—-]\\s?|‹(?:und|einfach|bitte|also)\\s)(?:kontaktiert|schreibt)|(?<!‹ich\\s)‹(?:kontaktiere|schreib)) (?:euch |dich )?(?:an )?(?:ihn|ihr|ihm|sie|mich|mir|frau|herrn?|den (?:administrator|admin|manager|mentor|experten|trader|broker)|die (?:administratorin|managerin|mentorin|expertin|traderin|brokerin))›",
+  "(?:(?<=^\\s?|[,:;–—-]\\s?|‹(?:und|einfach|bitte|also)\\s)wendet euch|(?<!‹ich\\s)‹wende dich) an (?:ihn|sie|frau|herrn?|den (?:administrator|admin|manager|mentor|experten|trader|broker)|die (?:administratorin|managerin|mentorin|expertin|traderin|brokerin))›",
+  "‹(?:setzt euch|setzen sie sich|setz dich) (?:[\\p{L}'’]+ ){0,5}?in verbindung›", "‹(?:nehmt|nehmen sie|nimm) (?:[\\p{L}'’]+ ){0,3}?kontakt auf›",
+  "‹bedank\\p{L}* (?:dich |euch |sie sich )?(?:spater|danach) bei mir›");
+const CONTACT_CALL_FR_DE_ALL = new RegExp(CONTACT_CALL_FR_DE.source, "giu");
+// "…, aber Herr Weber ignoriert mich, schreibt mir nur Ausreden", "Seit Wochen ruft er an und kontaktiert mich": a German verb in
+// the third person after a comma or "und" whose sentence names a third-person subject tells what that person does to the author.
+// A third person as the object ("Frau Lang hat mir geholfen, kontaktiert sie") still calls, and so does "Ich habe es geschafft,
+// schreibt mir".
+const THIRD_PERSON_DE = re("(?<!‹(?:mit|bei|von|vom|an|fur|uber|dank|zu|zur|zum|durch|gegen|ohne|um|den|dem)\\s)(?:‹(?:er|sie|jemand|herrn?|frau|hr|fr)›"
+  // A person as the subject: "Der Manager sagt…", "Der Broker hat mein Konto gesperrt", "Mein Berater will jetzt Gebühren". A noun ads
+  // praise counts only doing something to the author ("Die Plattform sperrt mein Konto"): "die Plattform funktioniert" or "mein Mentor
+  // hilft gern" tells nothing against the author.
+  // One person, not the author's partner ("Mein Mann und ich haben…"), plural staff ("Die Admins hier wissen Bescheid") or a recommendation
+  // ("Der Broker ist seriös").
+  + "|(?:‹(?:der|mein|dein|sein|unser)\\s(?:manager|broker|berater|betreuer|mann|typ|kerl|betruger|admin|chef|ansprechpartner)|‹(?:die|meine|deine|seine|unsere)\\s(?:managerin|brokerin|beraterin|betreuerin|betrugerin|adminin|chefin|ansprechpartnerin))›"
+  + "(?!\\s(?:und (?:ich|wir)|(?:ist|war|bleibt)\\s(?:(?:wirklich|sehr|absolut|echt|total|einfach)\\s)?(?:serios|zuverlassig|ehrlich|top|super|toll|klasse|kompetent|professionell|vertrauenswurdig|gut|spitze|der beste|die beste))›)"
+  + "|‹(?:der|die|mein|meine|dein|deine|sein|seine|unser|unsere)\\s(?:mentor\\p{L}*|trader\\p{L}*|experte\\p{L}*|support|kundenservice|plattform|firma)\\s(?:[\\p{L}'’]+\\s){0,2}?(?:ignoriert|verlangt|droht|ruft|antwortet|fordert|sperrt|blockiert|lugt|betrugt|reagiert|schweigt|vertrostet|meldet|sagt|erzahlt|will|(?:hat|haben)\\s(?:[\\p{L}'’]+\\s){0,3}?(?:gesperrt|blockiert|eingefroren|gestohlen))›)");
+const TOLD_VERB_DE = re("^(?:kontaktiert|schreibt) (?:mich|mir)›");
+const AFTER_JOIN_DE = re("(?:,|‹und)\\s?$");
+// A third person after a preposition is no subject: "Ich habe mit Frau Lang 500 € investiert und 9.000 € erhalten, schreibt mir" calls.
+const thirdPersonTold = (head: string, call: string) => TOLD_VERB_DE.test(call) && AFTER_JOIN_DE.test(head.slice(-6)) && THIRD_PERSON_DE.test(head);
 // A call to click, tap, follow or join only points, like an arrow: "Join my channel t.me/my_notes", "link in bio @my_notes" share the
 // author's own channel; "Click the link below … t.me/+…" points at a private invite.
 const POINTER_CALL = any(
   "‹click (?:on )?(?:the |this |my )?(?:link|below|here|button)", "‹(?:tap|follow|use|open|visit) (?:on )?(?:the|this|my) link›", "‹links? (?:below|here|in (?:my |the )?bio)›",
   "‹join (?:the|his|her|their|my|this|our) (?:channel|group|community|team)›", "‹join (?:now|today|here|us)›",
-  "‹(?:переходите|переходи|перейдите|перейди|жмите|жми|нажмите|нажми|кликайте) (?:по |на )?(?:ссылк|кнопк)", "‹ссылк\\p{L}* (?:ниже|внизу|в профиле|в био)");
+  "‹(?:переходите|переходи|перейдите|перейди|жмите|жми|нажмите|нажми|кликайте) (?:по |на )?(?:ссылк|кнопк)", "‹ссылк\\p{L}* (?:ниже|внизу|в профиле|в био)",
+  // #468: "cliquez sur le lien", "lien ci-dessous", "rejoignez ma chaîne", "klicken Sie auf den Link", "Link unten", "untenstehenden Link".
+  "‹(?:cliquez|clique|cliquer|appuyez|appuie) (?:sur |ici)?(?:le |ce |mon )?(?:lien|bouton)", "‹liens? (?:ci-dessous|ci dessous|en bas|dans (?:ma |la )?bio)›",
+  "‹rejoignez (?:sa|son|ses|le|la|notre|nos|mon|ma|leur) (?:chaine|canal|groupe|communaute|equipe)›", "‹rejoignez-nous›",
+  "‹(?:klicken|klickt|klicke|klick|tippen|tippt|tippe) (?:sie |einfach |jetzt |hier |unten )*(?:auf )?(?:den |diesen |meinen |ihren |seinen )?(?:link|button)",
+  "‹links? (?:unten|unter (?:diesem|dem) (?:post|beitrag)|in (?:meiner |der )?bio)›", "‹(?:untenstehenden|folgenden|unteren|unten stehenden) link›");
+// #468: a French or German word introducing a link only points too, like "Details: t.me/…" or "here @…" in callsToDm: "Détails ici :
+// t.me/…", "Infos hier: @…". Read only in French or German ("hier" is yesterday in French, so each language has its own words).
+const POINTER_BEFORE_LINK: Record<"fr" | "de", RegExp> = {
+  fr: re("‹(?:details?|ici|liens?|infos?|informations?|ci-dessous|ci dessous)›[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)|‹contact\\p{L}*[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)"),
+  de: re("‹(?:details?|hier|links?|infos?|informationen|unten|(?<!(?:nicht|nie|niemand|nichts|kein\\p{L}*) )mehr)›[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)|‹kontakt\\p{L}*[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)"),
+};
 const ARROW = new RegExp(ARROWS.source, "u");
 // A public link the author labels as their own right before it, at most three filler words between ("My channel 👇 @…", "My notes
 // are here: t.me/…", "Мой канал тут 👇", "Join my channel t.me/…",
@@ -1199,6 +1428,9 @@ const ARROW = new RegExp(ARROWS.source, "u");
 // link, nor does "my page" inside the credit ("Sir Daniel turned my page around 👇"). A private invite stays a funnel whatever its
 // label.
 const OWN_LINK = re(`‹(?:my|мой|мои|моя)\\s(?:own\\s|personal\\s|личн\\p{L}*\\s)?(?:channel|notes|blog|journal|diary|newsletter|substack|page|bio|telegram|канал|блог|заметки|дневник|страниц\\p{L}*|телеграм\\p{L}*)›(?:[^\\p{L}\\p{N}@\\n]{1,6}(?:is|are|here|below|link|links|free|on|in|telegram|тут|здесь|ниже|вот|ссылка|бесплатно|в|телеграм\\p{L}*)›){0,3}[^\\p{L}\\p{N}@]{0,12}(?:https?://)?(?:${"(?:t\\.me|telegram\\.(?:me|dog))/"}|@[a-z])`);
+// #468: the same in French and German, read only there: "Mes notes ici : t.me/…", "Ma chaîne 👇 @…", "Mein Kanal 👇 @…", "Meine
+// Notizen hier: t.me/…". "sa chaîne" or "ihr Kanal" is someone else's.
+const OWN_LINK_FR_DE = re(`‹(?:ma|mon|mes|mein|meine|meinen|meinem)\\s(?:propre\\s|perso\\s|personnel\\p{L}*\\s|eigene[nmr]?\\s|personliche[nmr]?\\s)?(?:chaine|canal|blog|notes|journal|page|bio|telegram|kanal|notizen|seite|tagebuch|newsletter)›(?:[^\\p{L}\\p{N}@\\n]{1,6}(?:est|sont|ici|ci-dessous|la|voici|gratuit\\p{L}*|sur|dans|en|telegram|ist|sind|hier|unten|auf|in|im|kostenlos|gratis|link)›){0,3}[^\\p{L}\\p{N}@]{0,12}(?:https?://)?(?:${"(?:t\\.me|telegram\\.(?:me|dog))/"}|@[a-z])`);
 // An arrow is a call only toward a private invite or a third party the message credits ("sir X… 👇", "thanks to Mr…"); "Good book on
 // it 👇 t.me/…" or "My channel 👇 @…" shares content.
 // The credited third party is a named person: a title before a name ("sir Daniel", "Mrs Kate", "Мистер Джон", "all thanks to miss
@@ -1237,17 +1469,39 @@ function namedPairs(raw: string): Set<string> {
   }
   return pairs;
 }
-function thirdParty(text: string, raw: string): boolean {
+// #468: French and German titles and roles, read only in a French or German message. "M." needs its period ("I'm" folds to "i'm"),
+// and so do "Hr." and "Fr." ("…site.fr Merci"). "meine Frau" is the author's wife, not a credit; a role still needs a capitalised name
+// ("le coach Pierre", "Mentorin Anna"), and German capitalises every noun, so more words name no person ("Experten Tipps", "Trader
+// Gruppe").
+const TITLE_CREDIT_FR_DE = re("‹(m(?=\\.)|mr|mme|mlle|monsieur|madame|herrn?|frau|(?:hr|fr)(?=\\.))›(?=\\.? (\\p{L}+))", "giu");
+const ROLE_CREDIT_FR_DE = re("‹(mentore?s?|experte?s?|coachs?|conseill(?:er|ere)s?|mentorin|expertin|experten|berater(?:in)?|trader(?:in)?)(?= (\\p{L}+))", "giu");
+const NOT_NAME_FR_DE = re("^(?:gruppe|kanal|programm|konto|markt|signale|tipps?|kurs|kurse|plattform|rat|meinung|strategie|community|groupe|canal|programme|compte|marche|conseils?|cours|equipe|plateforme|signaux|strategies?|communaute|forex|krypto|crypto|bitcoin)$");
+const FUNCTION_WORD_FR_DE = re("^(?:je|j|moi|me|m|tu|te|vous|il|elle|on|nous|ils|elles|le|la|les|l|un|une|des|du|de|d|et|ou|mais|donc|car|si|a|au|aux|en|dans|sur|pour|par|avec|sans|est|sont|ai|as|ont|etait|ce|cette|ces|cet|que|qui|ne|pas|oui|non|merci|tres|plus|ich|mich|mir|du|dich|dir|er|sie|es|wir|ihr|uns|euch|der|die|das|den|dem|des|ein|eine|einen|einem|einer|und|oder|aber|wenn|mit|von|zu|auf|in|im|an|am|bei|fur|aus|nach|so|wie|was|wer|dass|auch|nur|noch|schon|sehr|ist|sind|war|hat|habe|haben|hatte|wird|wurde|nicht|kein|keine|ja|nein|danke)$");
+const NO_CREDIT_FR_DE = re("‹(?:sans|aucun\\p{L}*|pas|jamais|ni|kein\\p{L}*|ohne|nicht|nie|niemals)\\s(?:[\\p{L}'’]+\\s)?$");
+const OWNER_DE = re("‹(?:mein|meine|meiner|meinem|meinen|dein\\p{L}*|sein|seine|seiner|seinem|seinen|ihr|ihre|ihrer|ihrem|ihren|unser\\p{L}*|euer|eure\\p{L}*)\\s(?:\\p{L}+\\s)?$");
+// "Frau", "Herr", "Hr." and "Fr." credit only before a capitalised name in the raw text: "Die Frau meines Bruders", "eine Frau namens
+// Anna" and "Mo.–Fr. bis 18 Uhr" credit no one.
+const germanTitled = (raw: string) => new Set([...raw.matchAll(/(?<![\p{L}\p{N}])(?:Frau|FRAU|Herrn?|HERRN?|Hr\.|Fr\.)[ \t  ]+(\p{Lu}\p{L}*)/gu)]
+  .map(([, name]) => promoText(name!)));
+function thirdParty(text: string, raw: string, lang: Language = "en"): boolean {
   const pairs = namedPairs(raw);
   const lead = CYRILLIC.test(text) ? NO_CREDIT_RU : NO_CREDIT_EN;
   const credited = (match: RegExpMatchArray, ok: (before: string) => boolean) => {
     const before = text.slice(Math.max(0, match.index! - 40), match.index);
     return !NOT_NAME.test(match[2]!) && !FUNCTION_WORD.test(match[2]!) && !lead.test(before) && ok(before);
   };
-  return [...text.matchAll(TITLE_CREDIT)].some((match) => credited(match, (before) => {
+  if ([...text.matchAll(TITLE_CREDIT)].some((match) => credited(match, (before) => {
     if (MISS.test(match[1]!)) return MISS_LEAD.test(before) || capitalMiss(raw).has(match[2]!);
     return !VOCATIVE.test(match[1]!) || !VOCATIVE_LEAD.test(before);
-  })) || [...text.matchAll(ROLE_CREDIT)].some((match) => credited(match, () => pairs.has(`${match[1]!.split(" ").at(-1)} ${match[2]}`)));
+  })) || [...text.matchAll(ROLE_CREDIT)].some((match) => credited(match, () => pairs.has(`${match[1]!.split(" ").at(-1)} ${match[2]}`)))) return true;
+  if (lang === "en") return false;
+  const named = (match: RegExpMatchArray) => {
+    const before = text.slice(Math.max(0, match.index! - 40), match.index);
+    return ![NOT_NAME, NOT_NAME_FR_DE, FUNCTION_WORD, FUNCTION_WORD_FR_DE].some((words) => words.test(match[2]!)) && !NO_CREDIT_FR_DE.test(before)
+      && (!/^(?:herrn?|frau|hr|fr)$/u.test(match[1]!) || !OWNER_DE.test(before) && germanTitled(raw).has(match[2]!));
+  };
+  return [...text.matchAll(TITLE_CREDIT_FR_DE)].some(named)
+    || [...text.matchAll(ROLE_CREDIT_FR_DE)].some((match) => named(match) && pairs.has(`${match[1]} ${match[2]}`));
 }
 // A private invite or a direct contact is a funnel nobody uses to share a post or their own public channel.
 const PRIVATE_INVITE = re("(?:t\\.me|telegram\\.(?:me|dog))/(?:\\+|joinchat/)|wa\\.me/|chat\\.whatsapp\\.com/");
@@ -1256,39 +1510,147 @@ const TG_CHAT = "(?:t\\.me|telegram\\.(?:me|dog))/(?![a-z0-9_]+/\\d)";
 // An invite, channel or contact link: t.me or WhatsApp, a handle (not an e-mail), a phone number, or URL buttons.
 const CONTACT_LINK = re(`${TG_CHAT}|(?:wa\\.me|chat\\.whatsapp\\.com)/|(?<![\\p{L}\\p{N}._])@[a-z][a-z0-9_]{3,}›|(?<![\\p{L}\\p{N}])\\+\\d(?:[ -]?\\d){9,13}(?![\\p{L}\\p{N}])`);
 // A contact on the message's last line, alone or after a label: "…all thanks to miss X.\n@message_Admin_…".
-const CLOSING_LINK = re(`(?:^|\\n)\\s?(?:(?:contact|whatsapp|telegram|tg|контакт\\p{L}*|телеграм|тг|ватсап)\\s?:?\\s?)?(?:https?://)?(?:(?:${TG_CHAT}|wa\\.me/|chat\\.whatsapp\\.com/)\\S+|@[a-z][a-z0-9_]{3,}|\\+\\d(?:[ -]?\\d){9,13})\\s?$`);
+const closingLink = (frDe: boolean) => re(`(?:^|\\n)\\s?(?:(?:contact|whatsapp|telegram|tg|контакт\\p{L}*|телеграм|тг|ватсап${"|contactez|ecrivez|kontakt".repeat(Number(frDe))})\\s?:?\\s?)?(?:https?://)?(?:(?:${TG_CHAT}|wa\\.me/|chat\\.whatsapp\\.com/)\\S+|@[a-z][a-z0-9_]{3,}|\\+\\d(?:[ -]?\\d){9,13})\\s?$`);
+// #468: "Contactez : @…", "Kontakt: @…" label the contact only in French or German.
+const CLOSING_LINK = { en: closingLink(false), frDe: closingLink(true) };
 // A contact verb or label right before the link or handle calls on its own: "Contact @…", "Пишите в телеграм @…", "Связь: @…",
 // "Join t.me/…", "My contact: @…"; "here" or "Details:" before it only points, and so does the author's own Telegram or WhatsApp
 // ("My Telegram 👇 @…").
 const NAMED_CALL = re(`‹(?:contact|write(?: to)?|message|text|(?<!‹(?:my|мой|мои)\\s)(?:whatsapp|telegram)|join|пиши(?:те)?|напиши(?:те)?|связь|контакт\\p{L}*|обращайтесь|жми(?:те)?|переходи(?:те)?|(?:свяжитесь|свяжись|связывайтесь|обратитесь|обращайтесь) (?:с|со|к) \\p{L}+(?: \\p{L}+)?)(?:\\s(?:в|on|in|via)\\s(?:telegram|whatsapp|телеграм\\p{L}*|тг|ватсап\\p{L}*))?\\s?:?\\s?(?:https?://)?(?:@[a-z]|${TG_CHAT}|wa\\.me/)`);
+// #468: "Contactez-le @…", "Écrivez-lui sur Telegram : @…", "Rejoignez : t.me/…", "Kontaktieren Sie @…", "Kontakt: @…", read only in
+// French or German; "ici" or "Détails :" before the link only points (POINTER_BEFORE_LINK).
+// "contacte", "écris" and "schreib" are also a participle or the first person ("Impossible de contacter @…", "j'écris @…", "ich schreib
+// @…" tell), so they call only as CONTACT_CALL_FR_DE reads them.
+const NAMED_CALL_FR_DE = re(`(?:‹(?:contactez(?:-le|-la)?|contacte-(?:le|la|moi)|ecrivez(?:-lui)?|ecris-lui|rejoignez(?:-le|-la)?|kontaktieren(?: sie)?|schreiben sie|kontakt)|${TOLD_FR}‹(?:contacte|ecris)|${URGED_FR}contacter|(?<!‹ich\\s)‹(?:kontaktier|schreib)|(?<=^\\s?|[.!?\\n,:;–—-]\\s?|‹(?:und|einfach|bitte|also)\\s)(?:kontaktiert|schreibt))(?:\\s(?:sur|via|par|auf|uber|per|bei|im|in)\\s(?:telegram|whatsapp))?\\s?:?\\s?(?:https?://)?(?:@[a-z]|${TG_CHAT}|wa\\.me/)`);
+// A French or German word on "contact" or "joindre" points at a link after it only as a label, an imperative or an urged infinitive:
+// "Contacts : t.me/+…", "Contactez l'équipe sur t.me/+…", "Pour le contacter : @…", "N'hésitez pas à le contacter", "Kontaktdaten:
+// t.me/+…", "Kontaktiert ihn hier", "Jetzt kontaktieren t.me/+…", "Zögert nicht, ihn zu kontaktieren". Every other form tells and is
+// blanked before the pointers and the calls read the text: "m'a contacté moi aussi, @…", "Je l'ai déjà contactée sur @…", "Après
+// avoir contacté…", "Impossible de le contacter, t.me/+…", "Je n'arrive plus à le joindre…", "Wir kontaktieren ihn jeden Tag
+// t.me/+…", "Seitdem kontaktiert mich niemand mehr, t.me/+…", "Unmöglich, ihn zu kontaktieren: t.me/+…".
+// The raw imperative may hide behind homoglyphs ("Cоntacte-le" with a Cyrillic о), so the folded "contacte" turns participle only when
+// the raw text writes "contacté" with its accent and never without.
+const UNACCENTED_CONTACTE = /(?<![\p{L}\p{N}])[cс][oо0]nt[aа][cс]t[eе](?![\p{L}\p{N}\p{M}])/iu;
+const ACCENTED_CONTACTE = /(?<![\p{L}\p{N}])[cс][oо0]nt[aа][cс]t(?:[éè]|[eе]\u0301)/iu;
+const FOLDED_CONTACTE = re("‹contacte›", "giu");
+const CONTACT_WORD_FR_DE = re("‹(?:contact|kontakt)\\p{L}+|‹joi(?:gn|nd)\\p{L}*", "giu");
+// Labels of a channel, not "Kontaktabbruch" or "Kontaktsperre".
+const CONTACT_LABEL_FR_DE = re("^(?:contacts|contactez|joignez|kontakt(?:e|daten|infos?|informationen|adressen?|person|aufnahme|formular|nummer|moglichkeit(?:en)?|details|link))$");
+const URGED_BEFORE_FR_DE = re(`(?:${URGED_FR}|‹pour\\s)(?:(?:le|la|les|lui|leur|me|nous)\\s|l['’])?$`
+  + "|‹(?:empfehle\\p{L}*|rate|zogert nicht|zogere nicht|zogern sie nicht|solltet|solltest|sollten sie|konnt|konnen sie|kannst|musst|mussen sie)(?:\\s?,)?\\s(?:[\\p{L}'’]+(?:\\s?,)?\\s){0,4}?(?:zu\\s)?$");
+const UNABLE_BEFORE_FR_DE = re("‹(?:pas|plus|jamais|impossible|nicht|nie|niemals|kein\\p{L}*|kaum|unmoglich|schwer|niemand)›(?:\\s?,)?\\s(?:[\\p{L}'’]+\\s){0,3}?$");
+// An imperative opens its clause: "Contacte-le…", "Kontaktiert ihn hier", "Bitte kontaktieren Sie…"; "et" and "und" may join a told verb
+// ("…ruft er an und kontaktiert mich").
+const OPENS_CLAUSE_FR_DE = re("(?:^|[.!?\\n,:;–—-]|‹(?:einfach|bitte|jetzt|gerne?|direkt|sofort))\\s?$");
+// "Kontaktiert habe ich ihn über t.me/+…" tells.
+const TOLD_AFTER_DE = re("^\\s(?:habe|hab|hat|haben|hatte|hatten)›");
+// Advice against a contact, or a try that fails, urges nothing: "Ich rate euch, ihn nicht zu kontaktieren", "Ich rate euch ab…", "Ich
+// empfehle niemandem, ihn zu kontaktieren", "Du kannst versuchen, ihn zu kontaktieren, er antwortet nie". The veto reads from the urging
+// word to the verb, and a negation right before the urging word ("Ich würde nicht empfehlen, …"): "Ab sofort könnt ihr ihn
+// kontaktieren" or "Keine Angst, ihr könnt ihn kontaktieren" still urge.
+const URGE_VETO_FR_DE = re("‹(?:nicht|nie|niemals|kein\\p{L}*|niemand\\p{L}*|ab›(?!\\s(?:sofort|heute|morgen|jetzt))|versuch\\p{L}*|probier\\p{L}*|jamais|deconseill\\p{L}*|essaye\\p{L}*|essayer|tenter|tente\\p{L}*)›");
+// French needs no lead veto: URGED_FR is never negated in front ("Je ne vous conseille pas de…" doesn't urge), while "N'attendez pas
+// pour le contacter" does.
+const URGE_VETO_LEAD_FR_DE = re("‹(?:nicht|nie|niemals|kein\\p{L}*|niemand\\p{L}*)\\s(?:[\\p{L}'’]+\\s){0,2}?$");
+const URGE_PHRASE_DE = re("‹(?:(?:zogert|zogere|zogern sie) nicht|nicht lange|keine (?:angst|sorge|sorgen))›", "giu");
+// "…, il ne répond plus (depuis des semaines)", "er antwortet nie wieder": the negation, and only a time or object phrase after it, closes
+// the clause. "Il répond plus vite", "il ne répond jamais avec du retard" or "er reagiert nie genervt" praise.
+const NO_ANSWER_AFTER_FR_DE = re("‹(?:antwortet|reagiert|meldet sich|schreibt zuruck|repond|reagit)\\s(?:[\\p{L}'’]+\\s)?(?:nie|nicht|niemals|mehr nicht|pas|jamais|plus)(?:\\s(?:mehr|plus|wieder|du tout|(?:seit|depuis|auf|aux|sur|per|uber|bei)\\s[\\p{L}'’]+(?:\\s[\\p{L}'’]+)?)){0,2}\\s?(?=$|[.,!?;:\\n–—-]|t\\.|@|https?:|wa\\.)");
+// "Kontaktaufnahme über t.me/+… (ist seit Wochen) nicht möglich": a label whose link is said right after to be unreachable points at
+// nothing. Only time words may stand between: "Kontaktdaten: t.me/+… – nichts ist unmöglich!" or "… Verluste unmöglich" still point.
+const UNREACHABLE_AFTER_FR_DE = re("^\\s?:?\\s?(?:(?:uber|via|par|sur|auf|per|bei)\\s)?\\S*[^\\s.!?]\\s?(?:[–—-]\\s)?(?:(?:ist|est|leider|derzeit|aktuell|momentan|zurzeit|gerade|seit|wochen|tagen|monaten|gestern|heute|noch|immer|schon|bereits|jetzt|wieder|n['’]est|toujours|depuis|des|semaines|jours|mois|hier|actuellement|malheureusement)\\s){0,4}?‹(?:nicht (?:moglich|erreichbar)|unmoglich|geht nicht|funktioniert nicht|klappt nicht|pas possible|impossible|ne marche pas|ne fonctionne pas)›");
+function callingContact(word: string, before: string, after: string): boolean {
+  if (CONTACT_LABEL_FR_DE.test(word)) return !UNREACHABLE_AFTER_FR_DE.test(after);
+  if (TOLD_AFTER_DE.test(after)) return false;
+  const urged = /^(?:contacter|joindre|kontaktieren)$/u.test(word) ? URGED_BEFORE_FR_DE.exec(before) : null;
+  if (urged) {
+    return !URGE_VETO_FR_DE.test(urged[0].replace(URGE_PHRASE_DE, " ")) && !URGE_VETO_LEAD_FR_DE.test(before.slice(0, urged.index).replace(URGE_PHRASE_DE, " "))
+      && !NO_ANSWER_AFTER_FR_DE.test(after);
+  }
+  return !UNABLE_BEFORE_FR_DE.test(before) && /^(?:contacte|kontaktiert|kontaktiere|kontaktieren)$/u.test(word) && OPENS_CLAUSE_FR_DE.test(before);
+}
 const LINKED_URL = re(`${TG_CHAT}|(?:wa\\.me|whatsapp\\.com)/`);
 // Gain and trading words inside a handle or link ("@trade_mike", "t.me/invest_ru") tell nothing.
 const HANDLES = /@[\p{L}\p{N}_]+|(?<![\p{L}\p{N}.\/-])(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+[a-z]{2,}\/\S*/giu;
 // A victim's story or a warning: "…promised to turn my $500 into $38,000, I lost everything", "это обман".
 // Talk about such posts, or a joke about them: "lol who falls for these posts", "такие сообщения уже достали".
-const ABOUT_ADS = any("‹(?:falls? for|who believes|ads? like|posts? like|messages? like|such (?:posts|ads|messages)|these (?:ads|posts|messages)|this (?:ad|post)›|lol›|lmao|a?(?:ha|ха){2,}h?›|лол›|такие (?:посты|сообщения|объявления)|подобн\\p{L}* (?:посты|сообщения|объявления)|эти (?:посты|сообщения|объявления))");
-const VICTIM = any("‹(?:fraud\\p{L}*|ponzi|pyramid|warning|warn(?:ed|s)?›|avoid|lost (?:my|all|everything|it|money|\\p{Sc}|\\d)|stole|stolen|stealing|thie(?:f|ves)|police|обман\\p{L}*|лохотрон\\p{L}*|пирамид\\p{L}*|потерял\\p{L}*|украл\\p{L}*|полици\\p{L}*)");
+const ABOUT_ADS = any("‹(?:falls? for|who believes|ads? like|posts? like|messages? like|such (?:posts|ads|messages)|these (?:ads|posts|messages)|this (?:ad|post)›|lol›|lmao|a?(?:ha|ха){2,}h?›|лол›|такие (?:посты|сообщения|объявления)|подобн\\p{L}* (?:посты|сообщения|объявления)|эти (?:посты|сообщения|объявления))",
+  );
+// #468: "ce genre de messages", "ces pubs", "mdr"; "solche Nachrichten", "wer fällt darauf rein". Read only in French or German, like
+// every #468 word.
+const ABOUT_ADS_FR_DE = any("‹(?:ce genre de|ces|de tels|de telles) (?:messages|posts|pubs?|publicites|annonces)›|‹(?:mdr|ptdr)›",
+  "‹(?:solche|diese|derartige) (?:posts|nachrichten|beitrage|werbung|anzeigen)›|‹(?:fallt|fallen) (?:\\p{L}+ )?(?:darauf|auf (?:sowas|so etwas|das)) rein›");
+const VICTIM = any("‹(?:fraud\\p{L}*|ponzi|pyramid|warning|warn(?:ed|s)?›|avoid|lost (?:my|all|everything|it|money|\\p{Sc}|\\d)|stole|stolen|stealing|thie(?:f|ves)|police|обман\\p{L}*|лохотрон\\p{L}*|пирамид\\p{L}*|потерял\\p{L}*|украл\\p{L}*|полици\\p{L}*)",
+);
+// #468: French and German warnings and victims, read only in French or German. German ads tell of an earlier fraud ("…da ich schon
+// oft betrogen wurde"), so only a scammer, a scheme or a loss counts there; "perdu mes 500 €" is the French "lost my".
+const VICTIM_FR_DE = any("‹(?:arnaque\\p{L}*|escroc\\p{L}*|escroquer\\p{L}*|mefie\\p{L}*|mefiez|mefiance|plainte|pyramid\\p{L}*|c['’]est faux›|j['’]ai (?:tout )?perdu|tout perdu|perdu (?:mes|mon|ma|nos|notre|\\p{Sc}|\\d)|m['’](?:a|ont) vole)",
+  "‹(?:betruger\\p{L}*|betrugsmasche\\p{L}*|abzock\\p{L}*|vorsicht|warnung|achtung|polizei|anzeige|(?:habe|hat|haben) (?:\\p{L}+ ){0,3}?verloren|gestohlen|(?:ist|sind|war|waren) (?:\\p{L}+ )?betrug›)");
+// #468: a French or German warning before a quoted ad, read in the lead before the first amount. "Signalez", "Ne tombez pas",
+// "C'est faux", "Finger weg!" and "Bitte melden" warn on their own; "attention", "prudence", "faites gaffe", "faux", "aufpassen" and
+// "passt auf" only with a word about a received or circulating message ("Attention, je reçois ça en privé : J'ai investi…", "Passt
+// auf, das kursiert gerade! Ich habe…"). So an ad's opener ("ATTENTION : J'ai investi 500 €…", "Attention, ceci n'est pas une
+// blague :", "Finger weg von Banken:"), its closer or call after the amounts, and "son attention" warn of nothing.
+const WARNING_STRONG_FR_DE = re("(?<!‹(?:tiens a|voulais|voudrais|veux) (?:vous )?)‹(?:signalez|signaler|signalons|signalement|tombez pas|c['’]est faux›|finger weg›(?!\\s?(?:von|vom)›)"
+  + "|bitte melden›(?!\\s(?:sie\\s)?(?:sich|dich|euch|bei)›)|melden sie (?:diese\\p{L}*|den|das|solche\\p{L}*|ihn)›)");
+const WARNING_FR_DE = re("(?<!(?:son|sa|votre|ton|leur|mon|notre|ihre|seine|meine) )‹(?:attention|faites gaffe|prudence|faux|fausse|aufpassen|passt (?:gut )?auf)›");
+const REPORT_CUE_FR_DE = re("‹(?:messages?|circule\\p{L}*|tourne\\p{L}*|prive|privee|comptes?|ne (?:le |la |les |lui )?(?:repondez|cliquez|contactez|ecrivez)|n['’](?:ecrivez|y repondez)|ne (?:le |la |les )croyez|ne croyez (?:pas|rien) (?:ca|cela|a ce|ce|ces)"
+  + "|partout(?!\\s(?:en|dans|au|aux|a)›)|tous les groupes|post(?:e|ent|ee) (?:ca|ce|ces|cela)|copie[- ]colle\\p{L}*|encore lui|reinfall\\p{L}*|schreibt \\p{L}+ an|fake"
+  + "|m['’](?:a |ont )?ecri\\p{L}*|kursier\\p{L}*|bekomm\\p{L}*|nachricht\\p{L}*|account|privat|nicht antworten|schon wieder)›");
+const warnedLead = (text: string) => {
+  const lead = text.slice(0, (text.search(/[\d\p{Sc}]/u) + 1 || text.length + 1) - 1);
+  return WARNING_STRONG_FR_DE.test(lead) || WARNING_FR_DE.test(lead) && REPORT_CUE_FR_DE.test(lead);
+};
 // Gains, not prices: "My rent went from $1,000 to $2,000, contact the landlord @…" tells no profit.
 const GAIN = any("‹(?:earn\\p{L}*|profit\\p{L}*|multipl\\p{L}*|приумнож\\p{L}*|торговл\\p{L}*|income|returns?›|withdr\\p{L}*|pay(?:s|out)›|paid out|my account|massive\\p{L}*|заработ\\p{L}*|доход\\p{L}*|прибыл\\p{L}*|вывел\\p{L}*|вывела|вывод\\p{L}*)",
   // Money paid out to a card, not "оплата/перевод на карту" in a classified ad.
   "‹(?:пришл\\p{L}*|пришел|зачисл\\p{L}*|упал\\p{L}*|капнул\\p{L}*)(?:\\s[\\p{L}\\p{N}\\p{Sc}.,]+){0,4}?\\sна (?:сч[её]т|карт\\p{L}*)");
+// #468: read only in a French or German message ("retired", "placement" are English too).
+const GAIN_FR_DE = any("‹(?:gagn\\p{L}*|benefice\\p{L}*|retir\\p{L}*|rendement\\p{L}*|revenus?›|retrait\\p{L}*|gewinn\\p{L}*|verdien\\p{L}*|verdient|rendite\\p{L}*|auszahlung\\p{L}*|ausgezahlt|abheb\\p{L}*|abgehoben|ertrag\\p{L}*|einkommen)");
 const TRADING = any("‹(?:trad(?:e|er|ers|ing)›|invest\\p{L}*|влож\\p{L}*|crypto\\p{L}*|bitcoin|btc›|forex|signals?›|broker\\p{L}*|mentor\\p{L}*|account manager|portfolio|profit\\p{L}*|трейд\\p{L}*|инвест\\p{L}*|крипт\\p{L}*|биткоин\\p{L}*|форекс|сигнал\\p{L}*|брокер\\p{L}*|ментор\\p{L}*|прибыл\\p{L}*|доход\\p{L}*|заработ\\p{L}*)");
+const TRADING_FR_DE = any("‹(?:courtier\\p{L}*|placement\\p{L}*|signaux›|krypto\\p{L}*|handel\\p{L}*|anleger\\p{L}*|trader\\p{L}*)");
 function profitTestimonial(message: ModerationMessage, raw: string, text: string): boolean {
-  if (ADDRESS.test(text) || ADDRESSED.test(text) || VICTIM.test(text.replace(DENIAL, " ")) || ABOUT_ADS.test(text) || /😂|🤣|😹/u.test(raw)) return false;
-  const told = claimSentences(text).filter((part) => !isQuestion(part));
-  const words = text.replace(HANDLES, " ");
-  if (!GAIN.test(words) && !TRADING.test(words) || !told.some((part, i) => claimsProfit(part, told[i + 1]))) return false;
+  // Cheap checks first: most messages carry no link.
   const linked = CONTACT_LINK.test(text) || (message.inlineButtons?.length ?? 0) > 0 || message.embeddedLinks.some((url) => LINKED_URL.test(url));
   if (!linked) return false;
+  const words = text.replace(HANDLES, " ");
+  const lang = language(words, "en");
+  if (!GAIN.test(words) && !TRADING.test(words) && (lang === "en" || !GAIN_FR_DE.test(words) && !TRADING_FR_DE.test(words))) return false;
+  const undenied = text.replace(DENIAL, " ");
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || VICTIM.test(undenied) || ABOUT_ADS.test(text) || /😂|🤣|😹/u.test(raw)
+    || lang !== "en" && (VICTIM_FR_DE.test(undenied) || warnedLead(undenied) || ABOUT_ADS_FR_DE.test(text))) return false;
+  const told = (lang === "en" ? claimSentences : claimSentencesFrDe)(text).filter((part) => !isQuestion(part));
+  if (!told.some((part, i) => claimsProfit(part, told[i + 1], lang)
+    || i > 0 && BACKREF.test(part) && claimsProfit(told[i - 1]! + part, told[i + 1], lang))) return false;
   // A link or handle pointed at ("Details: t.me/…", "here @…", a closing @handle, 👇, "Join my channel", "Click the link") is a call
   // only toward a private invite or a third party the message credits: "Wrote about it here t.me/my_notes" or tagging a friend shares
   // or addresses, and so does a public link labelled as the author's own.
   // "DM me" and "пиши в лс" call on their own, so they are also read with links and handles stripped.
-  const pointed = callsToDm(told.join("")) || CLOSING_LINK.test(text) || ARROW.test(raw) || POINTER_CALL.test(told.join(""));
-  const funnel = PRIVATE_INVITE.test(text) || !OWN_LINK.test(text) && thirdParty(words, raw);
-  const calls = told.some((part) => [...part.matchAll(CONTACT_CALL_ALL)].some((match) => !negated(part.slice(0, match.index), part)))
-    || callsToDm(told.join("").replace(HANDLES, " ")) || NAMED_CALL.test(told.join("")) || pointed && funnel;
-  return calls && !answersRequest(message, (source) => TRADING.test(source) || GAIN.test(source));
+  // Folded "contacte" is the participle "contacté" unless the raw text writes the imperative: "Contacté plusieurs fois sur t.me/+…".
+  const reading = lang === "en" || !ACCENTED_CONTACTE.test(raw) || UNACCENTED_CONTACTE.test(raw) ? told : told.map((part) => part.replace(FOLDED_CONTACTE, "contactee"));
+  const said = reading.join("");
+  // The English "contact" or "join" before a link points (callsToDm), but a French or German verb built on it may tell
+  // (callingContact).
+  const calling = lang === "en" ? said
+    : said.replace(CONTACT_WORD_FR_DE, (word: string, offset: number) => callingContact(word, said.slice(Math.max(0, offset - 60), offset),
+      said.slice(offset + word.length, offset + word.length + 60)) ? word : " ");
+  const pointed = callsToDm(calling) || CLOSING_LINK[lang === "en" ? "en" : "frDe"].test(text) || ARROW.test(raw) || POINTER_CALL.test(said) || lang !== "en" && POINTER_BEFORE_LINK[lang].test(calling);
+  const own = OWN_LINK.test(text) || lang !== "en" && OWN_LINK_FR_DE.test(text);
+  const funnel = PRIVATE_INVITE.test(text) || !own && thirdParty(words, raw, lang);
+  const calls = reading.some((part) => {
+    // German imperatives negate after the verb: "Kontaktiert sie nicht". English negation holds in every message ("Don't contact Mr.
+    // Le Roux" reads French by its marks), and an English message reads no other. Each negation reads a few words next to the call.
+    const lex = lang === "en" ? EN_RU : LEXICONS[language(part, lang)];
+    const english = CYRILLIC.test(part) ? NEGATED_RU : NEGATED_EN;
+    return [...part.matchAll(CONTACT_CALL_ALL), ...lang === "en" ? [] : part.matchAll(CONTACT_CALL_FR_DE_ALL)].some((match) => {
+      const head = part.slice(Math.max(0, match.index! - 80), match.index), end = match.index! + match[0].length;
+      return !english.test(head) && (lex === EN_RU || !lex.negated(head, part)) && !lex.negatedAfter?.test(part.slice(end, end + 80))
+        && (lex === EN_RU || !NO_ANSWER_AFTER_FR_DE.test(part.slice(end, end + 60)))
+        && !(lex === GERMAN && thirdPersonTold(part.slice(Math.max(0, match.index! - 160), match.index), match[0]));
+    });
+  }) || callsToDm(said.replace(HANDLES, " ")) || NAMED_CALL.test(said) || lang !== "en" && NAMED_CALL_FR_DE.test(calling) || pointed && funnel;
+  return calls && !answersRequest(message, (source) => TRADING.test(source) || GAIN.test(source)
+    || language(source, "en") !== "en" && (TRADING_FR_DE.test(source) || GAIN_FR_DE.test(source)));
 }
 
 // What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
