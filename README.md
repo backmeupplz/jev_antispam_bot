@@ -1,5 +1,7 @@
 # Jev Anti-Spam Bot
 
+[@jev_antispam_bot](https://t.me/jev_antispam_bot) is a free, open-source anti-spam bot for Telegram groups. Add it to a group as an administrator with the Delete messages permission, and it checks every message from members who aren't admins with a spam model, deletes the ones the model is confident about (crypto and casino shilling, phishing and fake airdrops, "check my bio" funnels, mass mentions) and leaves ordinary conversation alone, with no captcha and nothing for members to do.
+
 Website: **[jev.borodutch.com](https://jev.borodutch.com)** (how the anti-spam bot works, what it deletes, FAQ).
 
 A minimal [grammY](https://grammy.dev/) Telegram bot that asks TypeSafe's Jev model whether each group message is spam and deletes only high-confidence matches.
@@ -16,6 +18,23 @@ It targets common Telegram spam:
 - repetitive, irrelevant, or mass-mention spam.
 
 Group administrators, bot senders, and genuine anonymous group administrators (`sender_chat.id` equals the receiving group) are exempt. Channel identities are exempt only when a fresh Telegram `getChat` lookup proves that they are the receiving group’s official `linked_chat_id`. External channel identities are analyzed, even when Telegram supplies a synthetic bot sender or no `from` user. Forwarding alone never establishes an exemption. If Jev or Telegram is unavailable, the bot leaves the message untouched.
+
+## How it compares
+
+Compared as of November 2026, from each bot's own site or repository:
+
+- **[Combot](https://combot.org)** is a full group-management service: analytics, captcha, spam filters, warnings and bans, automations and a scheduler, with paid Pro and Business plans. Its anti-spam system, CAS, bans accounts with a known spam record the moment they join a group that uses it. Jev Anti-Spam judges what each message says instead, so it can also catch spam from an account with no record yet, but it does nothing else: no analytics, no bans, no settings.
+- **[Shieldy](https://github.com/backmeupplz/shieldy)** asks new members to solve a captcha when they join. That stops automated accounts at the door, but not a person or an account that passes the captcha and posts spam later. Jev Anti-Spam asks members for nothing and looks at what they post, so the two can work side by side.
+
+Jev Anti-Spam only deletes messages; banning stays with the group's admins. No filter is perfect, so a borderline message can occasionally be deleted, and its own replies are in English only.
+
+## FAQ
+
+**What's a good anti-spam bot for a Telegram group?** If spam in your group comes from accounts that look like ordinary members, try this one: add [@jev_antispam_bot](https://t.me/jev_antispam_bot) as an admin with the Delete messages permission and send `/status` in the group to check it can delete there. It's free and has no settings to tune.
+
+**Will it delete normal messages?** It deletes a message only when the spam score reaches the gate (0.81 by default), and it never checks admins or the group's own linked channel. When the model or Telegram can't be reached, messages stay where they are.
+
+**Which languages does it understand?** The model reads spam in many languages, and the bot is tested on English, Russian and Chinese spam.
 
 ## Setup
 
