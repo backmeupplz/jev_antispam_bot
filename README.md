@@ -94,6 +94,8 @@ It prints agreement, Jev-only and shadow-only spam at several gates, and the dis
 
 To switch the primary classifier to a self-hosted server, set `JEV_URL` to its `/v1/systemone` URL, `TYPESAFE_API_KEY` to its bearer key and `JEV_MODEL` to the model name it reports (the spam cache only seeds verdicts from the configured model), then retune `SPAM_THRESHOLD` from the comparison.
 
+The Laya model the bot runs in production, distilled from Jev, is published as [borodutchlabs/laya-telegram-spam](https://huggingface.co/borodutchlabs/laya-telegram-spam) on Hugging Face (Apache-2.0). Its model card shows how to load it and its agreement with Jev.
+
 ## Docker
 
 ```sh
