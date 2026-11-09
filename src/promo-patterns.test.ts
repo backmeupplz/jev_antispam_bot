@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { botTestimonialControls, botTestimonialFloorIncident, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
+import { botTestimonialControls, botTestimonialFloorIncident, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigEuroWeeklyControls, sideGigEuroWeeklyIncident,
+  sideGigEuroWeeklyParaphrases, sideGigHiddenLinkControls, sideGigHiddenLinkIncident, sideGigHiddenLinkVariants, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
 import { reportedRecruitment, vagueRecruitmentControls, vagueRecruitmentVariants } from "./fixtures/vague-recruitment";
 import { usdtAsk, usdtAskVariants, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
@@ -48,6 +49,25 @@ test("the #152 forwarded testimonial matches, standalone, as a channel-post comm
 
 test.each(sideGigParaphrases)("held-out side-gig paraphrase matches: %s", (text) => {
   expect(promoPattern(plain(text))).toBe("side_gig_offer");
+});
+
+test("the #561 weekly-euro vacancy matches, standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(sideGigEuroWeeklyIncident, patch))).toBe("side_gig_offer");
+  // "здесь" carrying the link as a hidden text link.
+  for (const text of sideGigHiddenLinkVariants) expect(promoPattern(plain(text, { embeddedLinks: ["https://example.sbs/job"] }))).toBe("side_gig_offer");
+  expect(promoPattern(plain(sideGigHiddenLinkIncident))).toBeUndefined();
+  for (const { text, url, isForwarded } of sideGigHiddenLinkControls) expect(promoPattern(plain(text, { embeddedLinks: [url], isForwarded }))).toBeUndefined();
+  // Answering a member who asked for work from home is requested.
+  expect(promoPattern(plain(sideGigEuroWeeklyIncident, memberReply("Ищу работу из дома, есть варианты?")))).toBeUndefined();
+});
+
+test.each(sideGigEuroWeeklyParaphrases)("#561 paraphrase matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe("side_gig_offer");
+});
+
+test.each(sideGigEuroWeeklyControls)("#561 control never matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBeUndefined();
+  expect(promoPattern(plain(text, { isForwarded: true }))).toBeUndefined();
 });
 
 test.each(botTestimonialParaphrases)("held-out bot testimonial paraphrase matches: %s", (text) => {
@@ -99,6 +119,16 @@ test("matching stays linear on long adversarial input", () => {
     expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }
 });
+
+test("#561 bare domains, periodic pay and hidden links stay linear on long adversarial input", () => {
+  const inputs = ["работа 800 евро еженедельно здесь " + "a.".repeat(2040), "вакансия еженедельно " + "1 евро ".repeat(580) + "здесь x.sbs",
+    "работа 800 еженедельно подробнее " + "a-".repeat(2040) + ".com", "работа 800 евро в неделю здесь " + "a.b ".repeat(1020),
+    "работа 800 евро еженедельно " + "ежемесячный ".repeat(340) + "здесь", "работа 800 евро в неделю " + "👉".repeat(2000),
+    "работа 800 евро в неделю здесь " + ".".repeat(4000) + "a", "работа 800 евро в неделю здесь " + ". ".repeat(2000) + "a"];
+  for (const text of inputs) for (const embeddedLinks of [[], ["https://example.sbs"]]) {
+    expect(fastest(() => promoPattern(plain(text, { embeddedLinks })))).toBeLessThan(LINEAR_MS);
+  }
+}, 30_000);
 
 test("a reply that answers another member is a requested answer, not an ad", () => {
   expect(promoPattern(plain("У нас на складе как раз нужны люди на выходные, платят от 4 тысяч в день, напиши мне в лс",

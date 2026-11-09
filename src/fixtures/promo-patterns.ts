@@ -300,3 +300,124 @@ export const botTestimonialControls = [
   "Прошла тест в @mymindcounselbot. Помогло?!",
   "Прошла тест в @mymindcounselbot. Помогло?..",
 ];
+
+// #561: a work-from-home vacancy paying "еженедельно" in "евро", pointing to a fresh .sbs domain (text as reported, link
+// replaced), plus SYNTHETIC paraphrases: other periods and currencies, a bare domain, a hidden link, English.
+export const sideGigEuroWeeklyIncident = "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉https://example.sbs/job";
+export const sideGigEuroWeeklyParaphrases = [
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉 anvertovles.sbs",
+  "Работа из дома, 500 евро в неделю, подробности 👉 https://example.top/a",
+  "Удалённая работа, от 50 евро в день, подробнее здесь https://example.sbs",
+  "Есть вакансия на дому, доход ежемесячно от 2000 евро, описание тут: jobs-home.xyz/apply",
+  "Remote job, €800 weekly, details here: https://example.xyz",
+  "Hiring for online work, earn $3000 monthly, info here jobs.example.com",
+  // Other throwaway endings, pay wordings and currencies (review round 1).
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉 anvertovles.cyou",
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉 anvertovles.bond",
+  "Вакансия из дома! 800 евро, выплаты еженедельно. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! Еженедельный доход от 800 евро. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 800 евро каждую неделю. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 800 евро/нед. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 3000 евро/мес. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 800 евр. в неделю, описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 800 злотых в неделю, описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! 80 фунтов в день, описание здесь👉 https://example.sbs/job",
+  // Review round 2.
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь:anvertovles.sbs",
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉 ANVERTOVLES.SBS",
+  "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉 anvertovles.beauty",
+  "Вакансия из дома! 800 евро, выплаты каждую неделю. Описание здесь👉 https://example.sbs/job",
+  "Вакансия из дома! Ежемесячная зарплата от 3000 евро. Описание здесь👉 https://example.sbs/job",
+  // Review round 5: a domain whose label is a link word, a domain before Cyrillic text, "сумов" and "eur.".
+  "Remote work, $3000 a month, details at info.sbs",
+  "Remote work, $3000 a month, details at here.sbs",
+  "Вакансия из дома! 800 евро еженедельно, подробнее тут anvertovles.online и начинай",
+  "Работа из дома, от 500000 сумов в день, подробнее тут https://example.sbs",
+  "Remote job, 300 eur. weekly, details here https://example.sbs",
+  // A payout word after cash ranges (review round 7).
+  "Вакансия из дома! 500-800 евро, выплаты еженедельно. Описание здесь👉 https://example.sbs/job",
+  "Remote job, €500-800, payouts weekly, details here https://example.sbs",
+  "Remote job, $300 paid a day, details here https://example.sbs",
+];
+// The incident with "здесь" as a hidden text link: Telegram keeps the URL out of the text.
+export const sideGigHiddenLinkIncident = "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь👉";
+export const sideGigHiddenLinkVariants = [
+  sideGigHiddenLinkIncident, "Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно. Описание здесь.",
+  // Ad wording that only looks like a relayed article (review round 6).
+  "Remote work from home, stable source of income $500 a week, details here👉",
+  "Удалённая работа: пишешь статьи — получаешь от 1000 рублей в день. Подробнее тут👉",
+  "Remote job writing article reviews, $300 a day, apply here",
+  "Работа из дома, доход от 800 евро еженедельно, отзывы говорят сами за себя! Подробнее тут",
+  // A recruiter's own write-up keeps its link (review round 7).
+  "Предлагаю вакансию из дома! Доход от 800 евро еженедельно. Всё подробно описали здесь👉",
+  "Удалённая работа, от 800 евро еженедельно. Рассказали подробнее здесь",
+  "Remote job, $800 weekly. I wrote about it here",
+  "Предлагаю работу из дома, 800 евро еженедельно, описал подробнее тут",
+];
+// Hidden links that are no contact call: a forwarded article, and a link whose own path reads "pm" (a placeholder stands
+// in for it).
+export const sideGigHiddenLinkControls = [
+  { text: "Работа из дома: как зарабатывать 80000 рублей в месяц. Подробнее", url: "https://www.rbc.ru/a", isForwarded: true },
+  { text: "Работа из дома, 80000 рублей в месяц. Источник", url: "https://www.bbc.com/news/pm-says-wages-rise", isForwarded: false },
+  // A member's own post with a hidden article link that ends on a question or a plea, not on the link's words (review
+  // round 4).
+  { text: "Нашёл статью про удалённую работу: пишут, курьеры получают 5000 рублей в день. Интересно, кто тут так зарабатывает?", url: "https://rbc.ru/a", isForwarded: false },
+  { text: "Читал тут статью: удалённая работа, говорят, приносит от 3000 евро в месяц. Так ли это, напишите", url: "https://rbc.ru/a", isForwarded: false },
+  { text: "Remote work pays $3000 a month, they say. Is it true? Write here?", url: "https://rbc.ru/a", isForwarded: false },
+  // The same ending on the article link's own words (review round 5).
+  { text: "Нашёл статью про удалённую работу: пишут, курьеры получают 5000 рублей в день. Подробнее тут", url: "https://rbc.ru/a", isForwarded: false },
+  { text: "Читал тут статью: удалённая работа, говорят, приносит от 3000 евро в месяц. Подробнее здесь", url: "https://rbc.ru/a", isForwarded: false },
+  { text: "Remote work pays $3000 a month according to this article, details here", url: "https://rbc.ru/a", isForwarded: false },
+  // A member's own job story linking their own write-up (review round 7).
+  { text: "Нашла удалённую работу, платят 1000 евро в месяц, рассказала подробнее здесь", url: "https://t.me/myblog/5", isForwarded: false },
+  { text: "Found a remote job paying $1000 a month, I wrote about it here", url: "https://t.me/myblog/5", isForwarded: false },
+];
+export const sideGigEuroWeeklyControls = [
+  "Ищу работу из дома, хочу доход от 800 евро еженедельно, пишите сюда example.com",
+  "Осторожно, спам: «Предлагаю вам вакансию из дома! Доход от 800 евро еженедельно Описание здесь» — не переходите по ссылке",
+  "Пишут про вакансию из дома, доход 800 евро еженедельно, описание здесь example.sbs — это развод",
+  "Подскажите, это нормальная вакансия? Доход 800 евро еженедельно, описание здесь example.sbs",
+  // Cyrillic words fold to Latin lookalikes ("сом" → com, "тор" → top, "арр" → app), which are no link.
+  "Есть подработка 50 евро в день, подробнее у Максима, он сам.Со мной не обсуждайте",
+  "Подработка 50 евро в день, пиши тут.сом",
+  "Подработка 50 евро в день, детали тут.Тор браузер нужен",
+  "Подработка 50 евро в день, подробнее тут.арр",
+  // A count after a period word is no pay.
+  "Работа из дома в колл-центре, ежедневно 200 звонков, подробнее тут hh.ru",
+  "Remote work: write reports weekly 500 words, details here example.com",
+  "Работа из дома, ежедневно 10к шагов, подробнее тут https://x.com",
+  "Remote job: lose 10 pounds weekly, details here https://x.com",
+  // A payout word after a bare number counts payments, not pay (review round 7).
+  "Работа из дома в колл-центре: принимать 200 оплат в день, подробнее тут https://hh.ru",
+  "Remote job: process 300 payments a day, details here https://x.com",
+  "Remote job: process 300 payments weekly, details here https://x.com",
+  // The author's or a friend's own remote job and where they looked for vacancies (review round 7).
+  "Я работаю удалённо, получаю 2000 евро в месяц, вакансии ищу тут: djinni.co",
+  "Знакомая работает из дома за 1500 евро в месяц, вакансии смотрела здесь djinni.co",
+  // A word that only starts like a currency is a count too (review round 4).
+  "Работа из дома, упаковка ежедневно 200 сумок, подробнее тут https://hh.ru",
+  "Remote job, weekly 3 europe trips, details here https://x.com",
+  "Работа из дома, упаковка 200 сумок в день, подробнее тут https://hh.ru",
+  // File names, frameworks and a missing space after a full stop are no link.
+  "Ищем разработчика, удалённая работа, 3000 евро в месяц, писать будешь на Node.js",
+  "Работа из дома, 800 евро в месяц, подробнее в чате Vue.js",
+  "Remote job, $3000 monthly, details in README.md",
+  "Remote job, $3000 monthly, details in the attached spec.pdf",
+  "Remote job, $50 a day, apply here.Thanks!",
+  "Remote job, $50 a day, apply here.Today we review CVs",
+  "Remote work, $3000 a month, details here.One more thing: no fees",
+  "Remote work, $3000 a month, info here.Me and my team will reply",
+  // The same with a lowercase next word that is also an ending (review round 4).
+  "Remote work, $3000 a month, details here.one more thing",
+  "Remote work, $3000 a month, info here.me and my team reply",
+  "Remote work, $3000 a month, details below.in short: no fees",
+  "Remote work, $3000 a month, details soon.one more thing",
+  "Remote work, $3000 a month, details in bio.me and my team reply",
+  "Remote work, $3000 a month, contact Here.me and my team",
+  "Удалённая работа 3000 евро в месяц, подробнее у HR.Pro tip: пишите вежливо",
+  // A year closing a sentence is no amount before the next one's period.
+  "Удалённая работа в команде с 2015. Неделю назад открыли набор, подробности тут https://x.com",
+  // A period without an amount, or an amount that is a count, is no pay.
+  "Вакансия из дома, отчёты еженедельно, описание здесь example.sbs",
+  "Вакансия из дома: 12 евроопросов еженедельно, подробнее здесь example.sbs",
+];

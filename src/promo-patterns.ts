@@ -145,26 +145,38 @@ const GIG = any(
   "‹(?:remote|online|easy|simple|home|daily|flexible|extra|paid) (?:[\\p{L}-]+ )?(?:jobs?|work|gigs?)›|‹(?:jobs?|work) (?:from home|online|remotely|opportunit\\p{L}*|offers?|available)›|‹(?:offering|offer you|we have) (?:a |some )?(?:jobs?|work)›",
   "‹(?:need|want|looking for) (?:a |some )?(?:[\\p{L}-]+ )?(?:jobs?|work)›",
 );
-const CUR = "(?:\\p{Sc}|руб\\p{L}*|р\\.|р›|usdt?|eur|долл\\p{L}*|бакс\\p{L}*|грн|гривен\\p{L}*|тг|тенге|сум|byn|dollars?|bucks|euros?)";
+const CUR = "(?:\\p{Sc}|руб\\p{L}*|р\\.|р›|usdt?|eur›\\.?|долл\\p{L}*|бакс\\p{L}*|грн|гривен\\p{L}*|тг|тенге|сум(?:ов|а|ы)?›|byn|dollars?›|bucks›|euros?›|евро›|евр›\\.?|злот\\p{L}*|фунт\\p{L}*|pln|gbp)";
 const MULT = "(?:тыс\\p{L}*\\.?|т\\.|т›|k›|к›)";
 // An amount needs a currency, a multiplier or at least three digits, so "1 day" or "2 раза" never count.
 // Runs are bounded and start at a number's first digit, so long digit strings stay linear.
 const AMOUNT = `(?<!\\d)(?:\\p{Sc}\\s?\\d[\\d\\s.,]{0,10}\\d|\\p{Sc}\\s?\\d|\\d[\\d.,]{0,8}\\s?${MULT}(?:\\s?${CUR})?|\\d[\\d\\s.,]{0,10}\\s?${CUR}|\\d{1,3}(?:[\\s.,]\\d{3}){1,3}|\\d{3,9})`;
+// Cash needs a currency, so a count ("ежедневно 200 звонков", "weekly 500 words", "10к шагов") is no pay.
+const CASH = `(?<!\\d)(?:\\p{Sc}\\s?\\d[\\d\\s.,]{0,10}\\d|\\p{Sc}\\s?\\d|\\d[\\d.,]{0,8}\\s?${MULT}\\s?${CUR}|\\d[\\d\\s.,]{0,10}\\s?${CUR})`;
 const RANGE = `${AMOUNT}(?:\\s?[-–—]\\s?(?:${AMOUNT}|\\d{1,9}))?`;
-const UNIT = "(?:день|сутки|смену|смена|час|неделю|месяц|выходн\\p{L}*|day|hour|hr|shift|week|month|weekend)›";
+// "800 евро еженедельно", "€800 weekly", "800 евро, выплаты еженедельно" (#561).
+const PERIODIC = "(?:daily|weekly|monthly|ежедневно|еженедельно|ежемесячно)›";
+// A payout word ("800 евро, выплаты еженедельно") follows cash only: after a bare number it counts payments ("200 оплат
+// в день", "300 payments a day"), which is no pay.
+const PAID = "(?:,?\\s(?:выплат\\p{L}*|оплат\\p{L}*|платим|paid|payouts?|payments?))";
+const CASH_RANGE = `(?:${AMOUNT}\\s?[-–—]\\s?)?${CASH}|${CASH}\\s?[-–—]\\s?(?:${AMOUNT}|\\d{1,9})`;
+const UNIT = "(?:день|сутки|смену|смена|час|неделю|нед|месяц|мес|выходн\\p{L}*|day|hour|hr|shift|week|wk|month|mo|weekend)›";
+const EVERY = `(?:(?:в|за|/|per|a|an|each|every|каждый|каждую|каждое)\\s?)?${UNIT}`;
 // "от 5 тысяч в день", "$100 a day", "300₽/час", "5-7к за смену", "в день от 5000".
 const PAY = any(
-  `${RANGE}\\s?(?:(?:в|за|/|per|a|an|each|каждый)\\s?)?${UNIT}`,
-  `${RANGE}\\s?(?:daily|ежедневно)›`,
+  `${RANGE}\\s?${EVERY}`,
+  `${RANGE}\\s?${PERIODIC}`,
+  `(?:${CASH_RANGE})${PAID}\\s?(?:${EVERY}|${PERIODIC})`,
   `‹(?:в|за|per|a|каждый|каждую|every)\\s${UNIT}[^.!?]{0,12}?(?:от|from|до|up to)?\\s?${AMOUNT}`,
+  // "еженедельно от 800 евро", "Еженедельный доход от 800 евро", "weekly from $500" (#561).
+  `‹(?:daily|weekly|monthly|ежедневн\\p{L}*|еженедельн\\p{L}*|ежемесячн\\p{L}*)(?:\\s(?:доход|заработ\\p{L}*|зарплат\\p{L}*|оплат\\p{L}*|выплат\\p{L}*|income|pay|salary))?\\s?(?:(?:от|from|до|up to)\\s?)?${CASH}`,
 );
 const DM = any(
   "‹(?:в|во)\\s?(?:лс|л\\.\\s?с\\.?|личк\\p{L}*|личн\\p{L}*|директ|пм)(?![\\p{L}\\p{N}])",
   "‹(?:пиш(?:и|ите)|напиш(?:и|ите)|писать|стучи(?:те)?|обраща(?:йся|йтесь|ться)) (?:мне|сюда|нам)›",
   "‹(?:dm|pm|direct message|message me|text me|write (?:to )?me|contact me|inbox me|hit me up)›",
-  // A handle or link is a contact only when introduced as one ("пиши - @…", "подробнее 👉 http…"),
+  // A handle or link is a contact only when introduced as one ("пиши - @…", "подробнее 👉 http…", "описание здесь👉 http…"),
   // so addressing someone or sharing an article is not a DM call.
-  "‹(?:пиш|напиш|писать|контакт|связ|обращ|подробн|детал|инф|звон|тел|ватсап|whatsapp|телеграм|тг|tg|сюда|тут|здесь|ниже|ссылк|переход|жми|details|info|contact|apply|join|write|message|text|dm|here|link)[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)",
+  `‹(?:пиш|напиш|писать|контакт|связ|обращ|подробн|детал|описан|инф|звон|тел|ватсап|whatsapp|телеграм|тг|tg|сюда|тут|здесь|ниже|ссылк|переход|жми|details|info|contact|apply|join|write|message|text|dm|here|link)[^.!?]{0,20}?(?:@[a-z][a-z0-9_]{3,}|t\\.me/|wa\\.me/|https?://)`,
 );
 const DM_ALL = new RegExp(DM.source, "giu");
 // A DM someone else sent the author is a report, not a call: "мне написали в лс", "в лс писали", "got a DM".
@@ -273,8 +285,13 @@ function seeksWork(text: string): boolean {
 }
 // Talk about the author's own job ("работаю курьером, получаю 4000 в день", "I work part time and earn
 // $20 per hour"), unless the message also recruits ("нужны люди в команду", "with this side job").
+// A friend's or relative's job is told the same way: "Знакомая работает из дома за 1500 евро в месяц" (#561).
 const OWN_JOB = any("‹(?:работаю|подрабатываю|зарабатываю|заработал[аи]?|подзаработал[аи]?|получаю)›",
-  "‹i(?: also| currently| now| just)? (?:work|earn|make|worked|earned|made)›", "‹i'?m (?:working|earning|making)›");
+  "‹i(?: also| currently| now| just)? (?:work|earn|make|worked|earned|made)›", "‹i'?m (?:working|earning|making)›",
+  "‹(?:знаком(?:ая|ый|ые)|подруг[аи]|друг|друзья|муж|жена|сестра|брат|сосед(?:ка)?|коллег[аи]) (?:\\p{L}+ )?(?:работа(?:ет|ют)|подрабатыва(?:ет|ют)|зарабатыва(?:ет|ют)|получа(?:ет|ют))›");
+// Where the author looked for vacancies ("вакансии ищу тут", "вакансии смотрела здесь") tells their own story, not a hire.
+const SOUGHT_VACANCIES = re("‹ваканси\\p{L}* (?:ищу|искал\\p{L}*|смотрю|смотрел\\p{L}*|нашл\\p{L}*|нашёл|нашел)›", "giu");
+const ownJob = (text: string) => OWN_JOB.test(text) && !RECRUITS.test(text.replace(SOUGHT_VACANCIES, " "));
 const RECRUITS = any("‹(?:подработ|ваканси|сотрудник|персонал|требу[ею]тся|набира[ею]м|набор›|ищем|приглаша[ею]м|в команд|научу|обучу|обучение|кому интересно|хоч(?:ешь|ете|ет) (?:так же|также|тоже))",
   "‹нужн[ыао]? (?:\\d+ |\\p{L}+ ){0,2}(?:людей|люди|человек|ребят|девуш|парн)",
   "‹(?:side[ -]?(?:job|gig|hustle|income)|hiring|vacanc|join|team|teach you|show you|opportunit|need(?:ed)? (?:\\p{L}+ ){0,2}people|looking for (?:\\p{L}+ ){0,2}(?:people|workers|staff))");
@@ -1671,6 +1688,50 @@ function isAttributed(raw: string): boolean {
   return !HEADER.test(words) && !GIG.test(words) && !RECRUITS.test(words) && !JOB_WORD.test(words);
 }
 
+// A link Telegram shows without its scheme ("x.sbs", "jobs.example.com/apply"), found in the raw text so Cyrillic words
+// that fold to Latin lookalikes ("тут.сом") never count. Only known endings count, so file names ("README.md", "spec.pdf"),
+// frameworks ("Node.js") and missing spaces ("here.Thanks") are no link. An ending is lowercase or all caps, so a capitalised
+// word after a missing space ("here.Today", "HR.Pro") is none either. Labels are bounded, so long runs stay linear (#561).
+const TLDS = "com|net|org|info|biz|io|co|me|app|dev|site|online|website|store|shop|xyz|top|sbs|cyou|bond|lol|cc|in|su|click|live|life|link|pro|vip|club|fun|space|icu|cfd|buzz|today|world|work|jobs|tech|digital|best|win|one|monster|rest|homes|quest|beauty|hair|skin|makeup|autos|boats|yachts|mom|pw|ru|ua|kz|by|uz|eu|pl|de|uk|us";
+const BARE_LINK = new RegExp(`(?<![\\p{L}\\p{N}@._/\\-])(?:[a-zA-Z0-9][a-zA-Z0-9-]{0,40}\\.){1,3}(?:${TLDS}|${TLDS.toUpperCase()})(?![\\p{L}\\p{N}_\\-]|\\.[\\p{L}\\p{N}])`, "gu");
+// A missing space before an everyday word that is also an ending ("details here.one more thing", "in bio.me and my team")
+// is prose: a single label with such an ending, followed by a space and a lowercase Latin word, is no domain. A domain at
+// the end, before an emoji or before Cyrillic text ("x.online и зарабатывай") still counts, and so does "info.sbs". The
+// cost: such a real domain right before English words ("earn.me and apply") reads as prose.
+const PROSE_ENDING = /^[a-zA-Z0-9-]+\.(?:one|me|in|us|co|by|today|work|life|live|best|win|fun|rest|world|mom)$/u;
+const gluedProse = (domain: string, offset: number, raw: string) => PROSE_ENDING.test(domain) && /^ [a-z]/u.test(raw.slice(offset + domain.length, offset + domain.length + 2));
+// A post ends on its hidden link's words ("Описание здесь👉", "Подробнее."), so only such an ending gets the placeholder:
+// a question ("…кто тут так зарабатывает?") or a plea ("…напишите") under a shared article stays unlinked. Emoji and
+// arrows are already spaces in promo text; the tail is one class run anchored at the end, so it stays linear.
+const LINK_END = re("‹(?:здесь|тут|сюда|ниже|подробн\\p{L}*|детал\\p{L}*|описани\\p{L}*|ссылк\\p{L}*|перейт\\p{L}*|переход\\p{L}*|жми|нажми|here|details?|below|link|apply)[\\s.!:\\-–—]*$");
+const LINK_TAIL = /(?<![\s.!:\-–—])[\s.!:\-–—]+$/u;
+// A member passing on what an article or others say ("Читал статью…", "пишут, курьеры получают…", "according to this
+// article") points at a source, not a contact. Only relaying wording counts, so an ad's "пишешь статьи", "source of
+// income", "article reviews" or "отзывы говорят сами за себя" still gets its link.
+const RELAYED = any(
+  "‹(?:читал|прочитал|прочла|нашёл|нашел|нашла|увидел|наткнул)\\p{L}*\\s(?:\\p{L}+\\s){0,2}?стать",
+  "‹в стать(?:е|ях)›|‹(?:пишут|говорят)(?:,|\\sчто›)",
+  "‹(?:read|found|saw) (?:an|this|that|the) article›|‹(?:this|that) article›|‹in (?:an|the|this) article›|‹according to›|‹they say›",
+);
+// A member who tells how they found their own job and links their own write-up ("Нашла удалённую работу, … рассказала
+// подробнее здесь"). Only one person's write-up counts, so a recruiter's "описали здесь" keeps its link, and the post must
+// tell the author's own job without an offer or a hire (#561).
+const OWN_WRITE_UP = any("‹(?:рассказал|написал|описал)а?\\s(?:\\p{L}+\\s){0,2}?(?:здесь|тут)›", "‹i (?:wrote|posted|blogged)(?: about it| more)? (?:here|below)›");
+const FOUND_JOB = any("‹(?:нашл[аи]|нашёл|нашел|устроил(?:ся|ась)) (?:\\p{L}+ ){0,2}?работ", "‹(?:i )?(?:found|got|landed) (?:a|an|my) (?:[\\p{L}-]+ ){0,2}?job›");
+const OFFERS_WORK = any("‹предлага\\p{L}*", "‹(?:offer|offering|we offer|hiring)›");
+const ownWriteUp = (text: string) => OWN_WRITE_UP.test(text) && (FOUND_JOB.test(text) || OWN_JOB.test(text))
+  && !RECRUITS.test(text) && !OFFERS_WORK.test(text) && !hires(text);
+// The side-gig contact check reads a bare domain as a link, and a hidden text link (Telegram keeps its URL out of the
+// text) as one placed where an original post's words end: "Описание здесь👉" with "здесь" linked. A forward ending that
+// way is a shared article ("…Подробнее"), so it stays unlinked, and so does a member's own relayed article. The link is a
+// placeholder: its own path is no contact.
+function linkedText(message: ModerationMessage, raw: string, text: string): string {
+  const bare = raw.replace(QUOTED, " ").replace(BARE_LINK, (domain, offset: number, source: string) => gluedProse(domain, offset, source) ? domain : `https://${domain}`);
+  const linked = bare === raw.replace(QUOTED, " ") ? text : promoText(bare);
+  return message.embeddedLinks.length && !message.isForwarded && LINK_END.test(linked) && !RELAYED.test(text) && !ownWriteUp(text)
+    ? `${linked.replace(LINK_TAIL, "")} https://link` : linked;
+}
+
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
   if (message.mediaOnly) return;
   const raw = message.text.trim();
@@ -1679,7 +1740,8 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   const undenied = text.replace(DENIAL, " ");
   if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied)) return;
   // A question about pay, or about whether the offer is real, is conversation, not an offer.
-  if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(text) && !seeksWork(text) && !(OWN_JOB.test(text) && !RECRUITS.test(text))
+  const linked = linkedText(message, raw, text);
+  if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(linked) && !seeksWork(text) && !ownJob(text)
     && !asksAboutPay(text) && !doubtsTheOffer(text)) {
     if (callsItACon(undenied)) return;
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source)) ? undefined : "side_gig_offer";
