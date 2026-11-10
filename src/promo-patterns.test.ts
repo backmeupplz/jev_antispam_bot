@@ -16,6 +16,8 @@ import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialCo
   profitTestimonialFrDeControls, profitTestimonialFrDeIncidents, profitTestimonialFrDeParaphrases, profitTestimonialFrDePointerAds,
   profitTestimonialFrDePointerControls, profitTestimonialFrDeReviewAds, profitTestimonialFrDeReviewControls, profitTestimonialIncident,
   profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
+import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookParaphrases, mindsetHookRequest, mindsetHookReview2Ads, mindsetHookReview2Controls, mindsetHookReview4Ads, mindsetHookReview4Controls, mindsetHookReview5Ads, mindsetHookReview5Controls, mindsetHookReview6Ads, mindsetHookReview6Controls, mindsetHookReview7Ads, mindsetHookReview7Controls, mindsetHookReview8Controls, mindsetHookReview9Ads, mindsetHookReview9Controls, mindsetHookReview10Ads, mindsetHookReview10Controls, mindsetHookReview11Ads, mindsetHookReview11Controls, mindsetHookReview12Controls, mindsetHookReview13Ads, mindsetHookReview13Controls, mindsetHookReview15Ads, mindsetHookReview15Controls, mindsetHookReview16Ads, mindsetHookReview16Controls, mindsetHookReview18Ads, mindsetHookReview18Controls, mindsetHookReview19Ads, mindsetHookReview19Controls, mindsetHookReviewAds,
+  mindsetHookReviewControls, mindsetHookReviewReplies } from "./fixtures/mindset-hook";
 import { promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
@@ -384,4 +386,82 @@ test("profit testimonial matching stays fast on 4,096-character adversarial inpu
   for (const text of inputs) {
     expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
   }
+});
+
+const hook = "mindset_hook";
+test("the #611 funnel-less mindset hook matches standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(mindsetHookIncident, patch))).toBe(hook);
+  for (const text of mindsetHookParaphrases) expect([text, promoPattern(plain(text))]).toEqual([text, hook]);
+});
+
+test("film and book talk, questions to the chat, skeptics, stories about others and reports are no mindset hook", () => {
+  for (const text of mindsetHookControls) expect([text, promoPattern(plain(text))]).toEqual([text, undefined]);
+  // Every part is needed: the opener, the told second-person claim and the closing question to "you".
+  const [opener, claim] = ["Недавно пересмотрел интересный фильм.", "Твой успех зависит от масштаба твоего мышления."];
+  const close = "А если именно твой образ мышления определяет границы?";
+  expect(promoPattern(plain([opener, claim, close].join(" ")))).toBe(hook);
+  for (const parts of [[claim, close], [opener, close], [opener, claim], [opener, claim, "А ты смотрел?"], [opener, claim, close, "Пишите, что думаете."]]) {
+    expect([parts, promoPattern(plain(parts.join(" ")))]).toEqual([parts, undefined]);
+  }
+  // Long posts are left to the model.
+  expect(promoPattern(plain(mindsetHookIncident.replace("решительности", "решительности, " + "упорства и терпения, ".repeat(25))))).toBeUndefined();
+});
+
+test("in a reply to another member's message the \"you\" is that member; a channel-post comment still matches", () => {
+  expect(promoPattern(plain(mindsetHookAnswer, memberReply(mindsetHookRequest)))).toBeUndefined();
+  expect(promoPattern(plain(mindsetHookAnswer, memberReply("Какой фильм посмотреть вечером?")))).toBeUndefined();
+  expect(promoPattern(plain(mindsetHookAnswer, memberReply("Всем привет! Как дела?")))).toBeUndefined();
+  for (const [answer, source] of mindsetHookReviewReplies) {
+    expect(promoPattern(plain(answer, memberReply(source)))).toBeUndefined();
+    expect(promoPattern(plain(answer))).toBe(hook);
+  }
+  // A channel post, the author's own message or no reply at all leaves the post standalone.
+  expect(promoPattern(plain(mindsetHookAnswer, channelReply))).toBe(hook);
+  expect(promoPattern(plain(mindsetHookAnswer, { preview: [{ ...memberReply("Как дела?").preview![0]!, sourceAuthor: "same_author" }] }))).toBe(hook);
+  expect(promoPattern(plain(mindsetHookAnswer))).toBe(hook);
+});
+
+test("#611 review: a named member, a film's, parent's or teacher's words, boundaries, sarcasm and pasted copies are no mindset hook", () => {
+  for (const text of [...mindsetHookReviewControls, ...mindsetHookReview2Controls]) expect([text, promoPattern(plain(text))]).toEqual([text, undefined]);
+  for (const text of [...mindsetHookReviewAds, ...mindsetHookReview2Ads]) expect([text, promoPattern(plain(text))]).toEqual([text, hook]);
+});
+
+test("#611 review 9: a close asking the chat for a recommendation, a fact, a shared taste or whether \"you\" saw it, and a \"Кто ещё …?\", are no mindset hook", () => {
+  for (const text of [...mindsetHookReview9Controls, ...mindsetHookReview10Controls, ...mindsetHookReview11Controls, ...mindsetHookReview12Controls, ...mindsetHookReview13Controls, ...mindsetHookReview15Controls, ...mindsetHookReview16Controls, ...mindsetHookReview18Controls, ...mindsetHookReview19Controls]) expect([text, promoPattern(plain(text))]).toEqual([text, undefined]);
+  for (const text of [...mindsetHookReview9Ads, ...mindsetHookReview10Ads, ...mindsetHookReview11Ads, ...mindsetHookReview13Ads, ...mindsetHookReview15Ads, ...mindsetHookReview16Ads, ...mindsetHookReview18Ads, ...mindsetHookReview19Ads]) expect([text, promoPattern(plain(text))]).toEqual([text, hook]);
+  expect(promoPattern(plain(mindsetHookIncident))).toBe(hook);
+  for (const text of mindsetHookParaphrases) expect([text, promoPattern(plain(text))]).toEqual([text, hook]);
+});
+
+test("#611 review 4: an @mention anywhere, a name before a closing emoji, a claim handed to a book, film, quote or coach and a reply to a textless member message are no mindset hook", () => {
+  for (const text of [...mindsetHookReview4Controls, ...mindsetHookReview5Controls, ...mindsetHookReview6Controls, ...mindsetHookReview7Controls, ...mindsetHookReview8Controls]) expect([text, promoPattern(plain(text))]).toEqual([text, undefined]);
+  for (const text of [...mindsetHookReview4Ads, ...mindsetHookReview5Ads, ...mindsetHookReview6Ads, ...mindsetHookReview7Ads]) expect([text, promoPattern(plain(text))]).toEqual([text, hook]);
+  // A reply to another member's voice note, photo or sticker: "you" is that member, though the source has no text.
+  const textless = { preview: [{ ...memberReply("x").preview![0]!, text: undefined }] };
+  for (const [answer] of mindsetHookReviewReplies) expect(promoPattern(plain(answer, textless))).toBeUndefined();
+  expect(promoPattern(plain(mindsetHookIncident, textless))).toBeUndefined();
+  // A textless reply to the author's own message or a channel post, and an external reply, leave the post standalone.
+  expect(promoPattern(plain(mindsetHookIncident, { preview: [{ ...textless.preview[0]!, sourceAuthor: "same_author" }] }))).toBe(hook);
+  expect(promoPattern(plain(mindsetHookIncident, { preview: [{ ...textless.preview[0]!, sourceKind: "channel" }] }))).toBe(hook);
+  expect(promoPattern(plain(mindsetHookIncident, { preview: [{ kind: "external_reply", origin: "external", sourceKind: "user",
+    sourceAuthor: "other_author", isForwarded: false, embeddedLinks: [] }] }))).toBe(hook);
+});
+
+test("mindset hook matching stays fast on 4,096-character adversarial input", () => {
+  const inputs = ["недавно посмотрел фильм. ".repeat(164), "твой успех зависит от твоего мышления, ".repeat(106), "а если твой успех? ".repeat(216),
+    "недавно посмотрел фильм и " + "твой ".repeat(800) + "?", "смотрел".repeat(585), ".".repeat(4096), "?".repeat(4096), "\n".repeat(4096),
+    "саша, " + "a, ".repeat(2000) + "дима?", "ты " + "a ".repeat(2000) + "советовал", "🎬 ".repeat(1400),
+    // A run of hyphens or a long hyphenated word after a heading word, which once split many ways in the heading's tail (#611 review 18).
+    "Посмотрел фильм. мысль " + "-".repeat(626) + ",твой успех зависит от мышления. А если твой успех?",
+    "Посмотрел фильм. мысль " + "а-".repeat(313) + ",твой успех зависит от мышления. А если твой успех?",
+    "Посмотрел фильм. мой " + "а-".repeat(313) + " мысль - твой успех зависит от мышления. А если твой успех?",
+    "Посмотрел фильм. Твой успех " + "не от мышления ".repeat(45) + "зависит. А если твой успех?",
+    "Посмотрел фильм. Твой успех зависит от удачи, а не от мышления" + " и амбиций".repeat(60) + ". А если твой успех?",
+    "Посмотрел фильм. Твой успех зависит " + "не от позитивного мышления, ".repeat(24) + "а от удачи. А если твой успех?",
+    "Посмотрел фильм. мысль " + "- ".repeat(300) + "твой успех зависит от мышления. А если твой успех?",
+    "Посмотрел фильм. Твой успех зависит не " + "ого".repeat(215) + " мышления. А если твой успех?",
+    "Посмотрел фильм. Твой успех зависит от удачи, а не " + "о-".repeat(320) + "о мышления. А если твой успех?"]
+    // Over 700 characters the rule returns at once, so the inputs sit at its length bound.
+    .map((text) => text.slice(0, 700));
+  for (const text of inputs) expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
 });

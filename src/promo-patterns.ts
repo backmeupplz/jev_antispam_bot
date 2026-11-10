@@ -9,6 +9,8 @@ import type { ModerationMessage } from "./spam";
 // #470 adds a sixth, judged on the sender's profile rather than the text: see profile-funnel.ts.
 // #465 adds a seventh: an investment-profit testimonial (a first-person claim that a stake grew + a contact call + an invite or contact link).
 // #468 reads its claims and calls in French and German too.
+// #611 adds an eighth: the funnel-less "your mindset sets your limits?" warm-up post (a film or book opener + a second-person
+// mindset claim + a closing rhetorical question to the reader).
 export type PromoPattern =
   | "side_gig_offer"
   | "bot_testimonial"
@@ -16,6 +18,7 @@ export type PromoPattern =
   | "adult_content_promo"
   | "book_copy_offer"
   | "profit_testimonial"
+  | "mindset_hook"
   | "profile_channel_funnel";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
@@ -1681,6 +1684,177 @@ function toldPart(text: string): string {
   return parts.filter((part, i) => !asked(part, i)).join("").replace(MODERATION_BOT, " ");
 }
 
+// #611: the funnel-less warm-up post of the #153/#430 self-development campaign ("Недавно пересмотрел интересный фильм и вновь
+// убедился, что уровень твоих достижений прежде всего зависит от масштаба твоего мышления… А если именно твой образ мышления
+// определяет границы того, чего ты можешь достичь?"). It has no link, handle or DM call: a reply or a profile click is the funnel.
+// Three parts, all needed: the opening sentence has the author watching, reading or listening to a film, book, talk or podcast;
+// a told sentence claims, in the generic second person, that "your" mindset, ambition or goals decide "your" results; and the
+// message ends on a question to "you" about that mindset. Russian only, and short, like the campaign's posts.
+const HOOK_CONSUMED = any("‹(?:пере|по|про|до)?смотрел[аи]?›", "‹(?:пере|про|до)?чита(?:л|ла|ли)›", "‹(?:прочл[аи]?|проч[её]л)›",
+  "‹(?:пере|по|про|до)?слуша(?:л|ла|ли)›", "‹открыл[аи]? для себя›", "‹наткнул(?:ся|ась|ись) на›");
+const HOOK_TITLED = new RegExp(`(?:${HOOK_CONSUMED.source})\\s?[«"“„]`, "iu");
+const HOOK_MEDIA = any("‹(?:фильм|кинофильм|кино›|сериал|документалк|мультфильм|мультик|книг|книжк|аудиокниг|подкаст|интервью|лекци|выступлени|видео|ролик|биографи|байопик)");
+// Somebody else watched it ("Сын недавно посмотрел фильм…"): a story, not the author's hook.
+const HOOK_OTHER_VIEWER = any("‹(?:он|она|они|сын|дочь|дочка|муж|жена|друг|подруга|брат|сестра|коллега|ребенок|мама|папа|знаком\\p{L}*)›");
+const HOOK_YOU = re("‹(?:ты|тебя|тебе|тобой|тво(?:й|я|е|ё|и|его|ей|их|им|ему|ю|ими))›");
+const HOOK_MINDSET_WORD = "(?:(?:мышлен|амбици|решительн|достиж|достич|добить|успех|успеш|потенциал|масштаб|предел|мечт|убеждени|установк|саморазвит|дисциплин|уверенност|мотиваци)"
+  + "|цел(?:ь|и|ей|ям|ями|ях)›|зон\\p{L}* комфорт)";
+const HOOK_MINDSET = re("‹" + HOOK_MINDSET_WORD);
+const HOOK_CLAIM = any("‹(?:завис|определя|определ[её]н|решает|влия|ограничива|формиру|зада[её]т)");
+// A member arguing against the thesis negates the mindset that the claim names as the cause: "…зависит от удачи, а не от
+// (масштаба твоего / позитивного) мышления (и амбиций)", "…определяет не мышление, а удача". With the negated words removed,
+// a cause must remain: after the deciding verb ("не от мотивации, а от дисциплины", "от твоих привычек, а не от мотивации")
+// or after a contrastive "а/но" ("Не мотивация, а твоё мышление определяет…"). An outcome word ("успех", "достижения") is no cause.
+// Free modifiers ("а не от масштаба твоего мышления") count only after a preposition, where no verb can stand; without one only
+// an adjective ("не позитивное", "позитивным", "высокой", "какое-то там"; not -ая/-яя, the ending of gerunds such as "меняя",
+// and -ой/-ей only after a four-letter stem or before "-то", not imperatives such as "строй", "жалей"), a possessive
+// and "масштаб/уровень/образ/сила" do, so a negated verb or gerund before the mindset stays a claim ("ничто не ограничивает
+// твой потенциал…", "не меняя своё мышление, ты…"). Modifiers are never "а/но/и/или/не", so a negation never runs into the
+// affirmed half.
+const HOOK_MODIFIER = "(?:(?!(?:а|но|и|или|не)›)\\p{L}+(?:-\\p{L}+)* ){0,2}";
+const HOOK_NEGATED_PREP = "(?:от|в|на|из-за|благодаря|за сч[её]т) ";
+// The order is Russian's: a possessive and a level word first, then adjectives right before the mindset ("не твоё позитивное
+// мышление"), so an imperative before a possessive ("не строй свою мечту", "не жалей своей мотивации") is no adjective.
+const HOOK_OWNED = "(?:(?:тво|сво)\\p{L}* )?(?:(?:масштаб|уровн|образ|сил)\\p{L}* )?(?:(?:тво|сво)\\p{L}* )?"
+  + "(?:(?:(?!(?:тво|сво)\\p{L}* )(?:\\p{L}+(?:ого|его|ый|ий|ое|ее|ые|ие|ых|их|ым|им|ыми|ими|ую|юю)|\\p{L}{4,}(?:ой|ей)|\\p{L}+(?:ой|ей)(?=-))(?:-(?:то|нибудь|либо))?(?![\\p{L}-])|там) ){0,2}";
+const HOOK_NEGATED = "(?:" + HOOK_NEGATED_PREP + HOOK_MODIFIER + "|" + HOOK_OWNED + ")" + HOOK_MINDSET_WORD + "\\p{L}*";
+const HOOK_DENIED = re("‹не " + HOOK_NEGATED + "(?:(?:,| и| или) " + HOOK_NEGATED + ")*", "giu");
+const HOOK_CAUSE_WORD = "(?:(?:мышлен|амбици|решительн|потенциал|масштаб|предел|мечт|убеждени|установк|саморазвит|дисциплин|уверенност|мотиваци|привыч)"
+  + "|цел(?:ь|и|ей|ям|ями|ях)›|зон\\p{L}* комфорт)";
+const HOOK_CAUSE = re("‹" + HOOK_CAUSE_WORD);
+// A wrong affirmation only keeps a post matching, so its modifiers are free ("а железная дисциплина", "а именно мышление").
+const HOOK_AFFIRMED = re("‹(?:а|но) (?:" + HOOK_NEGATED_PREP + ")?" + HOOK_MODIFIER + HOOK_CAUSE_WORD);
+function denied(part: string): boolean {
+  const kept = part.replace(HOOK_DENIED, " ");
+  if (kept === part || HOOK_AFFIRMED.test(kept)) return false;
+  const claim = HOOK_CLAIM.exec(kept);
+  return !claim || !HOOK_CAUSE.test(kept.slice(claim.index + claim[0].length));
+}
+const HOOK_LENGTH = 700;
+// The "you" is somebody's: a named member ("Саша, …", "…, Дима?"), what "you" advised, or words told to someone else.
+// A capitalised word before a comma is a name unless it addresses everyone or opens the post ("Друг, …", "Знаешь, …").
+// The `i` flag makes \p{Lu} match lowercase too, on purpose: a lowercase name ("саша, …") is still a name. It can only keep
+// more posts, never delete one.
+const HOOK_VOCATIVE = /^(?!(?:Друзья|Друг|Дружище|Подруга|Ребята|Ребят|Народ|Люди|Коллеги|Девочки|Девушки|Девчонки|Мужики|Парни|Пацаны|Бро|Всем|Привет|Кстати|Короче|Честно|Признаюсь|Знаешь|Знаете|Слушай|Слушайте|Представь|Представьте|Смотри|Смотрите|Итак|Ну|Так|Вот|Да|Нет|Вообще|Блин|Хм|Ладно|Странно|Интересно|Удивительно|Кажется|Недавно|Вчера|Сегодня|Однажды|Помню)(?!\p{L}))\p{Lu}\p{Ll}+,\s/iu;
+// An emoji before the name ("🙂 Саша, …") still opens with the name.
+const HOOK_LEAD_EMOJI = /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u;
+// A name at the end may be followed by punctuation, an emoji or an emoticon: "…, Дима? 😉", "…, Дима?)", "…, Дима :)", "…, Дима? =)".
+const HOOK_VOCATIVE_END = /,\s\p{Lu}\p{Ll}+[\s?!.,:;=()\-\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]*$/u;
+// An @mention anywhere names the member the "you" is ("…, @dima_k?", "@dima_k, а ты…").
+const HOOK_MENTION = /(?<![\p{L}\p{N}_@.])@[a-z][a-z0-9_]{3,}/iu;
+const HOOK_REFERS = any("‹(?:ты|вы) (?:\\p{L}+ ){0,2}(?:по)?(?:совет|рекоменд|скид|скинул|кида|говорил|писал|упомина)", "‹(?:по )?(?:твоему|вашему|твой|ваш) совет");
+// Words anywhere before the claim's "ты" that hand it to a film, a hero or a person: "Там показано, что твой…",
+// "Мой тренер всегда повторял, что твой…", "Героиня твердит: твой…", "Как сказано в фильме, твой…", "Согласно книге, твой…"
+// ("убедился в сказанном:" stays the author's).
+// Somebody's opinion or reported words need a subject of their own: not the author's pro-drop "Уверен, что…", "и уверен", "я
+// думал", "Я твёрдо уверен", "Я всегда считал", "Раньше считал…", "Многие думают…", "и тоже уверен" or "не верил"
+// ("Он тоже считал", "Отец сам верил" are somebody's; "Сам уверен" is not). Only an adverb between "я" and the verb counts, not a
+// verb ("Как я понял Джобс считал…").
+const HOOK_THIRD = "(?<=[\\p{L}-] )(?<!^(?:тоже|также|сам|сама) )(?<!‹(?:я|мы)(?: (?![\\p{L}-]*(?:л|ла|ли|ю|у|им|ем)›)[\\p{L}-]+){1,2} )(?<!‹(?:я|мы|и|а|но|не|теперь|снова|вновь|раньше|когда-то|стал|стала|многие|все|люди|большинство|некоторые|окончательно|точно|полностью|абсолютно|еще|опять|лишь|только)(?: (?:тоже|также|сам|сама))? )";
+const HOOK_SAID = any("‹(?:там|говор\\p{L}*|сказал\\p{L}*|сказано|объясн\\p{L}*|показан\\p{L}*|показыва\\p{L}*|пишет|учит|утвержда\\p{L}*|(?<!‹(?:про|о|об)(?: [\\p{L}-]+)? )геро(?:й|я|ю|ем|е|и|ев|ям|ями|ях|иня|ини|иню|иней)|автор(?:а|у|ом|ы|ов)?|согласно)›",
+  "‹(?:повторя(?:л|ла|ли|ет|ют)|тверд(?:ил|ила|или|ит|ят)|по (?:его |её |ее |их )?словам)›",
+  // "Он считает, что твой…", "Джобс считал…", "Мияги учил…", "Кийосаки доказывает…", "Тренер рассказывал…".
+  HOOK_THIRD + "‹(?:счита(?:ет|ют|л|ла|ли)|дума(?:ет|ют|л|ла|ли)|вер(?:ит|ят|ил|ила|или)|учил[аи]?|уверен[аы]?|убежд[её]н[аы]?|доказыва\\p{L}*|доказал\\p{L}*"
+    + "|рассказ(?:ыва|а)л\\p{L}*|рассказыва(?:ет|ют)|уверя\\p{L}*|убежда(?:ет|ют|л|ла|ли)|призыва\\p{L}*|заяв(?:ля|и)\\p{L}*|настаива\\p{L}*|внуша\\p{L}*)›",
+  // "По мнению гостя, твой…" (not "по моему мнению"), "С точки зрения психолога", "Как выразился Джобс", "Мол, твой…",
+  // a leading "Типа, твой…" or "он/коуч типа твой…" (not a filler "типа" after a noun), "У главного героя…" (not "про
+  // главного героя"), "Режиссёр хотел сказать, что твой…".
+  "‹по (?!(?:моему|нашему)›)(?:[\\p{L}-]+ ){0,2}мнению›", "‹с точки зрения (?!(?:моей|нашей)›)", "‹как выразил\\p{L}*", "‹(?:мол|дескать)›", "^типа›", "‹(?:он|она|они|такой|такая|такие|коуч\\p{L}*|тренер\\p{L}*|гуру|спикер\\p{L}*|психолог\\p{L}*|блогер\\p{L}*) типа›",
+  "‹хотел[аи]? (?:этим |нам )?сказать›");
+// Direct speech: a colon and a dash ("Отец сыну: — Твой успех…", also with the dash on the next line) or a colon right after
+// whom it is told to ("Отец сыну: твой успех…", "А он такой (типа): твой…"), unless the lead-in is the author's own takeaway ("понял одну вещь: — твой…").
+const HOOK_SPEECH = any(":\\s?[—–-]\\s*$", "‹(?:такой|такая|такие)(?: типа)?\\s?:\\s*$", "‹(?:сыну|дочери|дочке|ему|ей|им|ученику|ученикам|ученице|герою|героине|жене|мужу|другу|подруге)\\s?:\\s*$");
+const HOOK_OWN = any("‹(?:понял[аи]?|убедил\\p{L}*|осознал\\p{L}*|усвоил\\p{L}*|вынес\\p{L}*|запомнил[аи]?(?: [\\p{L}-]+){0,2}\\s?:|сделал\\p{L}*|вещь|вывод\\p{L}*|мысль)›");
+// A heading right before the claim (up to two words after it) names its source: "Мысль книги: твой…", "Любимая цитата: твоя…",
+// "Главный урок — твой…", "Его слова: …", "Суть в том, что твой…", "Посыл фильма в том, что…". The author's own takeaway is no
+// source ("Мой вывод:", "сделал для себя вывод —", "вынес урок:", "понял, в чём смысл:", "убедился, что вся суть в том, что…",
+// "вспомнил свой принцип:"), and a bare "вывод" is the author's
+// ("Вывод простой: …") unless it names a work or a person ("Вывод фильма: …"). Only right before the claim, so the opener's own
+// "посмотрел в кино фильм", "пришёл к мысли, что…", "по сути" or "понял одну фразу:" stay the author's.
+const HOOK_HEADED = re("(‹(?:мо[йяеёи]|св[оа][йяеёи]|для себя|сделал\\p{L}*|вынес\\p{L}*|усвоил\\p{L}*|понял\\p{L}*|осознал\\p{L}*|убедил\\p{L}*|приш(?:[её]л|ла|ли)|в ч[её]м)›(?:[,:]? [\\p{L}-]+){0,3}[,:]? )?"
+  + "‹(мысль|идея|цитат[аук]|фраза|посыл|суть|мораль|урок|вывод|слова|смысл|девиз|принцип)((?: (?:\\p{L}+(?:-\\p{L}+)*(?!\\p{L})|[—–-]+(?![—–-]))){0,3}) ?(?:[:—–-]|,? в том,? что)(?: ?(?:\\p{L}+(?:-\\p{L}+)*(?!\\p{L})|[—–-]+(?![—–-]))){0,2}\\s*$");
+const HOOK_CONCLUSION = re("^вывод$");
+// Quote headings are always somebody's words, also after "мой" or "свой": "Моя любимая цитата: …", "Моя любимая фраза оттуда: …",
+// "вспомнил свою любимую цитату: …".
+const HOOK_QUOTE_HEADING = re("^(?:цитат[аук]|фраза|слова|девиз)$");
+const HOOK_SOURCE = re("‹(?:книги|фильма|сериала|ролика|видео|подкаста|интервью|лекции|автора|героя|героини|тренера|его|её|ее|их)›");
+const HOOK_IN_WORK = re("(?:^|[,:;—–]\\s?)(?:(?:в|во) (?:[\\p{L}-]+ )?(?:фильме|кино|сериале|книге|книжке|видео|ролике|подкасте|интервью|лекции|мультфильме|мультике|документалке|биографии)"
+  + "|из (?:[\\p{L}-]+ )?(?:фильма|кино|сериала|книги|книжки|видео|ролика|подкаста|интервью|лекции|мультфильма|мультика|документалки|биографии))(?:, [\\p{L}-]+,)? ?[,:—–-]?\\s*$");
+const HOOK_SKEPTIC = any("‹инфоцыган", "‹успешн\\p{L}* успех", "‹(?:ага|ну-ну|бред|чушь|ерунд\\p{L}*)›");
+// The campaign closes on a yes/no rhetorical claim ("А если / А что если / А может … твой образ мышления определяет…?",
+// "А ты готов…?"). A member's close asks for something the chat answers: a recommendation ("А ты какие книги посоветуешь?"),
+// a fact ("А ты сколько спишь…?", "А ты какой системой пользуешься?"), a shared taste ("Тебе тоже заходит этот фильм?") or
+// whether "you" read, watched or saw it ("А ты читал?", "Ты видел этот фильм?"), or what "you" do ("Что ты делаешь…?").
+// A question word counts only where it opens the close, after an optional "а/и/ну", "ты/вы/тебе/у тебя", "сам" and a
+// parenthetical ("А ты, кстати, какие цели…?"): "какой", "сколько", "кто", "где", "куда", "откуда" and "как" there, and
+// "что", "чем", "чего", "когда", "почему", "зачем" and "отчего" only after "ты/вы", since a bare one opens the campaign's own
+// rhetorical question ("Что мешает тебе…?", "Когда ты наконец поймёшь…?", "Почему ты до сих пор…?"). An indefinite
+// ("когда-нибудь", "кто-то", "как-то"), "как часто/долго/сильно…", "как раз" and "сколько ещё" are rhetorical too, and so is
+// any question word after "А если / А что если / А может / А вдруг", where it opens a subordinate clause.
+const HOOK_RHETORICAL = re("^(?:а )?(?:что,? )?(?:если|может|вдруг|разве|неужели)›");
+// The lead also takes a "word," lead-in before a particle or the pronoun ("Кстати, а ты…", "Интересно, а ты…"; not the
+// campaign's "Задумайся, сколько…?" or "Представь, как…?") and two particles ("Ну а ты…"); the pronoun takes "-то", "бы"
+// and "же" ("Ты-то сам какие…?", "А ты бы какие книги посоветовал?").
+const HOOK_ASK_LEAD = "^(?:[\\p{L}-]+, (?=(?:а|и|ну|ты|вы|тебе|вам|тебя|вас|у тебя|у вас)›))?(?:(?:а|и|ну) ){0,2}";
+const HOOK_ASK_YOU = "(?:ты|вы|тебе|вам|тебя|вас|у тебя|у вас)(?:-то)?(?: (?:бы|же))?(?: сам[аи]?)?(?:,? (?:кстати|например|вот|лично|сам[аи]?),?)? ";
+const HOOK_ASK_OPEN = re(HOOK_ASK_LEAD + "(?:" + HOOK_ASK_YOU + ")?"
+  + "(?:как(?:ой|ая|ое|ие|ого|ую|им|их|ими|ом)|сколько(?! ещ[её]›)|кто|где|куда|откуда|как(?! (?:часто|долго|сильно|много|далеко|давно|скоро|раз)›))›(?!-)");
+// "А ты что, до сих пор думаешь…?" is rhetorical, and "что ты делаешь" asks only where it opens the close, not in
+// "А ты понимаешь, что ты делаешь со своей мечтой…?". An opinion asked that way opens it too: "Что ты думаешь про своё
+// мышление?", "Что ты вынес для своих целей?" ("Что мешает тебе…?" and "Что, если твой…?" stay rhetorical).
+const HOOK_ASK_AFTER_YOU = re(HOOK_ASK_LEAD + "(?:" + HOOK_ASK_YOU + "(?:что›(?![-,])|(?:чем|чего|когда|почему|зачем|отчего)›(?!-))"
+  + "|что (?:ты|вы) (?:сам[аи]? |об этом |про это |по этому поводу |насчет этого )?(?:делае|думае|счита|скаже|вынес|понял|почувствовал))");
+const HOOK_ASKS = any("‹(?:по)?советуе(?:шь|те)›", "‹посовету(?:й|йте)›", "‹порекоменду(?:ешь|ете|й|йте)›", "‹подскаж(?:ешь|ете|и|ите)›",
+  "‹подели(?:сь|тесь|шься)›", "‹(?:тебе|вам) тоже›", "‹видел[аи]?›",
+  "‹(?:пере|про|по|до)?(?:читал|смотрел|слушал)[аи]?›(?! на›)", "‹(?:пере|про|по|до)?(?:читывал|сматривал|слушивал)[аи]?›");
+// A question to the whole chat anywhere ("Кто ещё пересматривал?", "Кто-нибудь читал?", "Кому ещё зашёл?", "Есть у кого…?",
+// "Может, кто-то посоветует…?") makes it a conversation.
+const HOOK_CHAT_ASK = any("^(?:(?:а|и|ну) )?кто›(?!-)", "‹кто(?:-нибудь|-либо)›", "‹кто ещ[её]›", "‹кто из (?:вас|чата|участников)›",
+  "‹кому ещ[её]›", "^(?:(?:а|и|ну) )?(?:есть )?у кого›(?!-)", "‹есть у кого›", "‹у кого-(?:нибудь|то)›","‹кто-то (?:[\\p{L}-]+ )?(?:посовету|подскаж|порекоменд|знает|смотрел|читал)");
+// "you" asked for an opinion, like the chat's "Согласны?" or "А вы как думаете?": "Ты согласен, что…?", "Ты тоже считаешь,
+// что…?", "Ты правда веришь в…?", "Тебе не кажется, что…?" ("А ты готов…?" stays rhetorical).
+const HOOK_ASK_OPINION = re(HOOK_ASK_LEAD + "(?:(?:ты|вы)(?:-то)?(?: (?:тоже|также|так|правда|и правда|действительно|реально|серьезно|всерьез|сам[аи]?|же)){0,2},? "
+  + "(?:(?:не )?(?:согласен|согласн(?:а|ы))|счита(?:ешь|ете)|дума(?:ешь|ете)|вери(?:шь|те))›|(?:тебе|вам)(?: тоже| правда)? не кажется›)");
+const asksChat = (close: string) => HOOK_ASKS.test(close)
+  || !HOOK_RHETORICAL.test(close) && (HOOK_ASK_OPEN.test(close) || HOOK_ASK_AFTER_YOU.test(close) || HOOK_ASK_OPINION.test(close));
+
+function headed(head: string): boolean {
+  const heading = HOOK_HEADED.exec(head);
+  if (!heading) return false;
+  if (HOOK_QUOTE_HEADING.test(heading[2]!)) return true;
+  if (heading[1]) return false;
+  return !HOOK_CONCLUSION.test(heading[2]!) || HOOK_SOURCE.test(heading[3]!) || HOOK_SOURCE.test(head.slice(Math.max(0, heading.index - 8), heading.index));
+}
+const attributed = (head: string) => HOOK_SAID.test(head) || headed(head) || HOOK_IN_WORK.test(head)
+  || HOOK_SPEECH.test(head) && !HOOK_OWN.test(head);
+
+function mindsetHook(message: ModerationMessage, raw: string, text: string): boolean {
+  if (raw.length > HOOK_LENGTH || ADDRESS.test(text) || ADDRESSED.test(text)) return false;
+  if (HOOK_VOCATIVE.test(raw.replace(HOOK_LEAD_EMOJI, "")) || HOOK_VOCATIVE_END.test(raw) || HOOK_MENTION.test(raw)
+    || HOOK_REFERS.test(text) || HOOK_SKEPTIC.test(text)) return false;
+  const parts = sentences(text).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  const opener = parts[0]!;
+  const seen = HOOK_CONSUMED.exec(opener);
+  // Quoted spans are removed from `text`, so a title right after the verb ("Недавно пересмотрел «Стив Джобс»…") is read raw.
+  // A lead-in before a colon pastes someone's post ("Кто-то опять пишет в чат: Недавно пересмотрел…").
+  if (!seen || !HOOK_MEDIA.test(opener) && !HOOK_TITLED.test(sentences(promoText(raw))[0]!)
+    || HOOK_OTHER_VIEWER.test(opener.slice(0, seen.index)) || /[:«"“„—–]|\s-\s/u.test(opener.slice(0, seen.index))) return false;
+  const close = parts.at(-1)!;
+  if (!isQuestion(close) || !HOOK_YOU.test(close) || !HOOK_MINDSET.test(close) || asksChat(close)
+    || parts.some((part) => isQuestion(part) && HOOK_CHAT_ASK.test(part))) return false;
+  // The claim is the author's own ("убедился, что твой…"), not a film's, a hero's or a parent's words to someone.
+  // A line that opens with a dash continues the line before it ("Отец сыну:\n— Твой успех…", "Отец говорит сыну\n— …"), but the
+  // opener only before a colon, so "…фильм, о котором все говорят.\n— Твой…" stays the author's.
+  if (!parts.slice(0, -1).some((part, i) => !isQuestion(part) && HOOK_YOU.test(part) && HOOK_MINDSET.test(part) && HOOK_CLAIM.test(part) && !denied(part)
+    && !attributed((/^[—–-]/u.test(part) && i > 0 && (i > 1 || /:\s*$/u.test(parts[i - 1]!)) ? parts[i - 1] + " " : "") + part.slice(0, HOOK_YOU.exec(part)!.index)))) return false;
+  // In a reply to another member's message, "you" is that member: it joins the conversation, also when that message is a
+  // voice note, photo or sticker with no text. An external reply carries no text of its own, so it counts only with text
+  // (never, today). Forum-topic roots never reach the preview (src/message.ts).
+  return !(message.preview ?? []).some((item) => item.sourceKind !== "channel" && item.sourceAuthor !== "same_author"
+    && (item.kind !== "external_reply" || Boolean(item.text?.trim())));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -1750,6 +1924,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (adultPromo(message, raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
   if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
+  if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {
     const sentenceStart = Math.max(...[".", "!", "?", "\n"].map((mark) => text.lastIndexOf(mark, match.index - 1))) + 1;

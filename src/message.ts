@@ -43,7 +43,9 @@ export function toModerationMessage(message: Message): ModerationMessage | null 
   if (!current.text?.trim() && !mediaOnly) return null;
 
   const preview: NonNullable<ModerationMessage["preview"]> = [];
-  const reply = "reply_to_message" in message ? message.reply_to_message : undefined;
+  // In a forum, a message posted in a topic "replies" to the topic's creation service message: that is no reply to anyone.
+  const replied = "reply_to_message" in message ? message.reply_to_message : undefined;
+  const reply = replied && !("forum_topic_created" in replied && replied.forum_topic_created) ? replied : undefined;
   const external = "external_reply" in message ? message.external_reply : undefined;
   const quote = "quote" in message ? message.quote : undefined;
 

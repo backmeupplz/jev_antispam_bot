@@ -6,6 +6,11 @@ import { publicChannelUrl } from "./personal-posts";
 const publicChannels = new WeakMap<SenderProfile, { id: number; url: string }>();
 export const personalChannelLocator = (profile: SenderProfile) => publicChannels.get(profile);
 
+// The profile is looked up for texts and captions up to this many characters (standard captions, and about 96% of captured
+// texts). It was 280 until #611: a 340-character funnel-less hook post skipped the profile, so the ad behind it went
+// unseen. Longer texts carry their own offer and stay message-only, which keeps lookups and the model input bounded.
+export const PROFILE_TEXT_LIMIT = 1024;
+
 type GetChat = (chatId: number, signal: AbortSignal) => Promise<ChatFullInfo>;
 type Outcome = (source: "user" | "channel" | "cache", outcome: "present" | "empty" | "unavailable" | "invalid" | "cached_present" | "cached_empty" | "cached_unavailable") => void;
 

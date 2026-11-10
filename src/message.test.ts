@@ -156,3 +156,16 @@ test("external replies distinguish another topic, another chat, and unavailable 
     expect(result.preview?.[0]?.sourceKind).toBe("chat");
   }
 });
+
+test("a forum-topic message's reply to the topic's creation message is no reply; a reply to a textless member message is", () => {
+  const inTopic = recruitmentReply("offer", "x");
+  const root = inTopic.reply_to_message as unknown as Record<string, unknown>;
+  delete root.text; root.forum_topic_created = { name: "Общий", icon_color: 0 };
+  Object.assign(inTopic, { is_topic_message: true, message_thread_id: 900 });
+  expect(toModerationMessage(inTopic)!.preview).toBeUndefined();
+  const voice = recruitmentReply("offer", "x");
+  const source = voice.reply_to_message as unknown as Record<string, unknown>;
+  delete source.text; source.voice = { file_id: "v", file_unique_id: "v", duration: 3 };
+  expect(toModerationMessage(voice)!.preview).toEqual([{ kind: "reply", origin: "same_chat", sourceKind: "user",
+    sourceAuthor: "other_author", isForwarded: false, embeddedLinks: [] }]);
+});

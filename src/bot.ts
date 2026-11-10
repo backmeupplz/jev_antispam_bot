@@ -8,7 +8,7 @@ import { DeleteRetryQueue, prepareIntent, transientIntentFailure, type RetryOutc
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
 import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
-import { SenderProfileCache, personalChannelLocator } from "./profile";
+import { PROFILE_TEXT_LIMIT, SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
 import { PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
 import { profileChannelFunnel } from "./profile-funnel";
@@ -172,7 +172,7 @@ export function registerBotHandlers(bot: Bot, {
       let senderProfile;
       let enrichmentComplete = true;
       if (spamCache && cacheEligible(ctx.msg) && profileUserId !== undefined) profiles.invalidate(profileUserId);
-      if (profileUserId !== undefined && message.text.length <= 280) {
+      if (profileUserId !== undefined && message.text.length <= PROFILE_TEXT_LIMIT) {
         try {
           senderProfile = await profiles.get(
             profileUserId,

@@ -36,6 +36,8 @@ import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/b
 import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
   profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
+import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookRequest } from "./fixtures/mindset-hook";
+import { PROFILE_TEXT_LIMIT } from "./profile";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -1308,7 +1310,7 @@ for (const customEmoji of [false, true]) {
         // Use a separate actor: no cached empty profile from the unrelated-history author.
         // Seed this actor's history with a long contribution, which does not trigger enrichment.
         const actor = { ...user, id: 17 };
-        await h.send({ message_id: 802, from: actor, text: "Useful technical detail. ".repeat(15) });
+        await h.send({ message_id: 802, from: actor, text: "Useful technical detail. ".repeat(42) });
         const source = fixture.message.preview?.[0];
         const sourceMessage = source ? {
           message_id: 800, date: 1, chat: group, text: source.text,
@@ -1325,7 +1327,7 @@ for (const customEmoji of [false, true]) {
         if (expected.text.includes("https://t.me/synthetic_channel")) expected.destinationPreviews = [{ url: "https://t.me/synthetic_channel", status: "unavailable" }];
         expect(request.state.message).toEqual(expected);
         expect(request.state.recentMessages).toHaveLength(1);
-        expect(request.state.recentMessages[0]!.text).toBe("Useful technical detail. ".repeat(15));
+        expect(request.state.recentMessages[0]!.text).toBe("Useful technical detail. ".repeat(42));
         expect(Object.keys(request.questions).filter(k => k.startsWith("context_message_"))).toEqual(["context_message_0"]);
         expect(h.deletes()).toEqual(fixture.shouldDelete ? [803] : []);
         expect(h.logs.filter(l => l.event === "message_analyzed").at(-1)?.contextProbabilities).toEqual([0.01]);
@@ -2791,6 +2793,52 @@ test("French and German profit testimonials are deleted by the pattern; their co
   await h.stats.stop();
 });
 
+// #611: the reported funnel-less hook. No score was captured (training capture is off), so it is replayed at 0.30, inside the
+// 0.20–0.80 band where only a pattern deletes.
+test("the #611 mindset hook is deleted by its pattern; telemetry carries no text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.3));
+  await h.send({ text: mindsetHookIncident });
+  expect(h.deletes()).toEqual([1]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: 1, isEdited: false, pattern: "mindset_hook", confidence: 0.3, decision: "pattern_delete" },
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule, log.deletedMessageCount])).toEqual([[1, "mindset_hook", 1]]);
+  expect(JSON.stringify(h.logs)).not.toContain("мышлени");
+  await h.stats.stop();
+});
+
+test("mindset hook controls at 0.79 stay kept; the incident under the floor only logs", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of mindsetHookControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  // A member asked for a motivating film: the reply recommending one answers the request.
+  await h.send({ text: mindsetHookAnswer, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: mindsetHookRequest } });
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: mindsetHookIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: floor, isEdited: false, pattern: "mindset_hook", confidence: 0.19, decision: "keep" },
+  ]);
+  await h.stats.stop();
+});
+
+// #611: the 340-character hook used to skip the profile (the limit was 280), so an ad in the bio or channel went unseen.
+test("the sender profile is looked up for texts up to PROFILE_TEXT_LIMIT characters, never longer", async () => {
+  const h = harness();
+  h.setProfileMetadata({ id: user.id, type: "private", bio: "Мой путь к миллиону, подробности в канале" });
+  await h.send({ text: mindsetHookIncident });
+  expect(h.classifications[0]?.message.senderProfile).toEqual({ bio: "Мой путь к миллиону, подробности в канале" });
+  // A fresh sender per length, so the profile cache never answers.
+  await h.send({ from: { ...user, id: 31 }, text: "а".repeat(PROFILE_TEXT_LIMIT) });
+  await h.send({ from: { ...user, id: 32 }, text: "а".repeat(PROFILE_TEXT_LIMIT + 1) });
+  const lookups = (id: number) => h.calls.filter((call) => call.method === "getChat" && call.payload.chat_id === id).length;
+  expect([lookups(user.id), lookups(31), lookups(32)]).toEqual([1, 1, 0]);
+  expect(h.classifications.map((c) => Boolean(c.message.senderProfile))).toEqual([true, true, false]);
+  expect(JSON.stringify(h.logs)).not.toContain("миллиону");
+  await h.stats.stop();
+});
+
 test("adult promo controls at 0.79 stay kept; the incident under the floor only logs", async () => {
   const h = harness();
   h.setAnswer(keepAt(0.79));
@@ -2841,6 +2889,31 @@ test("the reply-guy comment backed by a funnel channel is deleted at its capture
     .toEqual([[id, "profile_channel_funnel", 1]]);
   const telemetry = JSON.stringify(h.logs);
   for (const sensitive of ["top came off", "SyntheticInvite01", "Shorts stayed", "half the outfit", funnelIncident.text]) expect(telemetry).not.toContain(sensitive);
+  await h.stats.stop();
+});
+
+// #611 widened the profile lookup from 280 to PROFILE_TEXT_LIMIT characters, so the funnel rule now also judges longer comments.
+test("a ~500-character comment backed by a funnel channel is deleted; past PROFILE_TEXT_LIMIT the profile is never fetched", async () => {
+  const { h, sendAs } = profileHarness();
+  h.setAnswer(keepAt(0.5));
+  const long = "Honestly this thread is the most useful thing I've read all week. I tried something similar last spring with a small "
+    + "python script and a couple of cron jobs, and the hardest part was never the strategy itself, it was keeping the data clean "
+    + "and the API keys rotated without breaking the whole pipeline at three in the morning. Did you end up writing your own "
+    + "backtester or are you using one of the open source ones? Also curious how you handle slippage on the smaller pairs. "
+    + "What's the stack you're using for this?";
+  expect(long.length).toBeGreaterThan(280);
+  expect(long.length).toBeLessThanOrEqual(PROFILE_TEXT_LIMIT);
+  const id = await sendAs(long, funnelIncident.profile);
+  expect(h.classifications.at(-1)?.message.senderProfile?.personalChannel?.title).toBe(funnelIncident.profile.personalChannel!.title);
+  expect(h.deletes()).toEqual([id]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([
+    { event: "promo_pattern_detected", chatId: group.id, messageId: id, isEdited: false, pattern: "profile_channel_funnel", confidence: 0.5, decision: "pattern_delete" },
+  ]);
+  const before = h.calls.filter((call) => call.method === "getChat").length;
+  await sendAs(long + " " + "a".repeat(PROFILE_TEXT_LIMIT - long.length), funnelIncident.profile);
+  expect(h.calls.filter((call) => call.method === "getChat").length).toBe(before);
+  expect(h.classifications.at(-1)?.message.senderProfile).toBeUndefined();
+  expect(h.deletes()).toEqual([id]);
   await h.stats.stop();
 });
 
