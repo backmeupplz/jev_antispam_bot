@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Bot } from "grammy";
 import type { UserFromGetMe, Update } from "grammy/types";
-import { trackHandlers, drainBot } from "./lifecycle";
+import { handleConcurrently, drainBot } from "./lifecycle";
 import { registerBotHandlers } from "./bot";
 import { AsyncStatsBuffer } from "./stats";
 import { PostgresDeletionAudit } from "./audit-outbox";
@@ -11,13 +11,16 @@ if (testUrl && (!["127.0.0.1", "localhost"].includes(new URL(testUrl).hostname) 
 const defer = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
 for (const durable of [false, true]) (durable && !process.env.AUDIT_TEST_DATABASE_URL ? test.skip : test)("real grammY stop drains deletion before audit closes durable=" + durable, async () => {
   const bot = new Bot("123:fixture", { botInfo: { id: 99, is_bot: true, first_name: "Fixture", username: "fixture_bot" } as UserFromGetMe });
-  const drain = trackHandlers(bot);
+  const drain = handleConcurrently(bot).settle;
   const deleting = defer(), release = defer(); const events: string[] = [];
   let closed = false, delivered = false;
   const msg = { message_id: 1, date: 1, chat: { id: -1, type: "group", title: "Fixture" }, from: { id: 42, is_bot: false, first_name: "Fixture" }, text: "synthetic test offer" };
-  bot.api.config.use(async (_prev, method) => {
+  bot.api.config.use(async (_prev, method, _payload, signal) => {
     if (method === "getUpdates") {
       if (!delivered) { delivered = true; return { ok: true, result: [{ update_id: 1, message: msg } as Update] } as never; }
+      // A long poll: an instant empty answer would spin grammY's loop on microtasks now that the
+      // middleware returns before the update is handled, starving the database I/O this test waits on.
+      if (signal && !signal.aborted) await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
       return { ok: true, result: [] } as never;
     }
     if (method === "getChatMember") return { ok: true, result: { status: "member", user: msg.from } } as never;

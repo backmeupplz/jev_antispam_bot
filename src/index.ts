@@ -1,4 +1,4 @@
-import { trackHandlers, drainBot } from "./lifecycle";
+import { handleConcurrently, drainBot } from "./lifecycle";
 import { PostgresDeletionAudit, RETAINED_REPORTS_ALERT } from "./audit-outbox";
 import { CACHE_POLICY_REVISION } from "./spam-cache";
 import { APPROVED_MODEL, APPROVED_PROMPT_SHA256, APPROVED_CHECKPOINT_SHA256 } from "./policy";
@@ -19,7 +19,7 @@ const config = loadConfig();
 if (!config.databaseUrl) throw new Error("DATABASE_URL is required for private deletion auditing");
 if (config.jevModel === APPROVED_MODEL && config.spamThreshold !== 0.80) throw new Error("Approved policy requires SPAM_THRESHOLD=0.80");
 const bot = new Bot(config.telegramBotToken);
-const drainHandlers = trackHandlers(bot);
+const updates = handleConcurrently(bot, { limit: config.concurrency });
 const deletionAudit = new PostgresDeletionAudit(config.databaseUrl, bot.api);
 await deletionAudit.initialize();
 deletionAudit.start();
@@ -30,6 +30,14 @@ const auditHealthTimer = setInterval(() => {
   }).catch(() => console.error(JSON.stringify({ event: "deletion_audit_health", outcome: "unavailable" })));
 }, 60_000);
 auditHealthTimer.unref();
+// Telegram's queue of updates not yet confirmed (#613): it should stay near zero.
+const backlogTimer = setInterval(() => {
+  void bot.api.getWebhookInfo().then(
+    info => console.info(JSON.stringify({ event: "update_backlog", pendingUpdateCount: info.pending_update_count, handling: updates.size })),
+    () => console.error(JSON.stringify({ event: "update_backlog", outcome: "unavailable", handling: updates.size })),
+  );
+}, 60_000);
+backlogTimer.unref();
 const deleteRetries = new DeleteRetryQueue();
 const stats = createStatsRecorder(config.databaseUrl);
 const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "false"
@@ -65,8 +73,9 @@ function shutdown(): Promise<void> {
   if (!shutdownPromise) {
     shutdownPromise = (async () => {
       console.info(JSON.stringify({ event: "bot_stopping", ...stats.health() }));
-      await drainBot(bot, polling, drainHandlers);
+      await drainBot(bot, polling, updates.settle);
       clearInterval(auditHealthTimer);
+      clearInterval(backlogTimer);
       // Queued deletions are in memory only; a restart drops them (logged as the count at stop).
       const pendingRetries = deleteRetries.size; await deleteRetries.stop();
       if (pendingRetries) console.info(JSON.stringify({ event: "delete_retry", outcome: "dropped", reason: "shutdown", count: pendingRetries }));
@@ -95,13 +104,14 @@ console.info(JSON.stringify({
   spamCacheEnabled: Boolean(spamCache),
   shadowModel: config.shadow?.model ?? null,
   trainingCapture: Boolean(trainingCapture),
+  concurrency: config.concurrency,
 }));
 try {
   // Polls only while holding the handover lock; SIGTERM/SIGINT stop polling, then run shutdown()
   polling = startWithHandover(bot, {
     allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
     onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
-  }, shutdown);
+  }, shutdown, updates.settle);
   await polling;
 } finally {
   await shutdown();

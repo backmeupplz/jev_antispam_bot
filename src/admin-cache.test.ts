@@ -177,3 +177,66 @@ test("wait: false never sleeps on a 429, but still reuses a stale answer", async
   expect(f.outcomes).toEqual(["stale_reused:too_many_requests"]);
   expect(f.slept).toEqual([]);
 });
+
+test("concurrent senders in one chat share a single admin-list request (#613)", async () => {
+  const f = fixture();
+  const answers = await Promise.all([f.isAdmin(-100, human), f.isAdmin(-100, other), f.isAdmin(-100, { id: 44, is_bot: false })]);
+  expect(answers).toEqual([true, false, false]);
+  expect(f.calls).toEqual(["list:-100"]);
+  // Cached afterwards, as before.
+  expect(await f.isAdmin(-100, other)).toBe(false);
+  expect(f.calls).toEqual(["list:-100"]);
+});
+
+test("a chat_member update during a list request keeps that older list out of the cache (#613)", async () => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => (release = resolve));
+  const calls: string[] = [];
+  const admins = [human.id];
+  const api = {
+    getChatAdministrators: async () => {
+      calls.push("list");
+      const snapshot = [...admins];
+      if (calls.length === 1) await held;
+      return snapshot.map(id => ({ status: "administrator", user: { id } }));
+    },
+  } as unknown as Api;
+  const cache = new AdminCache();
+  // Another sender's message started the request before `other` was promoted.
+  const first = cache.isAdmin(api, -100, human);
+  admins.push(other.id);
+  cache.update(-100, other.id, "administrator");
+  release();
+  expect(await first).toBe(true);
+  // The promoted member's next message does not get the pre-promotion list.
+  expect(await cache.isAdmin(api, -100, other)).toBe(true);
+  expect(calls).toEqual(["list", "list"]);
+});
+
+test("a member promoted while an older list request runs does not get that older list (#613)", async () => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => (release = resolve));
+  const calls: string[] = [];
+  const admins = [human.id];
+  const api = {
+    getChatAdministrators: async () => {
+      calls.push("list");
+      const snapshot = [...admins];
+      if (calls.length === 1) await held;
+      return snapshot.map(id => ({ status: "administrator", user: { id } }));
+    },
+  } as unknown as Api;
+  const cache = new AdminCache();
+  // Another sender's message started the request before `other` was promoted.
+  const first = cache.isAdmin(api, -100, human);
+  admins.push(other.id);
+  cache.update(-100, other.id, "administrator");
+  // The promoted member's next message arrives while that request still runs: it asks afresh.
+  expect(await cache.isAdmin(api, -100, other)).toBe(true);
+  expect(calls).toEqual(["list", "list"]);
+  release();
+  expect(await first).toBe(true);
+  // The newer list is cached; the older one, finishing last, does not replace it.
+  expect(await cache.isAdmin(api, -100, other)).toBe(true);
+  expect(calls).toEqual(["list", "list"]);
+});

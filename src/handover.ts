@@ -68,14 +68,22 @@ export async function pollWithHandover(
  * the previous one's offset within 3 s for up to 3 s. So while stopping, that call confirms the updates
  * fetched but not yet confirmed at a fresh offset, or is skipped when there are none. `close` runs once
  * the last fetched batch is handled. Resolves when polling ends (and rejects if it fails).
+ *
+ * `settle` is for concurrent handling (`handleConcurrently`), where a batch is still being handled when
+ * grammY asks for the next one: each poll waits for it first, so a batch is only confirmed once handled.
  */
-export function startWithHandover(bot: Bot<any>, options?: PollingOptions, close?: () => unknown) {
+export function startWithHandover(bot: Bot<any>, options?: PollingOptions, close?: () => unknown, settle?: () => Promise<unknown>) {
   // Telegram has confirmed every update before `polled`; `fetched` is the newest update received
   let polled = 0;
   let fetched = 0;
   let stopping = false;
   bot.api.config.use(async (prev, method, payload, signal) => {
     if (method !== "getUpdates") return prev(method, payload, signal);
+    if (!stopping && settle) {
+      await settle();
+      // Stopped while waiting: stop()'s own getUpdates confirms the batch, and polling ends here
+      if (stopping) return { ok: true, result: [] } as any;
+    }
     if (stopping) {
       if (fetched < polled) return { ok: true, result: [] } as any;
       payload = { ...payload, offset: fetched + 1, timeout: 0 };

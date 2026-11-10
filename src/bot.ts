@@ -243,6 +243,8 @@ export function registerBotHandlers(bot: Bot, {
         isEdited: "edited_message" in ctx.update,
         contextMessageCount: recentMessages.length,
         senderProfilePresent: Boolean(senderProfile),
+        // How far behind live chat Jev is (#613): since the message was sent, or edited.
+        updateLagMs: Date.now() - ("edited_message" in ctx.update ? ctx.msg.edit_date ?? ctx.msg.date : ctx.msg.date) * 1000,
       }));
 
       const classifierInput = senderProfile ? { ...moderationMessage, senderProfile } : moderationMessage;

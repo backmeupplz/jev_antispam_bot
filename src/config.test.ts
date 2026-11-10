@@ -16,3 +16,19 @@ test("authorized .81 default and explicit override reach production config", () 
     expect(() => loadConfig()).toThrow("SPAM_THRESHOLD must be a number");
   } finally { for (const name of names) { const value = saved[name]; if (value === undefined) delete process.env[name]; else process.env[name] = value; } }
 });
+
+test("JEV_CONCURRENCY defaults to 4 and is validated (#613)", () => {
+  const names = ["TELEGRAM_BOT_TOKEN", "TYPESAFE_API_KEY", "JEV_CONCURRENCY"] as const;
+  const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.TELEGRAM_BOT_TOKEN = "synthetic"; process.env.TYPESAFE_API_KEY = "synthetic";
+    delete process.env.JEV_CONCURRENCY;
+    expect(loadConfig().concurrency).toBe(4);
+    process.env.JEV_CONCURRENCY = "1";
+    expect(loadConfig().concurrency).toBe(1);
+    for (const bad of ["0", "17", "2.5", "many"]) {
+      process.env.JEV_CONCURRENCY = bad;
+      expect(() => loadConfig()).toThrow("JEV_CONCURRENCY");
+    }
+  } finally { for (const name of names) { const value = saved[name]; if (value === undefined) delete process.env[name]; else process.env[name] = value; } }
+});

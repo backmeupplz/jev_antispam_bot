@@ -5,6 +5,7 @@ import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
 import type { SpamCache } from "./spam-cache";
 import { registerBotHandlers } from "./bot";
+import { handleConcurrently } from "./lifecycle";
 import { DeleteRetryQueue, type prepareIntent } from "./delete-retry";
 import { toModerationMessage } from "./message";
 import { chinesePromotion, chinesePromotionControls } from "./fixtures/chinese-promotion";
@@ -64,6 +65,13 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   shadowClassify?: (message: CurrentModerationMessage, recent: ModerationMessage[]) => Promise<SpamAssessment>, deletionAudit?: DeletionAudit,
   repeats?: RepeatStore, deleteRetries?: DeleteRetryQueue, intentRetry?: Parameters<typeof prepareIntent>[4]) {
   const bot = new Bot("123:local-test-only", { botInfo });
+  // bot.concurrent.test.ts runs this whole file again with updates handled concurrently (#613); each
+  // handleUpdate then waits until its update is handled, as it does when updates run one at a time.
+  if (process.env.JEV_CONCURRENT_SUITE === "1") {
+    const updates = handleConcurrently(bot);
+    const handle = bot.handleUpdate.bind(bot);
+    bot.handleUpdate = async (...args) => { await handle(...args); await updates.settle(); };
+  }
   const logs: Record<string, unknown>[] = [];
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
   const classifications: { message: CurrentModerationMessage; recent: ModerationMessage[] }[] = [];
@@ -813,8 +821,13 @@ test("downstream command failure cannot relabel a linked-channel skip as metadat
   const h = harness();
   h.setMetadata({ ...group, linked_chat_id: channel.id });
   h.setAdminError(); // /status fails after the eligibility middleware has continued.
-  await expect(h.send({ sender_chat: channel, from: synthetic, text: "/status",
-    entities: [{ type: "bot_command", offset: 0, length: 7 }] })).rejects.toThrow();
+  const sent = h.send({ sender_chat: channel, from: synthetic, text: "/status",
+    entities: [{ type: "bot_command", offset: 0, length: 7 }] });
+  // Concurrent handling hands the error to bot.catch, as polling does, instead of rejecting handleUpdate.
+  if (process.env.JEV_CONCURRENT_SUITE === "1") {
+    await sent;
+    expect(h.logs.filter((log) => log.event === "update_failed")).toHaveLength(1);
+  } else await expect(sent).rejects.toThrow();
   expect(h.skipped().map((log) => log.reason)).toEqual(["official_linked_channel"]);
   expect(h.logs.some((log) => log.event === "sender_chat_check_failed")).toBe(false);
   await h.stats.stop();
