@@ -10,7 +10,8 @@ import { toModerationMessage } from "./message";
 import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
 import { PROFILE_TEXT_LIMIT, SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
-import { PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
+import { moneyBait, oddJobOpener, PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
+import { BaitActors } from "./money-bait";
 import { profileChannelFunnel } from "./profile-funnel";
 import { ClassifierRequestError, CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { classifyWithRetries, retryableClassification } from "./classifier-resilience";
@@ -64,6 +65,7 @@ export function registerBotHandlers(bot: Bot, {
   const admins = new AdminCache();
   const history = new MessageHistory();
   const campaigns = new CampaignLedger();
+  const baitActors = new BaitActors();
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
   const repeatSnapshots = new RepeatSnapshots();
@@ -339,8 +341,10 @@ export function registerBotHandlers(bot: Bot, {
       // testimonials, P2P crypto trade asks, explicit adult-content promotion, free-copy bait and investment-profit
       // testimonials, plus (#470) any comment from an account whose personal channel is a lone teaser funnel, unless the
       // model is confident it is benign.
+      // #624: a vague odd-job opener goes only when the same actor's money bait was confirmed in this chat in the window.
       const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined
-        : promoPattern(message) ?? (profileChannelFunnel(message, senderProfile) ? "profile_channel_funnel" : undefined);
+        : promoPattern(message) ?? (profileChannelFunnel(message, senderProfile) ? "profile_channel_funnel" : undefined)
+          ?? (baitActors.flagged(ctx.chat.id, senderId) && oddJobOpener(message) ? "odd_job_linked" : undefined);
       const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
       if (pattern) logger.info(JSON.stringify({
         event: "promo_pattern_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, pattern,
@@ -361,7 +365,7 @@ export function registerBotHandlers(bot: Bot, {
       // A copy already handled (e.g. an edit of a failed delete) is never retried.
       const campaignIds = (campaign?.pending ?? []).map(c => c.messageId);
       if (!modelDelete && !repeatDelete && !patternDelete && !campaignIds.length) {
-        if (!mediaOnly && !campaign) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot });
+        if (!mediaOnly && !campaign) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, score: probability });
         await next();
         return;
       }
@@ -374,7 +378,16 @@ export function registerBotHandlers(bot: Bot, {
         CONTEXT_LINK_THRESHOLD,
       );
       const repeatIds = repeatCopies.filter(c => c.chatId === ctx.chat.id).map(c => c.messageId);
-      const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...(repeatDelete || patternDelete ? [ctx.msgId] : [])]);
+      // #624: confirmed money bait (by its pattern, the model, the cache or a repeat) also takes the actor's earlier kept odd-job
+      // openers in the window that the model did not call benign, and flags the actor for later ones.
+      // A forwarded copy is someone else's bait: it goes, but its forwarder (often warning the chat) is not flagged.
+      const bait = !mediaOnly && !message.isForwarded && (patternDelete || modelDelete || repeatDelete) && (pattern === "money_bait" || moneyBait(message));
+      const oddJobIds = bait ? recentMessages.filter(m => (m.score ?? 0) >= PATTERN_MIN_SCORE && oddJobOpener(m)).map(m => m.messageId) : [];
+      if (bait) baitActors.flag(ctx.chat.id, senderId);
+      if (oddJobIds.length) logger.info(JSON.stringify({
+        event: "odd_job_linked", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, linkedMessageCount: oddJobIds.length,
+      }));
+      const ids = new Set([...linkedIds, ...campaignIds, ...repeatIds, ...oddJobIds, ...(repeatDelete || patternDelete ? [ctx.msgId] : [])]);
       const messageIds = [...ids].filter(id => id !== ctx.msgId).sort((a, b) => a - b).concat(ids.has(ctx.msgId) ? [ctx.msgId] : []);
       // Earlier copies in the account's other groups, oldest first per group,
       // except where the account is exempt by now (admin or that group's linked channel).

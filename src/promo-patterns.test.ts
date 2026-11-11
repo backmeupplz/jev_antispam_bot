@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { debtAnswer, debtHelpIncident, debtQuestion, dmAnswer, dmQuestion, moneyBaitControls, moneyBaitFamily, moneyBaitReviewAds, moneyBaitReviewControls, moneyBaitReview3Ads, moneyBaitReview3Controls, moneyBaitReview4Ads, moneyBaitReview4Controls, moneyBaitReview6Ads, moneyBaitReview6Controls, moneyBaitReview10Ads, moneyBaitReview10Controls, moneyBaitReview13Ads, moneyBaitReview13Controls, notOddJobs, sideGigBait, oddJobIncident, oddJobOpeners, quickMoneyIncident } from "./fixtures/money-bait";
 import { botTestimonialControls, botTestimonialFloorIncident, botTestimonialIncident, botTestimonialParaphrases, sideGigControls, sideGigEuroWeeklyControls, sideGigEuroWeeklyIncident,
   sideGigEuroWeeklyParaphrases, sideGigHiddenLinkControls, sideGigHiddenLinkIncident, sideGigHiddenLinkVariants, sideGigIncident, sideGigParaphrases } from "./fixtures/promo-patterns";
 import { testimonialControls, testimonialPromotions } from "./fixtures/testimonial-promotion";
@@ -19,7 +20,7 @@ import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialCo
   profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
 import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookParaphrases, mindsetHookRequest, mindsetHookReview2Ads, mindsetHookReview2Controls, mindsetHookReview4Ads, mindsetHookReview4Controls, mindsetHookReview5Ads, mindsetHookReview5Controls, mindsetHookReview6Ads, mindsetHookReview6Controls, mindsetHookReview7Ads, mindsetHookReview7Controls, mindsetHookReview8Controls, mindsetHookReview9Ads, mindsetHookReview9Controls, mindsetHookReview10Ads, mindsetHookReview10Controls, mindsetHookReview11Ads, mindsetHookReview11Controls, mindsetHookReview12Controls, mindsetHookReview13Ads, mindsetHookReview13Controls, mindsetHookReview15Ads, mindsetHookReview15Controls, mindsetHookReview16Ads, mindsetHookReview16Controls, mindsetHookReview18Ads, mindsetHookReview18Controls, mindsetHookReview19Ads, mindsetHookReview19Controls, mindsetHookReviewAds,
   mindsetHookReviewControls, mindsetHookReviewReplies } from "./fixtures/mindset-hook";
-import { promoPattern, promoText } from "./promo-patterns";
+import { moneyBait, oddJobOpener, promoPattern, promoText } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
 // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI runner can exceed a bound once,
@@ -488,4 +489,38 @@ test("mindset hook matching stays fast on 4,096-character adversarial input", ()
     // Over 700 characters the rule returns at once, so the inputs sit at its length bound.
     .map((text) => text.slice(0, 700));
   for (const text of inputs) expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
+});
+
+// #624: short Russian money bait, and the odd-job opener that only joins it in src/bot.ts.
+test("the #624 quick-money and debt-help bait matches standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) {
+    for (const text of [quickMoneyIncident, debtHelpIncident]) expect([text, promoPattern(plain(text, patch)), moneyBait(plain(text, patch))]).toEqual([text, "money_bait", true]);
+  }
+  for (const text of [...moneyBaitFamily, ...moneyBaitReviewAds, ...moneyBaitReview3Ads, ...moneyBaitReview4Ads, ...moneyBaitReview6Ads, ...moneyBaitReview10Ads, ...moneyBaitReview13Ads]) expect([text, promoPattern(plain(text))]).toEqual([text, "money_bait"]);
+  // Matched first by the side-gig rule, it is still the actor's money bait.
+  expect([promoPattern(plain(sideGigBait)), moneyBait(plain(sideGigBait))]).toEqual(["side_gig_offer", true]);
+});
+
+test("help requests, debt questions, seekers, own stories, plain DM calls and reports are no money bait", () => {
+  for (const text of [...moneyBaitControls, ...moneyBaitReviewControls, ...moneyBaitReview3Controls, ...moneyBaitReview4Controls, ...moneyBaitReview6Controls, ...moneyBaitReview10Controls, ...moneyBaitReview13Controls]) expect([text, promoPattern(plain(text)), moneyBait(plain(text))]).toEqual([text, undefined, false]);
+  // A reply that answers a member's debt question helps that member.
+  expect(moneyBait(plain(debtAnswer, memberReply(debtQuestion)))).toBe(false);
+  expect(promoPattern(plain(debtAnswer))).toBe("money_bait");
+  expect(promoPattern(plain(dmAnswer, memberReply(dmQuestion)))).toBeUndefined();
+});
+
+test("the odd-job opener is never a pattern on its own", () => {
+  for (const text of oddJobOpeners) {
+    expect([text, oddJobOpener(plain(text))]).toEqual([text, true]);
+    expect(promoPattern(plain(text))).toBeUndefined();
+  }
+  for (const text of notOddJobs) expect([text, oddJobOpener(plain(text))]).toEqual([text, false]);
+  expect(oddJobOpener(plain(oddJobIncident, { mediaOnly: true }))).toBe(false);
+});
+
+test("money bait and odd-job matching stays linear on adversarial input", () => {
+  const long = ("за пару часов поднять " + "денег ".repeat(40) + "кто выручит " + "очень ".repeat(40)).repeat(4).slice(0, 4096);
+  expect(fastest(() => { promoPattern(plain(long)); oddJobOpener(plain(long)); })).toBeLessThan(LINEAR_MS);
+  const digits = ("за 1" + "1".repeat(60) + " ").repeat(60).slice(0, 4096);
+  expect(fastest(() => promoPattern(plain(digits)))).toBeLessThan(LINEAR_MS);
 });

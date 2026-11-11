@@ -11,6 +11,8 @@ import type { ModerationMessage } from "./spam";
 // #468 reads its claims and calls in French and German too.
 // #611 adds an eighth: the funnel-less "your mindset sets your limits?" warm-up post (a film or book opener + a second-person
 // mindset claim + a closing rhetorical question to the reader).
+// #624 adds a ninth: short Russian money bait (a quick-money offer with a call, or an unsolicited offer to help with debts), and
+// links the same actor's vague odd-job opener to it (`odd_job_linked`, decided in src/bot.ts).
 export type PromoPattern =
   | "side_gig_offer"
   | "bot_testimonial"
@@ -19,6 +21,8 @@ export type PromoPattern =
   | "book_copy_offer"
   | "profit_testimonial"
   | "mindset_hook"
+  | "money_bait"
+  | "odd_job_linked"
   | "profile_channel_funnel";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
@@ -1937,6 +1941,191 @@ function mindsetHook(message: ModerationMessage, raw: string, text: string): boo
     && (item.kind !== "external_reply" || Boolean(item.text?.trim())));
 }
 
+// #624: the short Russian money bait of one actor (Nov 11): a quick-money offer with a call ("Привет, есть предложение поднять
+// пару хрустящих за пару часов. Кидай «Я» в ЛС", 0.6073) and an unsolicited offer to help with debts ("Помогу разобраться с
+// долгами улучшу твое финансовое состояние", 0.4946). The same actor's vague odd-job opener ("Привет, кто выручит отвезти лопаты
+// на дачу за город", 0.4729) is a member's ordinary request on its own, so it goes only with that actor's confirmed bait in the
+// same chat (`oddJobOpener`, linked in src/bot.ts).
+// Earnings in a short window: "поднять пару хрустящих за пару часов", "заработать за вечер", "сделать 20.000 руб за пару часов",
+// "по деньгам за пару часов 5000-7000". A plain price for a job ("Заплатил 5000 за пару часов работы") has no earning verb.
+const FAST = "‹за (?:(?:пару|полтора|один|одн\\p{L}*|несколько|два|две|три|\\d{1,2}(?:[.,]\\d)?)(?:\\s?-\\s?(?:тройку|три|\\d{1,2}))?\\s)?(?:пол\\s?-?\\s?)?(?:час(?:а|ов|ик|ика|иков|ок)?|вечер|день|дня|ночь|сутки|минут\\p{L}*|выходные)›(?!\\s(?:до|перед|после)›)";
+const FAST_RE = re(FAST);
+const COUNTED = "(?!\\s(?:шаг|подписчик|просмотр|лайк|слов|знак|человек|километр|км›|калори|строк|страниц)\\p{L}*)";
+const SLANG_MONEY = "хрустящ\\p{L}*|хрусты|хрустик\\p{L}*|деньжат\\p{L}*|копейк\\p{L}*|бабл\\p{L}*|бабк\\p{L}*|бабос\\p{L}*|кэш(?!б)\\p{L}*|кеш›|лаве›|лавэ›|капуст\\p{L}*|косар\\p{L}*|касар\\p{L}*|косых›|тыщ\\p{L}*|тысяч\\p{L}*|рубл\\p{L}*|бакс\\p{L}*|долл\\p{L}*";
+// "Получить деньги за пару минут в банкомате" or "вычет деньгами за день" is no earning: plain деньги count only after поднять/срубить/сделать.
+const BAIT_MONEY = `(?:\\d{1,6}\\s?[-–—]\\s?${AMOUNT}|${AMOUNT}|‹(?:${SLANG_MONEY}|налич\\p{L}*|деньг\\p{L}*|денег|денежк\\p{L}*))›${COUNTED}`;
+const BAIT_AMOUNT = `(?:\\d{1,6}\\s?[-–—]\\s?${AMOUNT}|${AMOUNT}|‹(?:${SLANG_MONEY}))›${COUNTED}`;
+const BAIT_EARNS = any(
+  "(?<!‹(?:не|ни|нельзя)\\s)‹(?:заработать|подзаработать|заработаешь|заработаете|заработаем|заработок|заработка|заработку|зарабатывать|зарабатывай|зарабатывайте)›",
+  `(?<!‹(?:не|ни|нельзя)\\s)‹(?:поднять|поднимешь|поднимете|поднимем|срубить|срубишь|наварить|сделать|сделаешь)\\s(?:[\\p{L}-]+\\s){0,2}?(?<!‹за\\s)${BAIT_MONEY}`,
+  `(?<!‹(?:не|ни|нельзя)\\s)‹(?:получить|получишь|получите|получай|получайте|иметь|забрать)\\s(?:[\\p{L}-]+\\s){0,2}?${BAIT_AMOUNT}`,
+);
+const GETS_MONEY = re(`(?<!‹(?:не|ни|нельзя)\\s)‹(?:получить|получишь|получите|получай|получайте)\\s(?:[\\p{L}-]+\\s){0,2}?${BAIT_MONEY}`);
+// "По деньгам за пару часов 5000-7000" is an offer only with an offer cue ("новая тема", "есть предложение") or a token call; a
+// member's price report ("сделали за выходные, по деньгам вышло 50 тысяч") is not.
+const PO_DENGAM = re("‹по деньгам›");
+const OFFER_CUE = any("‹нов(?:ая|ое) (?:тема|движени\\p{L}*)", "‹есть (?:\\p{L}+ )?(?:предложени\\p{L}*|тема›|движ›|движени\\p{L}*)");
+const COST_REPORT = any("‹(?:вышло|выходит|выйдет|вышла|обошлось|обошелся|обошёлся|обойдется|обойдётся|получилось|стоило|стоит)›");
+// A member offering a relative's or their own labour ("Мой муж может заработать за день 10 тысяч, пишите кому нужен работник").
+// A payout from the state, a bank or a carrier ("вычет 13 тысяч через Госуслуги", "компенсации за час задержки рейса").
+const PAYOUT = any("‹(?:вычет\\p{L}*|компенсаци\\p{L}*|кешб[эе]к\\p{L}*|кэшб[эе]к\\p{L}*|пособи\\p{L}*|субсиди\\p{L}*|госуслуг\\p{L}*)");
+// A claim or a story ("Нереально зарабатывать за день больше 2000", "Дочка начала зарабатывать за вечер"), unless a token call
+// turns it into a hook ("Думаешь, нереально заработать за пару часов? Кидай «Я» в ЛС").
+const CLAIMS_EARNING = re("‹(?:нереально|невозможно|начал|начала|начали|стал|стала|стали)\\s(?:под)?зараб");
+const OFFERS_WORKER = any("‹кому (?:нужен|нужна|нужны) (?:\\p{L}+ )?(?:работни\\p{L}*|помощни\\p{L}*|сотрудни\\p{L}*|грузчик\\p{L}*|мастер|сиделк\\p{L}*|няня|водитель|курьер)",
+  "‹(?:мой|моя|мои|наш|наша|наши) (?:\\p{L}+ )?(?:может|могут|готов\\p{L}*|хочет|хотят|ищет|ищут)\\s(?:[\\p{L}-]+\\s){0,2}?(?:под)?заработ");
+// The call that answers the bait: a token to drop in DMs or the comments ("Кидай «Я» в ЛС", "ставь +", "пиши плюс"), a move to DMs,
+// a bare "пиши(те)", "есть предложение/тема", or teaching how ("Научу, расскажу и покажу как поднять…").
+const TOKEN_CALL = re("‹(?:кида[йи](?:те)?|кинь(?:те)?|пиши(?:те)?|напиши(?:те)?|став(?:ь|ьте)|постав(?:ь|ьте)|отправ(?:ь|ьте|ляй|ляйте)|скинь(?:те)?|скидывай(?:те)?|присылай(?:те)?|пришли(?:те)?|жми(?:те)?)\\s?"
+  + "(?:[«\"“„'’]\\s?(?:я|\\+{1,3}|плюс)\\s?[»\"”“'’]|\\+{1,3}|плюс›|я(?=\\s?(?:[.!,)]|$|в (?:лс|личк|личн|директ|коммент)|сюда)))");
+const BAIT_CALL = any("‹(?:пиши(?:те)?|напиши(?:те)?|отпиши(?:сь|тесь)?|стучи(?:те)?|маякни(?:те)?|обращайтесь)›",
+  "‹есть (?:\\p{L}+ )?(?:предложени\\p{L}*|тема›|вариант\\p{L}*|движени\\p{L}*)|‹нов(?:ая|ое) (?:тема|движени\\p{L}*)›",
+  "‹(?:научу|расскажу|покажу|объясню|подскажу|поделюсь)›");
+// The author wants the money or asks how ("Хочу подзаработать за пару часов, есть варианты? Пишите в лс", "Кто знает, как
+// заработать за вечер?"): a seeker, not an offer.
+// Asking others to offer it is seeking too ("Подкиньте вариант заработать за выходные", "Может кто предложит заработать за день,
+// очень надо", "Хоть бы кто-то предложил…"), and so is "Мне срочно заработать за выходные надо".
+const WANTS_MONEY = any("‹(?:хочу|хотим|хотела?|хотелось бы|хочется|нужно|надо|мне бы|ищу (?:способ|как|где))\\s(?:[\\p{L}-]+\\s){0,2}?(?:под)?заработ",
+  "‹подкин(?:ь|ьте)\\s(?:[\\p{L}-]+\\s){0,2}?(?:под)?заработ",
+  "‹кто(?:-(?:то|нибудь|либо))?\\s(?:[\\p{L}-]+\\s)?(?:предложит|предложил|предложила|предложат|подкинет|подкинул|подкинула)\\s(?:(?!(?:тебе|вам)›)[\\p{L}-]+\\s){0,2}?(?:под)?заработ",
+  "‹мне\\s(?:(?!(?:удалось|получилось|помогли|помог|помогла)›)[\\p{L}-]+\\s){0,2}?(?:под)?заработ\\p{L}*\\s(?:(?!(?:тебе|тебя|вам|вас)›)[\\p{L}-]+\\s){0,4}?(?:надо|нужно)›");
+const ASKS_HOW = any("‹(?:кто (?:знает|подскажет)|подскажите|посоветуйте|где|как|есть ли|реально ли|сколько|можно|есть (?:ли )?возможност\\p{L}*|какие|вариант\\p{L}*|реально)›");
+// A member asking about others' experience ("Кто пробовал заработать за день на Авито? Пишите", "Кто подрабатывал, получилось
+// заработать за день хотя бы 2000?") asks too when it asks the chat ("кто", "у кого", "вам", "Девочки", a plural "Пробовали…?"), unless a
+// token call, an offer cue or a teaching offer makes it the hook ("Мне удалось заработать за день 10000, тебе тоже надо? Пиши «Я»
+// в лс", "Пробовали заработать за пару часов? Есть предложение, пишите") or it dares one reader ("А ты пробовал…? Пиши в лс").
+const ASKS_EXPERIENCE = re("(?<!‹не\\s)‹(?:(?:по)?пробовал\\p{L}*|пыталс\\p{L}*|пыталась|пытались|получилось|удалось)›");
+const EXPERIENCE_ASKER = any("‹(?:кто|у кого|кому)(?:-(?:то|нибудь|либо))?›",
+  "‹(?:вы|вам|у вас|девочки|девчонки|девчата|ребят|ребята|народ|друзья|люди|мамочки|коллеги)›", "(?<!‹не\\s)‹(?:(?:по)?пробовали|пытались)›");
+const TEACHES = re("‹(?:научу|покажу|объясню)›");
+// An employer who names the task, the place or that they pay ("Кто хочет заработать за пару часов? Помочь перенести мебель, плачу
+// 1500, пишите", "Можно подзаработать за выходные у нас на ферме, пишите"): the bait never says what the work is. A vague "плачу
+// сразу" names no payer, and a courier run ("отвезти документы") or "убрать долги" is the bait's own.
+const PAID_TASK = any("‹(?:плачу|заплачу|оплачу|оплачиваю)›(?!\\s(?:сразу|моментально|мгновенно|быстро|ежедневно|каждый|на карту)›)",
+  "‹(?:перевезти|перенести|донести|разгрузить|загрузить|погрузить|выгрузить|раздать)›",
+  "‹(?:переезд\\p{L}*|на (?:сбор|уборк|ферм|участк|дач)\\p{L}*)");
+// A request to the chat with no "?" ("Подскажите где можно подзаработать за выходные пишите в лс"), or a seeker ("Девушка 20 лет,
+// готова подзаработать за выходные", "Ищу возможность подзаработать"), not one who addresses readers ("Кто готов заработать…").
+const ASKS_CHAT = any("‹(?:подскажите|посоветуйте|кто (?:знает|подскажет)|подскажет кто)›", "^\\s?где›");
+const READY_TO_EARN = any("(?<!‹(?:кто|если|тот|те|все)\\s)‹(?:готова?|готовы|ищу (?:\\p{L}+ )?(?:возможност\\p{L}*|вариант\\p{L}*|способ\\p{L}*))\\s(?:[\\p{L}-]+\\s){0,2}?(?:под)?заработ");
+// …unless the question hooks the reader ("Хочешь узнать, как поднять 17к за пару часов?", "Кому нужны деньги сегодня?").
+const HOOKS_READER = any("‹(?:хочешь|хотите|желаешь|желаете|интересно|интересует|кому (?:нужн|надо|интересн))");
+
+function quickMoney(text: string, linked: string): boolean {
+  const parts = sentences(text);
+  const earns = (part: string) => BAIT_EARNS.test(part) || GETS_MONEY.test(part) && TOKEN_CALL.test(text)
+    || PO_DENGAM.test(part) && !COST_REPORT.test(part) && (OFFER_CUE.test(text) || TOKEN_CALL.test(text));
+  if (!parts.some((part) => earns(part) && FAST_RE.test(part))) return false;
+  if (WANTS_MONEY.test(text) || OFFERS_WORKER.test(text) || !TOKEN_CALL.test(text) && (PAYOUT.test(text) || CLAIMS_EARNING.test(text)) || parts.some((part) => earns(part) && (ASKS_CHAT.test(part) || !isQuestion(part) && READY_TO_EARN.test(part)
+    || isQuestion(part) && (ASKS_HOW.test(part) || !TOKEN_CALL.test(text) && !OFFER_CUE.test(text) && !TEACHES.test(text)
+      && ASKS_EXPERIENCE.test(part) && EXPERIENCE_ASKER.test(part)) && !HOOKS_READER.test(part)))
+    || !TOKEN_CALL.test(text) && PAID_TASK.test(text)
+    || seeksWork(text) || ownJob(text) || doubtsTheOffer(text)) return false;
+  return TOKEN_CALL.test(text) || callsToDm(linked) || BAIT_CALL.test(text);
+}
+
+// Help with debts or loans, offered unprompted: "Помогу разобраться с долгами", "Помогу закрыть долги 💰", "могу помочь
+// списать кредиты", "улучшу твоё финансовое состояние". Closing a loan is the author's own unless it is offered to others: to
+// "you" or everyone, for reviews, or with a call ("Закрою вашу кредитку, пишите", "Закрою все кредиты всем, кто уделит мне 15
+// минут", "Закрою кредит за отзывы"); "Закрою кредит в следующем месяце" is the author's.
+const HARD_DEBT = "(?:долг(?:и|ов|ам|ами|ах|а|у|ом|е)?›|долгов(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого)›|задолженност\\p{L}*|займ\\p{L}*|за[её]м\\p{L}*|микрозайм\\p{L}*|мфо›|просрочк\\p{L}*|коллектор\\p{L}*|банкротств\\p{L}*|(?:долгов|кредитн|финансов)\\p{L}* ям(?:а|у|ы|е|ой)›)";
+const SOFT_DEBT = "(?:кредит\\p{L}*|ипотек\\p{L}*)";
+const DEBT = `(?:${HARD_DEBT}|${SOFT_DEBT})`;
+const DEBT_ACT = "(?:разобраться|справиться|закрыть|списать|погасить|избавиться|выбраться|выйти|вылезти|решить(?: вопрос| проблем\\p{L}*)?|уменьшить|снизить|реструктуризировать|убрать|освободиться)";
+const DEBT_HELPER = "(?<!‹(?:не|ни)\\s)‹(?:помогу|поможем|помогаю|помогаем|могу помочь|можем помочь|готова? помочь|готовы помочь)(?:\\s(?:вам|тебе|всем|людям|каждому))?(?:\\s(?:быстро|легально|законно|официально))?";
+const HELPS_DEBT = re(`${DEBT_HELPER}(?:\\s${DEBT_ACT})?\\s(?:(?:с|со|от|из|по)\\s)?(?:[\\p{L}-]+\\s)?${HARD_DEBT}|${DEBT_HELPER}\\s${DEBT_ACT}\\s(?:(?:с|со|от|из|по)\\s)?(?:[\\p{L}-]+\\s)?${SOFT_DEBT}`);
+// Help for family, a loan to payday, school debts or "по долгу службы" is no debt-relief offer ("Помогаем с долгами сыну",
+// "помогу с долгом до зарплаты").
+const HELPS_KIN = re("^[\\s,]*(?:[\\p{L}-]+\\s)?(?:сыну|дочк\\p{L}*|дочер\\p{L}*|детям|ребенку|ребёнку|маме|папе|родителям|мужу|жене|брату|сестре|внук\\p{L}*|бабушке|дедушке|другу|подруге|соседу|соседке|служб\\p{L}*|до (?:зарплат|получк|аванс|пенси)\\p{L}*|по (?:учеб|учёб|предмет|английск|математик|русск\\p{L}* язык|физик|хими|истори|литератур|сесси|зач[её]т|экзамен)\\p{L}*)›");
+// "Помогу (тебе) с долгом, не переживай" is a friend's, and Russian usually drops the "тебе": help with one debt is an offer only
+// with a token or DM call, while "Помогу тебе разобраться с кредитами" still reads as the ad.
+// One bill of the author's or a friend's ("Помогу снизить долг за свет") without a token or DM call; "Помогу списать долги за ЖКХ, пишите в лс" is the ad.
+const ONE_BILL = re("^[\\s,]*(?:[\\p{L}-]+\\s)?за (?:свет|газ|воду|квартир\\p{L}*|коммунал\\p{L}*|жкх|жку|электричеств\\p{L}*|отоплени\\p{L}*|интернет|телефон|садик|аренд\\p{L}*|капремонт|кварплат\\p{L}*)›");
+// …or with an ad's own words in the help's sentence: a plural call, an offer cue or a legal promise ("Готова помочь тебе с долгом,
+// пишите", "Помогу тебе списать долг легально", "…есть тема"). A friend says "быстро" too ("Помогу тебе быстро разобраться с долгом").
+const SELLS_WORDS = ["‹(?:пишите|напишите|обращайтесь|отпишитесь|легально|законно|официально)›", "‹есть (?:\\p{L}+ )?(?:предложени\\p{L}*|тема›|движ›|движени\\p{L}*)"];
+const SELLS_HELP = any(...SELLS_WORDS);
+// …or a sentence of its own that opens with them ("Помогу тебе с долгом. Обращайтесь"), not "Остальные пишите в общий чат".
+const SELLS_LEAD = re(`^\\s*(?:${SELLS_WORDS.join("|")})`);
+const ONE_DEBT = re("‹(?:долг|долга|долгу|долгом|долге|кредит|кредита|кредиту|кредитом|кредите|кредитк(?:а|у|ой|е|и))$");
+// …but not to everyone ("Помогу людям с долгом", "Помогу каждому закрыть кредит") nor a list of debts ("Помогу списать кредит,
+// ипотеку и микрозаймы", "…долг по микрозаймам", "…долг перед МФО"); the singular "долг"/"займ" is left out, so "…, долг отдашь потом" stays.
+const HELPS_MANY = re("\\s(?:всем|людям|каждому)›");
+const OTHER_DEBT = "‹(?:долг(?:и|ов|ам|ами|ах)|кредит(?:ы|ов|ам|ами|ах)|ипотек\\p{L}*|задолженност\\p{L}*|займ(?:ы|ов|ам|ами|ах)|микроза(?:йм|[её]м)\\p{L}*|мфо|просрочк\\p{L}*|коллектор\\p{L}*|банкротств\\p{L}*)›";
+// Only right after the help's debt ("…долг по микрозаймам", "…перед банком и коллекторами", "…кредит, ипотеку и…"), not a friend's
+// later advice ("Помогу с долгом, кредиты больше не бери", "…, просрочки не будет").
+const MORE_DEBT = re(`^\\s*(?:(?:по|перед|и|или)\\s(?:[\\p{L}-]+\\s)?(?:(?:и|или)\\s)?${OTHER_DEBT}|,\\s${OTHER_DEBT}(?:,|\\s(?:и|или)›))`);
+const helpsDebt = (part: string, text: string) => {
+  const help = HELPS_DEBT.exec(part);
+  const rest = help === null ? "" : part.slice(help.index + help[0].length);
+  return help !== null && !HELPS_KIN.test(rest)
+    && (!ONE_BILL.test(rest) || !ONE_DEBT.test(help[0]) || TOKEN_CALL.test(text) || callsToDm(text))
+    && (!ONE_DEBT.test(help[0]) || HELPS_MANY.test(help[0]) || MORE_DEBT.test(rest) || TOKEN_CALL.test(text) || callsToDm(text) || SELLS_HELP.test(part) || sentences(text).some((p) => SELLS_LEAD.test(p)));
+};
+const CLOSES_DEBT = re(`(?<!‹(?:не|ни)\\s)‹(?:закрою|закроем|спишу|спишем|погашу|погасим|решу|решим|уберу|уберем|уберём)\\s(?:[\\p{L}-]+\\s){0,2}?${DEBT}`);
+// "Закрою вашу кредитку": the "your" describes the debt itself, not "ваши советы" or "в вашем банке" elsewhere in the line.
+const CLOSES_YOURS_RE = re(`(?<!‹(?:не|ни)\\s)‹(?:закрою|закроем|спишу|спишем|погашу|погасим|решу|решим|уберу|уберем|уберём)\\s(?:[\\p{L}-]+\\s)?(ваш\\p{L}*|тво\\p{L}+)\\s(?:[\\p{L}-]+\\s)?${DEBT}`);
+// "Закрою твой долг в пятницу" is a friend's; the singular "your" is an offer only with a token or DM call ("Закрою твою кредитку, пиши в лс").
+const YOURS_SINGULAR = re("^тво");
+const closesYours = (part: string, text: string) => { const close = CLOSES_YOURS_RE.exec(part); return close !== null && (!YOURS_SINGULAR.test(close[1]!) || TOKEN_CALL.test(text) || callsToDm(text)); };
+const DEBT_FOR_OTHERS = any("‹(?:всем,?\\s(?:кто|желающ\\p{L}*)|каждому|кому нужно|кому надо|кто уделит)›",
+  "‹за (?:отзыв\\p{L}*|комментари\\p{L}*|подписк\\p{L}*|репост\\p{L}*|лайк\\p{L}*)", "‹за \\d{1,3} минут\\p{L}* (?:времени|вашего|твоего)›");
+const FINANCES = "(?:\\p{L}+\\s)?финансов\\p{L}*\\s(?:состояни|положени|ситуаци)";
+// "Улучшу твоё финансовое состояние"; with "помогу" the "your" may be implied ("Помогу улучшить финансовое положение, пиши"),
+// while a bare "улучшу финансовое положение" is the author's own plan.
+const BETTER_FINANCES = any(`‹(?:улучшу|улучшим|поправлю|поправим|исправлю|исправим)\\s(?:тво\\p{L}+|ваш\\p{L}*)\\s${FINANCES}`,
+  `‹(?:помогу|поможем|могу помочь|можем помочь) (?:улучшить|поправить|исправить)\\s(?:(?:тво\\p{L}+|ваш\\p{L}*)\\s)?${FINANCES}`);
+
+// The others come with or after the closing: "Закрою вашу кредитку", "…все кредиты всем, кто…", "…за отзывы".
+const closesOthersDebt = (part: string, text: string) => {
+  if (closesYours(part, text)) return true;
+  const close = CLOSES_DEBT.exec(part);
+  return close !== null && DEBT_FOR_OTHERS.test(part.slice(close.index));
+};
+function debtHelp(message: ModerationMessage, text: string): boolean {
+  // A reply to another member's message helps that member.
+  if (repliesToMember(message)) return false;
+  return sentences(text).some((part) => !isQuestion(part) && (helpsDebt(part, text) || BETTER_FINANCES.test(part)
+    || closesOthersDebt(part, text)));
+}
+
+// Another member's message the current one replies to or quotes, with text or not (a voice note, photo or sticker); a channel post
+// or the author's own message is no such reply.
+const repliesToMember = (message: ModerationMessage) => (message.preview ?? []).some((item) => item.sourceKind !== "channel"
+  && item.sourceAuthor !== "same_author" && (item.kind !== "external_reply" || Boolean(item.text?.trim())));
+
+function moneyBaitIn(message: ModerationMessage, raw: string, text: string): boolean {
+  const linked = linkedText(message, raw, text);
+  return quickMoney(text, linked) && !answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source))
+    || debtHelp(message, text);
+}
+
+// #624: the text alone is the actor's money bait, whatever else decided the message. src/bot.ts links the same actor's odd-job
+// openers to a deleted one.
+export function moneyBait(message: ModerationMessage): boolean {
+  if (message.mediaOnly) return false;
+  const raw = message.text.trim();
+  if (!raw || isAttributed(raw)) return false;
+  const text = promoText(raw.replace(QUOTED, " "));
+  const undenied = text.replace(DENIAL, " ");
+  if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied) || callsItACon(undenied)) return false;
+  return moneyBaitIn(message, raw, text);
+}
+
+// A vague odd-job opener: "кто выручит отвезти лопаты на дачу", "Кто сможет помочь перевезти вещи?", "Помогите донести коробки".
+// A genuine member asks exactly this, so it never matches on its own: it only joins a confirmed money bait of the same actor.
+const ODD_JOB_VERB = "(?:отвезти|перевезти|довезти|подвезти|завезти|увезти|привезти|забрать|донести|отнести|перенести|занести|поднять|спустить|разгрузить|загрузить|погрузить|выгрузить|собрать|разобрать|покрасить|убрать|прибрать|съездить|сгонять|смотаться|передать|встретить|прокатиться|проехаться|проехать|посидеть|погулять|выгулять|помочь|подменить|поработать|подработать)›";
+const ODD_JOB = any(
+  `‹кто(?:-(?:нибудь|то|либо))?(?:\\s(?:из вас|тут|здесь|сегодня|завтра))?\\s(?:выручит|поможет|сможет|может|готов|хочет|согласится|возьм[её]тся|свободен|подсобит)›[,?!.]?(?:\\s[\\p{L}-]+){0,3}?\\s${ODD_JOB_VERB}`,
+  `‹(?:выручите|выручайте|помогите|подсобите|нужно|надо|нужна помощь|нужен человек|ищу человека|ищу кого-то)\\s(?:[\\p{L}-]+\\s){0,2}?${ODD_JOB_VERB}`,
+  "‹кто (?:проедется|прокатится|съездит|сгоняет|скатается) со мной›",
+);
+export function oddJobOpener(message: ModerationMessage): boolean {
+  if (message.mediaOnly) return false;
+  const raw = message.text.trim();
+  return Boolean(raw) && ODD_JOB.test(promoText(raw.replace(QUOTED, " ")));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -2006,6 +2195,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (adultPromo(message, raw.replace(QUOTED, " "), text) || lonelyBait(raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
   if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
+  if (moneyBaitIn(message, raw, text) && !callsItACon(undenied)) return "money_bait";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {

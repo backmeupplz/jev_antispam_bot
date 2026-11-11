@@ -39,6 +39,7 @@ import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFa
 import { airdropButtons } from "./fixtures/media-buttons";
 import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookRequest } from "./fixtures/mindset-hook";
 import { PROFILE_TEXT_LIMIT } from "./profile";
+import { debtAnswer, debtHelpIncident, debtQuestion, dmAnswer, dmQuestion, earningQuestion, friendDebtHelp, hiringPost, moneyBaitControls, moneyBaitScores, moveRequest, oddJobIncident, oddJobOpeners, quickMoneyIncident, seekerStatement, sideGigBait } from "./fixtures/money-bait";
 
 const botInfo: UserFromGetMe = {
   id: 99, is_bot: true, first_name: "Moderator", username: "moderator_bot",
@@ -3001,5 +3002,148 @@ test("an unavailable channel page never deletes on profile shape", async () => {
   await h.send({ text: funnelIncident.text });
   expect(h.deletes()).toEqual([]);
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected")).toEqual([]);
+  await h.stats.stop();
+});
+
+// #624: one actor's debt-help offer, odd-job opener and quick-money bait, at their captured scores, as ordinary group messages.
+const baitEvents = (h: { logs: Record<string, unknown>[] }) => h.logs.filter((log) => log.event === "promo_pattern_detected" || log.event === "odd_job_linked")
+  .map((log) => [log.messageId, log.pattern ?? log.event, log.decision ?? log.linkedMessageCount]);
+const baitDeletes = (h: { logs: Record<string, unknown>[] }) => h.logs.filter((log) => log.event === "spam_deleted")
+  .map((log) => [log.messageId, log.rule, log.deletedMessageCount]);
+
+test("the #624 actor's sequence is deleted: the bait by its pattern, the odd-job opener by linkage to it", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(moneyBaitScores.debtHelp));
+  await h.send({ text: debtHelpIncident });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: oddJobIncident });
+  h.setAnswer(keepAt(moneyBaitScores.quickMoney));
+  await h.send({ text: quickMoneyIncident });
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(baitEvents(h)).toEqual([[1, "money_bait", "pattern_delete"], [2, "odd_job_linked", "pattern_delete"], [3, "money_bait", "pattern_delete"]]);
+  expect(baitDeletes(h)).toEqual([[1, "money_bait", 1], [2, "odd_job_linked", 1], [3, "money_bait", 1]]);
+  expect(JSON.stringify(h.logs)).not.toContain("хрустящ");
+  await h.stats.stop();
+});
+
+test("an odd-job opener kept before the actor's bait goes with the bait", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: oddJobIncident });
+  expect(h.deletes()).toEqual([]);
+  h.setAnswer(keepAt(moneyBaitScores.quickMoney));
+  await h.send({ text: quickMoneyIncident });
+  expect(h.deletes()).toEqual([1, 2]);
+  expect(baitEvents(h)).toEqual([[2, "money_bait", "pattern_delete"], [2, "odd_job_linked", 1]]);
+  expect(baitDeletes(h)).toEqual([[2, "money_bait", 2]]);
+  await h.stats.stop();
+});
+
+test("bait the model deletes on its own also takes the actor's odd-job opener", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: oddJobIncident });
+  h.setAnswer(assessment(true));
+  await h.send({ text: quickMoneyIncident });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: oddJobOpeners[1] });
+  expect(h.deletes()).toEqual([1, 2, 3]);
+  expect(baitDeletes(h)).toEqual([[2, "model", 2], [3, "odd_job_linked", 1]]);
+  // Bait another rule matched first flags its actor too.
+  h.setAnswer(keepAt(0.5));
+  await h.send({ chat: groupB, text: sideGigBait });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ chat: groupB, text: oddJobIncident });
+  expect(baitDeletes(h).slice(2)).toEqual([[4, "side_gig_offer", 1], [5, "odd_job_linked", 1]]);
+  await h.stats.stop();
+});
+
+test("odd-job openers stay kept alone, from other actors or chats, after the window, or when the model calls them benign", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  // A genuine member's request, with no bait.
+  await h.send({ text: oddJobIncident });
+  // Earlier opener the model called benign: not linked.
+  h.setAnswer(keepAt(0.1));
+  const benign = await h.send({ chat: groupB, text: oddJobIncident });
+  h.setAnswer(keepAt(moneyBaitScores.quickMoney));
+  const bait = await h.send({ chat: groupB, text: quickMoneyIncident });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  // Another actor in the bait's chat, and the actor in another chat.
+  await h.send({ chat: groupB, from: forwardedUser, text: oddJobIncident });
+  await h.send({ chat: groupC, text: oddJobIncident });
+  expect(h.deletes()).toEqual([bait]);
+  expect(h.deletes()).not.toContain(benign);
+  setSystemTime(new Date(Date.now() + 11 * 60_000));
+  try {
+    await h.send({ chat: groupB, text: oddJobIncident });
+  } finally { setSystemTime(); }
+  expect(h.deletes()).toEqual([bait]);
+  await h.stats.stop();
+});
+
+test("a #624 seeker is neither deleted nor flagged: their move request stays kept", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.45));
+  await h.send({ text: seekerStatement });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: moveRequest });
+  expect(h.deletes()).toEqual([]);
+  expect(baitEvents(h)).toEqual([]);
+  await h.stats.stop();
+});
+
+test("a #624 friend's debt help without «тебе» is neither deleted nor flagged: their move request stays kept", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.45));
+  await h.send({ text: friendDebtHelp });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: moveRequest });
+  expect(h.deletes()).toEqual([]);
+  expect(baitEvents(h)).toEqual([]);
+  await h.stats.stop();
+});
+
+test("a #624 member's earning question or paid hiring post is neither deleted nor flagged: their move requests stay kept", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.45));
+  await h.send({ text: hiringPost });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: "Кто поможет донести коробки до машины? Пишите в лс" });
+  h.setAnswer(keepAt(0.35));
+  await h.send({ chat: groupB, text: earningQuestion });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ chat: groupB, text: moveRequest });
+  expect(h.deletes()).toEqual([]);
+  expect(baitEvents(h)).toEqual([]);
+  await h.stats.stop();
+});
+
+test("a forwarded #624 bait goes, but neither flags its forwarder nor links their own odd-job requests", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: oddJobIncident });
+  h.setAnswer(keepAt(moneyBaitScores.quickMoney));
+  const forwarded = await h.send({ text: quickMoneyIncident, forward_origin: { type: "hidden_user", sender_user_name: "outside", date: 1 } });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ text: moveRequest });
+  expect(h.deletes()).toEqual([forwarded]);
+  expect(baitDeletes(h)).toEqual([[forwarded, "money_bait", 1]]);
+  expect(h.logs.some((log) => log.event === "odd_job_linked")).toBe(false);
+  await h.stats.stop();
+});
+
+test("#624 controls at 0.79 stay kept; the bait under the floor only logs and links nothing", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of moneyBaitControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  await h.send({ text: debtAnswer, reply_to_message: { message_id: 90, date: 1, chat: group, from: forwardedUser, text: debtQuestion } });
+  await h.send({ text: dmAnswer, reply_to_message: { message_id: 91, date: 1, chat: group, from: forwardedUser, text: dmQuestion } });
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ chat: groupB, from: forwardedUser, text: quickMoneyIncident });
+  h.setAnswer(keepAt(moneyBaitScores.oddJob));
+  await h.send({ chat: groupB, from: forwardedUser, text: oddJobIncident });
+  expect(h.deletes()).toEqual([]);
+  expect(baitEvents(h)).toEqual([[floor, "money_bait", "keep"]]);
   await h.stats.stop();
 });

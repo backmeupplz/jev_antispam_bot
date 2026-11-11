@@ -5,6 +5,8 @@ export type RecentMessage = ModerationMessage & {
   messageId: number;
   receivedAt: number;
   auditSnapshot?: AuditSnapshot;
+  // The model's score for this message, when it was classified (#624 links odd-job openers it did not call benign).
+  score?: number;
 };
 
 export class MessageHistory {
