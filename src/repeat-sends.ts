@@ -94,6 +94,8 @@ export class MemoryRepeatStore implements RepeatStore {
   }
 }
 
+// #616: the in-flight cap equals the pool, sized for JEV_UPDATE_CONCURRENCY (16) updates at once.
+export const REPEAT_STORE_POOL_MAX = 4;
 // Bounded and fail-open: an outage or slow query means no escalation, never a delete.
 export class PostgresRepeatStore implements RepeatStore {
   private readonly pool: pg.Pool;
@@ -108,7 +110,7 @@ export class PostgresRepeatStore implements RepeatStore {
     timeoutMs?: number; capacity?: number; logger?: Pick<Console, "info">;
   } = {}) {
     if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 1_000_000) throw new Error("Invalid repeat store bounds");
-    this.pool = new pg.Pool({ connectionString: databaseUrl, max: 2,
+    this.pool = new pg.Pool({ connectionString: databaseUrl, max: REPEAT_STORE_POOL_MAX,
       connectionTimeoutMillis: this.timeout, query_timeout: this.timeout,
       // Eligible copies are sparse: keep connections warm so a lookup is not a connect.
       statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 15 * 60_000,
@@ -196,7 +198,7 @@ export class PostgresRepeatStore implements RepeatStore {
     await this.migration;
   }
   private async bounded<T>(operation: () => Promise<T>, queue = false): Promise<T | undefined> {
-    if (this.active >= 2 && !queue) { this.counters.error++; this.log(); return; }
+    if (this.active >= REPEAT_STORE_POOL_MAX && !queue) { this.counters.error++; this.log(); return; }
     this.active++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const work = operation().finally(() => { this.active--; });

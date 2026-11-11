@@ -5,7 +5,9 @@ import { decodeHTML, decodeHTMLAttribute } from "entities";
 import type { Message, MessageEntity } from "grammy/types";
 import { inlineUrlButtons } from "./inline-buttons";
 
-export const PREVIEW_LIMITS = { urls: 2, concurrent: 4, timeoutMs: 1_500, bytes: 65_536,
+// #616: `concurrent` (network fetches across all updates) matches JEV_UPDATE_CONCURRENCY's default of 16, so a burst of
+// link messages handled at once still gets their previews instead of an immediate `overload`.
+export const PREVIEW_LIMITS = { urls: 2, concurrent: 16, timeoutMs: 1_500, bytes: 65_536,
   redirects: 2, entries: 500, ttlMs: 300_000, negativeTtlMs: 30_000 } as const;
 export type DestinationPreview = { url: string; status: "available" | "unavailable"; title?: string; description?: string };
 type Category = "available" | "unavailable" | "timeout" | "network" | "unsafe" | "oversize" | "content_type" | "rate_limit" | "overload";

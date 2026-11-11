@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { JevSpamClassifier, parseAssessment, SPAM_QUESTIONS } from "./spam";
+import { ClassifierRequestError, classifyTimeoutCapped, classifyTimeoutMs, JevSpamClassifier, MAX_CLASSIFY_TIMEOUT_MS, parseAssessment, SPAM_QUESTIONS } from "./spam";
 
 function response(
   probabilities: Partial<Record<keyof typeof SPAM_QUESTIONS, number>> = {},
@@ -334,4 +334,49 @@ test("onExchange receives exactly the request sent and Jev's answers; URL is con
   expect(sent!.url).toBe("http://laya:8000/v1/systemone");
   expect(exchanges).toEqual([[sent!.body, response({ easy_money_bait: 0.95 }).answers, result]]);
   expect(result).toMatchObject({ shouldDelete: true, strongestSignal: "easy_money_bait" });
+});
+
+describe("timeout budget per context message (#616)", () => {
+  test("classifyTimeoutMs adds the per-context time, capped at MAX_CLASSIFY_TIMEOUT_MS", () => {
+    expect(classifyTimeoutMs(15_000, 8_000, 0)).toBe(15_000);
+    expect(classifyTimeoutMs(15_000, 8_000, 3)).toBe(39_000);
+    expect(classifyTimeoutMs(15_000, 8_000, 10)).toBe(MAX_CLASSIFY_TIMEOUT_MS);
+    expect(classifyTimeoutMs(15_000, 0, 6)).toBe(15_000);
+    expect(classifyTimeoutMs(30_000, 30_000, 10)).toBe(60_000);
+    // With the 15 s prod timeout the cap cuts the budget from 6 context messages on (15 + 8·6 = 63 s).
+    expect([0, 3, 5, 6, 10].map(n => classifyTimeoutCapped(15_000, 8_000, n))).toEqual([false, false, false, true, true]);
+    expect(classifyTimeoutCapped(15_000, 0, 10)).toBe(false);
+    expect(classifyTimeoutCapped(90_000, 8_000, 1)).toBe(true);
+  });
+
+  // Answers after `delayMs` unless the request is aborted first, like laya-serve's slow context pass.
+  const slowFetch = (delayMs: number, contextProbabilities: number[] = []) => (_url: unknown, init?: RequestInit) =>
+    new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(Response.json(response({ easy_money_bait: 0.95 }, contextProbabilities))), delayMs);
+      init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal!.reason); }, { once: true });
+    });
+  const message = { text: "earn 300$/day", embeddedLinks: [], isForwarded: false };
+
+  test("a request with context gets the extra time; one without keeps the flat timeout", async () => {
+    const options = { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 50, contextTimeoutMs: 400 };
+    const flat = new JevSpamClassifier("test", { ...options, fetch: slowFetch(250) });
+    const error = await flat.classify(message, []).catch(caught => caught);
+    expect(error).toBeInstanceOf(ClassifierRequestError);
+    expect(error).toMatchObject({ reason: "timeout", retryable: true, withContext: false, message: "TypeSafe request timed out after 50 ms" });
+
+    const context = [{ text: "dm me", embeddedLinks: [], isForwarded: false }];
+    const withContext = new JevSpamClassifier("test", { ...options, fetch: slowFetch(250, [0.9]) });
+    const result = await withContext.classify(message, context);
+    expect(result).toMatchObject({ shouldDelete: true, contextProbabilities: [0.9] });
+
+    // Out of its longer time, a context request is not tried again: the next try would cost the same.
+    const tooSlow = new JevSpamClassifier("test", { ...options, contextTimeoutMs: 100, fetch: slowFetch(400, [0.9]) });
+    expect(await tooSlow.classify(message, context).catch(caught => caught))
+      .toMatchObject({ reason: "timeout", retryable: false, withContext: true, capped: false, message: "TypeSafe request timed out after 150 ms" });
+
+    // Without contextTimeoutMs the same request times out as before, and is retried as before.
+    const unset = new JevSpamClassifier("test", { model: "jev-1.13.0", threshold: 0.9, timeoutMs: 50, fetch: slowFetch(250, [0.9]) });
+    expect(await unset.classify(message, context).catch(caught => caught))
+      .toMatchObject({ reason: "timeout", retryable: true, withContext: false });
+  });
 });

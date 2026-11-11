@@ -20,7 +20,8 @@ const config = loadConfig();
 if (!config.databaseUrl) throw new Error("DATABASE_URL is required for private deletion auditing");
 if (config.jevModel === APPROVED_MODEL && config.spamThreshold !== 0.80) throw new Error("Approved policy requires SPAM_THRESHOLD=0.80");
 const bot = new Bot(config.telegramBotToken);
-const updates = handleConcurrently(bot, { limit: config.concurrency });
+// Up to JEV_UPDATE_CONCURRENCY updates at once; the classifier below lets JEV_CONCURRENCY of them call the model (#616).
+const updates = handleConcurrently(bot, { limit: config.updateConcurrency });
 const deletionAudit = new PostgresDeletionAudit(config.databaseUrl, bot.api);
 await deletionAudit.initialize();
 deletionAudit.start();
@@ -53,6 +54,7 @@ const classifier = new AdaptiveClassifier(new JevSpamClassifier(config.typesafeA
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
+  contextTimeoutMs: config.jevContextTimeoutMs,
   url: config.jevUrl,
 }), config.concurrency, {
   onLimit: (limit, previous) => console.info(JSON.stringify({ event: "classifier_concurrency", limit, previous })),
@@ -114,6 +116,8 @@ console.info(JSON.stringify({
   shadowModel: config.shadow?.model ?? null,
   trainingCapture: Boolean(trainingCapture),
   concurrency: config.concurrency,
+  updateConcurrency: config.updateConcurrency,
+  contextTimeoutMs: config.jevContextTimeoutMs,
 }));
 try {
   // Polls only while holding the handover lock; SIGTERM/SIGINT stop polling, then run shutdown()

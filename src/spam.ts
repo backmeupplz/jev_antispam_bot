@@ -364,16 +364,43 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
 /**
  * The model server gave no verdict (#625): it timed out, the connection failed or it answered with an HTTP error, or the
  * bot paused model calls after repeated timeouts (classifier-resilience.ts). A timeout, a transport failure, 429 and 5xx
- * are worth another try; any other 4xx or a pause is not.
+ * are worth another try; any other 4xx or a pause is not. A request with context messages that timed out (#616) is not
+ * either: it had extra time for each context message, and laya-serve's context pass costs the same on the next try.
+ * `withContext` marks such a timeout. It still counts as overload for the model-call backoff (classifier-resilience.ts),
+ * unless `capped`: its budget was cut to MAX_CLASSIFY_TIMEOUT_MS, so a healthy model can run past it too.
  */
 export class ClassifierRequestError extends Error {
   readonly retryable: boolean;
-  constructor(message: string, readonly reason: "timeout" | "network" | "paused" | `http_${number}`, options?: ErrorOptions) {
+  readonly withContext: boolean;
+  readonly capped: boolean;
+  constructor(message: string, readonly reason: "timeout" | "network" | "paused" | `http_${number}`,
+    options?: ErrorOptions & { withContext?: boolean; capped?: boolean }) {
     super(message, options);
     this.name = "ClassifierRequestError";
+    this.withContext = options?.withContext ?? false;
+    this.capped = options?.capped ?? false;
     const status = reason.startsWith("http_") ? Number(reason.slice(5)) : undefined;
-    this.retryable = reason === "timeout" || reason === "network" || status === 429 || status !== undefined && status >= 500;
+    this.retryable = reason === "timeout" ? !this.withContext
+      : reason === "network" || status === 429 || status !== undefined && status >= 500;
   }
+}
+
+/** The longest a request may wait, however many context messages it carries (#616). */
+export const MAX_CLASSIFY_TIMEOUT_MS = 60_000;
+
+/**
+ * How long one request may take (#616). laya-serve answers the context questions in a second pass, about 5–6 s per
+ * context message on the shared CPU, so on Nov 11 requests with 3–6 context messages took 19–41 s. Every one of them ran
+ * past a flat 15 s timeout, three times over, and the message was kept unchecked. A request with context therefore gets
+ * `contextTimeoutMs` more per context message, up to MAX_CLASSIFY_TIMEOUT_MS.
+ */
+export function classifyTimeoutMs(timeoutMs: number, contextTimeoutMs: number, contextMessages: number): number {
+  return Math.min(Math.max(timeoutMs, MAX_CLASSIFY_TIMEOUT_MS), timeoutMs + contextTimeoutMs * contextMessages);
+}
+
+/** Whether classifyTimeoutMs cut the request's budget to the cap (#616): such a request may need longer on a healthy model. */
+export function classifyTimeoutCapped(timeoutMs: number, contextTimeoutMs: number, contextMessages: number): boolean {
+  return classifyTimeoutMs(timeoutMs, contextTimeoutMs, contextMessages) < timeoutMs + contextTimeoutMs * contextMessages;
 }
 
 export class JevSpamClassifier {
@@ -383,6 +410,8 @@ export class JevSpamClassifier {
       model: string;
       threshold: number;
       timeoutMs: number;
+      // Added to timeoutMs per context message (#616); 0 keeps one flat timeout.
+      contextTimeoutMs?: number;
       url?: string;
       fetch?: FetchLike;
     },
@@ -438,7 +467,9 @@ export class JevSpamClassifier {
     // for its empty text (Laya scores the state, not the question wording).
     const current = mediaButtons(message) ? { ...message, text: message.inlineButtons!.map(button => button.text).join("\n") } : message;
     const request = { model: this.options.model, state: { message: current, recentMessages }, questions };
-    const signal = AbortSignal.timeout(this.options.timeoutMs);
+    const contextTimeoutMs = this.options.contextTimeoutMs ?? 0;
+    const timeoutMs = classifyTimeoutMs(this.options.timeoutMs, contextTimeoutMs, recentMessages.length);
+    const signal = AbortSignal.timeout(timeoutMs);
     let raw: string;
     // Only the exchange itself can be retried (#625): a reply that is no valid verdict fails the same way every time.
     try {
@@ -456,7 +487,9 @@ export class JevSpamClassifier {
     } catch (error) {
       if (error instanceof ClassifierRequestError) throw error;
       throw signal.aborted
-        ? new ClassifierRequestError(`TypeSafe request timed out after ${this.options.timeoutMs} ms`, "timeout", { cause: error })
+        ? new ClassifierRequestError(`TypeSafe request timed out after ${timeoutMs} ms`, "timeout",
+          { cause: error, withContext: recentMessages.length > 0 && contextTimeoutMs > 0,
+            capped: classifyTimeoutCapped(this.options.timeoutMs, contextTimeoutMs, recentMessages.length) })
         : new ClassifierRequestError("TypeSafe request failed in transport", "network", { cause: error });
     }
 

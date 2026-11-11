@@ -1,6 +1,6 @@
 # Confirmed spam cache
 
-Enabled automatically with DATABASE_URL. Set SPAM_CACHE_ENABLED=false and restart to disable (statistics remain enabled). PostgreSQL uses the existing database, a separate bounded two-connection pool and additive migrations. No Redis or SQLite service.
+Enabled automatically with DATABASE_URL. Set SPAM_CACHE_ENABLED=false and restart to disable (statistics remain enabled). PostgreSQL uses the existing database, a separate bounded pool of 4 connections (`SPAM_CACHE_POOL_MAX`) and additive migrations. The in-flight cap equals the pool size; a lookup past it is a miss at once (#616). No Redis or SQLite service.
 
 ## Identity and useful scope
 

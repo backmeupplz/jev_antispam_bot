@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Message } from "grammy/types";
-import { cacheEligible, cacheFingerprint } from "./spam-cache";
+import { cacheEligible, cacheFingerprint, PostgresSpamCache, SPAM_CACHE_POOL_MAX } from "./spam-cache";
 import { toModerationMessage } from "./message";
 const raw = (patch: Record<string, unknown> = {}) => JSON.parse(JSON.stringify({ message_id: 1, date: 1,
   chat: { id: -100, type: "supergroup", title: "fixture" }, from: { id: 1, is_bot: false, first_name: "test" },
@@ -37,4 +37,23 @@ test("fingerprint preserves whitespace, body kind, entities, buttons, attributio
     expect(cacheFingerprint(first, "user:1", toModerationMessage(first)!, history, "test-model", .81, complete)).toBeUndefined();
   expect(cacheFingerprint(first, "user:1", toModerationMessage(first)!, 0, "changed", .81, true)).not.toBe(original);
   expect(cacheFingerprint(first, "user:1", toModerationMessage(first)!, 0, "test-model", .9, true)).not.toBe(original);
+});
+
+test("#616: lookups up to the pool size run at once; only one past it is skipped", async () => {
+  const logs: string[] = [];
+  const cache = new PostgresSpamCache("postgres://127.0.0.1:1/none", { timeoutMs: 1_000, logger: { info: (line: string) => logs.push(line) } });
+  const internals = cache as unknown as { migration: Promise<void>; pool: { query: () => Promise<{ rowCount: number }> } };
+  internals.migration = Promise.resolve();
+  const releases: Array<() => void> = [];
+  internals.pool.query = () => new Promise(resolve => releases.push(() => resolve({ rowCount: 1 })));
+  const lookups = Array.from({ length: SPAM_CACHE_POOL_MAX }, (_, i) => cache.lookup(String(i)));
+  expect(await cache.lookup("over")).toBe(false);
+  expect(cache.health()).toMatchObject({ hit: 0, error: 1 });
+  await Bun.sleep(0);
+  expect(releases).toHaveLength(SPAM_CACHE_POOL_MAX);
+  releases.forEach(release => release());
+  expect(await Promise.all(lookups)).toEqual(Array(SPAM_CACHE_POOL_MAX).fill(true));
+  expect(cache.health()).toMatchObject({ hit: SPAM_CACHE_POOL_MAX, miss: 0, error: 1 });
+  expect(SPAM_CACHE_POOL_MAX).toBeGreaterThan(2);
+  await cache.close();
 });

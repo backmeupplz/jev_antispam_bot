@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { escalatedScore, MemoryRepeatStore, REPEAT_WINDOW_MS, repeatKey, repeatText, RepeatSnapshots } from "./repeat-sends";
+import { escalatedScore, MemoryRepeatStore, PostgresRepeatStore, REPEAT_STORE_POOL_MAX, REPEAT_WINDOW_MS, repeatKey, repeatText, RepeatSnapshots } from "./repeat-sends";
 import { shortRepeats, usdtAsk, usdtAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import type { AuditSnapshot } from "./audit-report";
 
@@ -90,4 +90,25 @@ test("earlier copies keep their own audit evidence, or reuse the current content
   expect(JSON.parse(restored.context).repeatOf).toEqual({ chatId: 2, messageId: 9 });
   snapshots.set(snap(1, 2)); snapshots.set(snap(1, 3));
   expect(snapshots.get({ chatId: 1, messageId: 1, sentAt: 0, handled: false }, current).body).toBe("current body");
+});
+
+test("#616: records up to the pool size run at once; only one past it is dropped", async () => {
+  const store = new PostgresRepeatStore("postgres://127.0.0.1:1/none", { timeoutMs: 1_000, logger: { info: () => undefined } });
+  const internals = store as unknown as { migration: Promise<void>; pool: { query: (sql: string) => Promise<{ rows: unknown[] }> } };
+  internals.migration = Promise.resolve();
+  const releases: Array<() => void> = [];
+  internals.pool.query = () => new Promise(resolve => releases.push(() => resolve({ rows: [] })));
+  const records = Array.from({ length: REPEAT_STORE_POOL_MAX }, (_, i) => store.record("k", { chatId: 1, messageId: i + 1, sentAt: i + 1 }));
+  expect(await store.record("k", { chatId: 1, messageId: 99, sentAt: 99 })).toBeUndefined();
+  expect(store.health()).toMatchObject({ recorded: 0, error: 1 });
+  // record() runs two queries in sequence; release them as they arrive.
+  for (let round = 0; round < 2; round++) {
+    await Bun.sleep(0);
+    expect(releases).toHaveLength(REPEAT_STORE_POOL_MAX);
+    releases.splice(0).forEach(release => release());
+  }
+  expect(await Promise.all(records)).toEqual(Array(REPEAT_STORE_POOL_MAX).fill([]));
+  expect(store.health()).toMatchObject({ recorded: REPEAT_STORE_POOL_MAX, error: 1 });
+  expect(REPEAT_STORE_POOL_MAX).toBeGreaterThan(2);
+  await store.close();
 });

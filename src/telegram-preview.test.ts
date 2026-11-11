@@ -115,10 +115,12 @@ test("cache TTL, negative TTL, physical expiration, eviction and in-flight dedup
 test("global concurrency and per-update bounds shed overload without queueing", async () => {
   let calls = 0;
   const cache = new TelegramPreviewCache({ timeoutMs: 25, request: async (_url, signal) => { calls++; return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })); } });
-  const pending = ["aaaa", "bbbb", "cccc", "dddd"].map(name => cache.enrich(msg("https://t.me/" + name)));
+  // #616: as many fetches as JEV_UPDATE_CONCURRENCY's default (16) run at once; the next ones are shed.
+  expect(PREVIEW_LIMITS.concurrent).toBe(16);
+  const pending = Array.from({ length: PREVIEW_LIMITS.concurrent }, (_, i) => cache.enrich(msg(`https://t.me/chan${String(i).padStart(2, "0")}`)));
   const outcomes: string[] = [];
   expect((await cache.enrich(msg("https://t.me/eeee https://t.me/ffff https://t.me/gggg"), result => outcomes.push(result))).length).toBe(2);
-  expect(outcomes).toEqual(["overload", "overload"]); expect(calls).toBe(4); await Promise.all(pending);
+  expect(outcomes).toEqual(["overload", "overload"]); expect(calls).toBe(PREVIEW_LIMITS.concurrent); await Promise.all(pending);
 });
 test("429 Retry-After seconds/date globally suppress new requests; telemetry contains no content", async () => {
   for (const retry of ["60", new Date(60_000).toUTCString()]) {
@@ -203,11 +205,11 @@ test("unresolved DNS retains process-wide slots across repeated deadlines withou
   };
   const caches = [0, 1, 2].map(() => new TelegramPreviewCache({ timeoutMs: 5, request: (url, signal) => requestPublicTelegramPage(url, signal, transport) }));
   for (let batch = 0; batch < 3; batch++) {
-    const values = await Promise.all([0, 1, 2, 3].map(i => caches[batch]!.enrich(msg("https://t.me/test" + batch + i))));
+    const values = await Promise.all(Array.from({ length: PREVIEW_LIMITS.concurrent }, (_, i) => caches[batch]!.enrich(msg("https://t.me/test" + batch + i))));
     expect(values.every(v => v[0]?.status === "unavailable")).toBe(true);
-    expect(outstanding).toBe(4);
+    expect(outstanding).toBe(PREVIEW_LIMITS.concurrent);
   }
-  expect(peak).toBe(4); expect(sockets).toBe(0);
+  expect(peak).toBe(PREVIEW_LIMITS.concurrent); expect(sockets).toBe(0);
   for (const release of releases) release();
   await Bun.sleep(1);
   expect(outstanding).toBe(0); expect(sockets).toBe(0);

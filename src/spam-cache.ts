@@ -62,6 +62,9 @@ export function confirmedSpam(assessment: SpamAssessment, threshold: number): bo
 }
 
 export type SpamCache = Pick<PostgresSpamCache, "lookup" | "seed">;
+// #616: up to JEV_UPDATE_CONCURRENCY (16) updates look up at once. The in-flight cap
+// equals the pool, so a call past it is a miss at once instead of waiting on pg.
+export const SPAM_CACHE_POOL_MAX = 4;
 export class PostgresSpamCache {
   private readonly pool: pg.Pool;
   private migration?: Promise<void>;
@@ -71,7 +74,7 @@ export class PostgresSpamCache {
     timeoutMs?: number; ttlMs?: number; capacity?: number; revision?: string;
     logger?: Pick<Console, "info">;
   } = {}) {
-    this.pool = new pg.Pool({ connectionString: databaseUrl, max: 2,
+    this.pool = new pg.Pool({ connectionString: databaseUrl, max: SPAM_CACHE_POOL_MAX,
       connectionTimeoutMillis: this.timeout, query_timeout: this.timeout,
       statement_timeout: Math.max(1, this.timeout - 20), idleTimeoutMillis: 10_000,
       application_name: "jev_antispam_bot_cache",
@@ -126,7 +129,7 @@ export class PostgresSpamCache {
     await this.migration;
   }
   private async bounded<T>(operation: () => Promise<T>): Promise<T | undefined> {
-    if (this.active >= 2) { this.count("error"); return; }
+    if (this.active >= SPAM_CACHE_POOL_MAX) { this.count("error"); return; }
     this.active++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const work = operation().finally(() => { this.active--; });

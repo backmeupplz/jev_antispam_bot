@@ -31,6 +31,42 @@ test("retries only an exchange that got no verdict, three tries at most, with sp
   for (const [reason, retryable] of [["http_429", true], ["http_500", true], ["http_503", true], ["http_404", false], ["timeout", true], ["network", true], ["paused", false]] as const) {
     expect(new ClassifierRequestError("x", reason).retryable).toBe(retryable);
   }
+  // #616: a context request already had extra time per context message; the next try would cost the same.
+  const contextTimeout = new ClassifierRequestError("x", "timeout", { withContext: true });
+  expect([contextTimeout.retryable, contextTimeout.withContext]).toEqual([false, true]);
+  calls = 0;
+  await expect(classifyWithRetries(async () => { calls++; throw contextTimeout; }, options(0.5))).rejects.toBe(contextTimeout);
+  expect(calls).toBe(1);
+});
+
+test("a context request's timeout halves the model calls and leads to the pause like any timeout (#616)", async () => {
+  const contextTimeout = () => new ClassifierRequestError("TypeSafe request timed out after 39000 ms", "timeout", { withContext: true });
+  const g = gate(4);
+  const run = async () => {
+    const call = g.start();
+    await Bun.sleep(0);
+    g.pending.at(-1)!.reject(contextTimeout());
+    return call;
+  };
+  await run();
+  await run();
+  expect([g.limits, g.classifier.limit]).toEqual([[[2, 4], [1, 2]], 1]);
+  for (let i = 0; i < PAUSE_AFTER - 1; i++) await run();
+  expect(g.pauses).toEqual([]);
+  expect(await run()).toMatchObject({ reason: "timeout", withContext: true });
+  expect([g.pauses, g.classifier.paused]).toEqual([[PAUSE_MS], true]);
+  expect(await g.start()).toMatchObject({ reason: "paused" });
+});
+
+test("a timeout whose budget was cut to the cap never cuts the model calls (#616)", async () => {
+  const g = gate(4);
+  for (let i = 0; i < PAUSE_AFTER + 2; i++) {
+    const call = g.start();
+    await Bun.sleep(0);
+    g.pending.at(-1)!.reject(new ClassifierRequestError("TypeSafe request timed out after 60000 ms", "timeout", { withContext: true, capped: true }));
+    expect(await call).toMatchObject({ reason: "timeout", capped: true });
+  }
+  expect([g.limits, g.classifier.limit, g.pauses]).toEqual([[], 4, []]);
 });
 
 function gate(max: number) {

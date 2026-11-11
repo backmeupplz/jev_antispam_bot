@@ -105,7 +105,10 @@ export class AdaptiveClassifier implements Classifier {
       if (generation === this.#generation && ++this.#successes >= RECOVER_AFTER && this.#limit < this.max) this.#set(this.#limit + 1);
       return result;
     } catch (error) {
-      if (error instanceof ClassifierRequestError && error.reason === "timeout" && generation === this.#generation) {
+      // A context request's timeout counts too (#616): its budget already grows with each context message, so running out
+      // of it means the model is overloaded, and most messages in a busy chat carry context. A budget cut to the 60 s cap
+      // (6+ context messages with the 15 s prod timeout) can run out on a healthy model, so that timeout doesn't count.
+      if (error instanceof ClassifierRequestError && error.reason === "timeout" && !error.capped && generation === this.#generation) {
         if (this.#limit > 1) this.#set(Math.ceil(this.#limit / 2));
         else {
           this.#successes = 0;
