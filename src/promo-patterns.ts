@@ -831,7 +831,8 @@ const JOIN = re("‹join›", "giu");
 // short first-person wish not to spend the night or the evening alone, a teaser emoji or a plea for company, and a pointer to
 // the post, the profile, the avatar or the pinned message. A member's lonely evening points at nothing ("Скучно одной вечером,
 // кто в кино?"), and reports, rules, jokes and talk about the bait stay out as they do for the adult promo.
-const NIGHT = "(?:ночь|ночку|ночи|ночью|вечер|вечерок|вечерком|вечера|вечером|выходные|night|evening|weekend|tonight)›";
+// A weekend alone is a plan, not the bait's night (#630: "Не хочу оставаться одной на выходные, составишь компанию в поход?").
+const NIGHT = "(?:ночь|ночку|ночи|ночью|вечер|вечерок|вечерком|вечера|вечером|night|evening|tonight)›";
 const LONELY = any(
   // "проводить ночь одной", "вечером одна", "the night alone"; "в эту ночь одна из нас" counts one of many.
   `‹(?:не хочу|не хочется|не хотелось|неохота|не люблю|don['’]?t want|do not want|hate) (?:[\\p{L}-]+ ){0,3}?${NIGHT} (?:[\\p{L}-]+ ){0,3}?(?:одной|одна(?! из›)|в одиночестве|alone|by myself)›`,
@@ -841,15 +842,68 @@ const LONELY = any(
   "‹(?:одной|alone) (?:[\\p{L}-]+ ){0,2}?(?:скучно|грустно|одиноко|тоскливо|холодно|bored|sad|cold)›",
   "‹(?:быть|остаться|оставаться|сидеть|спать|засыпать|ночевать|скучаю|скучать|be|sleep|stay) (?:[\\p{L}-]+ )?(?:одной|одна(?! из›)|alone)›");
 const LOOK = "(?:смотри|смотрите|посмотри|посмотрите|глянь|гляньте|загляни|загляните|зацени|зацените|взгляни|взгляните|жми|нажми|тыкни|check|see|look at|look)";
-const POINTER = any(
-  `‹${LOOK} (?:[\\p{L}-]+ ){0,3}?(?:пост\\p{L}*|профил\\p{L}*|аватар\\p{L}*|аву|аве|био|описани\\p{L}*|закреп\\p{L}*|шапк\\p{L}*|post|profile|avatar|pfp|bio|pinned)›`,
-  "‹(?:пост|post) (?:выше|ниже|above|below)›", "‹(?:в|на) (?:моем |моём |моей )?(?:профиле|аве|аватарке|био)›|‹(?:in|on) my (?:profile|bio|avatar|pfp)›");
+// The profile, the avatar or the pinned message sells; a post is as often a member's own post about a plan.
+const PROFILE_POINTER = any(
+  `‹${LOOK} (?:[\\p{L}-]+ ){0,3}?(?:профил\\p{L}*|аватар\\p{L}*|аву|аве|био|описани\\p{L}*|закреп\\p{L}*|шапк\\p{L}*|profile|avatar|pfp|bio|pinned)›`,
+  "‹(?:в|на) (?:моем |моём |моей )?(?:профиле|аве|аватарке|био)›|‹(?:in|on) my (?:profile|bio|avatar|pfp)›");
+const POST_POINTER = any(`‹${LOOK} (?:[\\p{L}-]+ ){0,3}?(?:пост\\p{L}*|post)›`, "‹(?:пост|post) (?:выше|ниже|above|below)›");
 // A plea for company, not for help with anything ("помогите найти сиделку", "help me pick a lamp"): only the bait's own
 // "поможешь мне с этим" asks for help. The bait asks one man, so a plural or "join me" invites a group ("составите компанию?").
-const COMPANY = any("‹поможешь (?:мне )?с этим›|‹(?:составишь|составь|скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
+const BAIT_HELP = re("‹поможешь (?:мне )?с этим›");
+const COMPANY = any("‹(?:составишь|составь|скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
+// Under a post pointer only, "составишь" must ask for company outright ("составишь мне компанию"), not for a plan or a list.
+const POST_COMPANY = any("‹(?:составишь|составь)(?:-ка)? (?:[\\p{L}-]+ ){0,2}?компа(?:ни|шк)|‹(?:скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
 const AT_NIGHT = re(`‹${NIGHT}|‹(?:ночевать|переночевать|ночую)›`);
+// #630: a member's invitation also asks for company and points to a post, but it names the plan: "составишь компанию в поход?
+// смотрите пост выше", "keep me company at the museum? check my post", "смотри пост про кино". Under a post pointer, a plea
+// for company counts only in the bait's bare shape, where every word is loneliness, the plea, the pointer, an endearment or
+// the post's pitch. The words come in families, so a word the pointer or the night accepts ("посты", "ночку") is bare too.
+const BARE_WORD = re(`^(?:${[
+  "не|ни|так|такой|сегодня|сейчас|опять|снова|совсем|очень|уже|ну|а|и|же|ведь|ли|бы|ка|я|мне|меня|мной|её|ее|мо(?:й|я|ю|ё|е|ей|ем|ём|и|их)|ты|тебя|тебе|в|на|со|с|ко|тут|здесь|там|может|можешь|давай|эт(?:им|ой|у|от|ому)|всю|весь|целую|целый|всё|все",
+  "хочу|хочется|хотелось|неохота|люблю|проводить|провести|спать|засыпать|ночевать|переночевать|быть|остаться|оставаться|сидеть|скучаю|скучать",
+  `одной|одна|одиноко|одиночестве|скучно|грустно|тоскливо|холодно|${NIGHT.slice(0, -1)}`,
+  "составишь|составь|компанию|компашку|скрасишь|скрась|согреешь|согрей|досуг|одиночество|пожалуйста|жду|пиши|напиши|до|утра|утром|у|канале|странице",
+  // Endearments: "милый", "любимый", "сладкий", "солнце", "зайка", "darling", "sweetie".
+  "мил(?:ый|ая|ашка|ок|енький|енькая)|любим(?:ый|ая|ой)|сладк(?:ий|ая|ой)|сладенький|сладенькая|солнце|солнышко|дорог(?:ой|ая|уша)|родн(?:ой|ая|енький|енькая)|красав(?:чик|ица|ец|а)|зайка|зайчик|зайчонок|зая|котик|котёнок|котенок|малыш|малышка|хорош(?:ий|ая|о)",
+  // The post's pitch: "там всё", "там интересно", "тебе понравится", "не пожалеешь", "подробности", "мой первый пост".
+  "понравится|пожалеешь|интересно|интересное|подробнее|подробности|первый|первом|первую|последний|последнем|новый|свежий",
+  `${LOOK}|внимательнее|внимательно|пост(?:ик|ы|а|у|е|ом|ов|ах|ам|ами)?|постик(?:и|а|у|е|ом|ов)?|выше|ниже`,
+  "i|i'm|im|i’m|me|my|myself|another|you|you'll|youll|you’ll|so|very|really|just|again|today|now|and|the|a|this|that|it|it's|its|it’s|to|by|at|on|in|up|out|here|there|please|all|everything",
+  "don't|dont|don’t|won't|wont|won’t|do|not|want|hate|spend|spending|stay|staying|sleep|sleeping|be|being|am|feel|feeling|night|evening|tonight|alone|lonely|bored|sad|cold",
+  "keep|company|warm|help|with|would|will|can|could|post|posts|above|below|maybe|wanna|u|pls|plz|come|your|latest|new|last|recent|first",
+  "babe|baby|honey|handsome|darling|sweetie|sweetheart|sweety|dear|cutie|love|like|interesting|details",
+].join("|")})$`);
+// Inside the wish itself, the words right before the night may also describe it: when, how long, the weather, the mood or
+// the romance ("эту холодную ночь", "долгую зимнюю ночь", "эту страстную ночь", "another long night"). Any other word there names a plan, a place or a feast
+// ("хоккейный вечер", "субботнюю ночь", "хеллоуинскую ночь", "вечер в музее").
+const LONELY_SPAN = new RegExp(LONELY.source, "giu");
+const NIGHT_ONLY = re(`^${NIGHT.slice(0, -1)}$`);
+const NIGHT_WORD = re(`^(?:${[
+  "(?:сегодняшн|завтрашн|вчерашн|очередн|холодн|морозн|прохладн|дождлив|душн|жарк|долг|длинн|бесконечн|бессонн|т[её]мн|тих|зимн|осенн|весенн|летн|одинок|скучн|грустн|тоскливн|пуст|так|горяч|страстн|романтич|романтическ|свободн|уютн|прекрасн|чудесн|волшебн|лунн|зв[её]здн|последн|нежн|ласков|сладостн|незабываем|особенн)\\p{L}*",
+  "ещ[её]|одну|один|целую|целый|всю|весь|another|whole|entire|long|cold|lonely|dark|quiet|rainy|winter|one|more|hot|romantic|free|cozy|cosy|beautiful|perfect|last|sweet|special|such",
+].join("|")})$`);
+// "18+" marks the adult post, so it is bare; any other number names a meetup ("в 19:00", "12.11"). Quotes around a word ('пост')
+// are no part of it.
+const ADULT_AGE = /\(?\s*18\s*\+\s*\)?/gu;
+const wordsOf = (text: string) => text.split(/[^\p{L}\p{N}'’]+/u).map((word) => word.replace(/^['’]+|['’]+$/gu, "")).filter(Boolean);
+function bareInvite(text: string): boolean {
+  const words: string[] = [];
+  const rest = text.replace(ADULT_AGE, " ").replace(LONELY_SPAN, (span) => {
+    const wish = wordsOf(span);
+    const night = wish.findIndex((word) => NIGHT_ONLY.test(word));
+    let first = night;
+    while (first > 0 && NIGHT_WORD.test(wish[first - 1]!)) first--;
+    words.push(...wish.filter((_, index) => index < first || index >= night));
+    return " ";
+  });
+  return [...words, ...wordsOf(rest)].every((word) => BARE_WORD.test(word));
+}
 function lonelyBait(raw: string, text: string): boolean {
-  if (raw.length > 280 || !LONELY.test(text) || !POINTER.test(text) || !(TEASER.test(raw) && AT_NIGHT.test(text)) && !COMPANY.test(text)) return false;
+  if (raw.length > 280 || !LONELY.test(text)) return false;
+  const profile = PROFILE_POINTER.test(text);
+  if (!profile && !POST_POINTER.test(text)) return false;
+  const company = profile ? COMPANY.test(text) : POST_COMPANY.test(text) && bareInvite(text);
+  if (!(TEASER.test(raw) && AT_NIGHT.test(text)) && !BAIT_HELP.test(text) && !company) return false;
   return !(ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
     || ADULT_JOKE.test(text) || LAUGHING.test(raw));
 }
