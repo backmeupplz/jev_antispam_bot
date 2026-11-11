@@ -856,7 +856,7 @@ const POST_POINTER = any(`‹${LOOK} (?:[\\p{L}-]+ ){0,3}?(?:пост\\p{L}*|pos
 const BAIT_HELP = re("‹поможешь (?:мне )?с этим›");
 const COMPANY = any("‹(?:составишь|составь|скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
 // Under a post pointer only, "составишь" must ask for company outright ("составишь мне компанию"), not for a plan or a list.
-const POST_COMPANY = any("‹(?:составишь|составь)(?:-ка)? (?:[\\p{L}-]+ ){0,2}?компа(?:ни|шк)|‹(?:скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
+const POST_COMPANY = any("‹(?:составишь|составь)(?:-ка)?,? (?:[\\p{L}-]+,? ){0,2}?компа(?:ни|шк)|‹(?:скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
 const AT_NIGHT = re(`‹${NIGHT}|‹(?:ночевать|переночевать|ночую)›`);
 // #630: a member's invitation also asks for company and points to a post, but it names the plan: "составишь компанию в поход?
 // смотрите пост выше", "keep me company at the museum? check my post", "смотри пост про кино". Under a post pointer, a plea
@@ -866,16 +866,18 @@ const BARE_WORD = re(`^(?:${[
   "не|ни|так|такой|сегодня|сейчас|опять|снова|совсем|очень|уже|ну|а|и|же|ведь|ли|бы|ка|я|мне|меня|мной|её|ее|мо(?:й|я|ю|ё|е|ей|ем|ём|и|их)|ты|тебя|тебе|в|на|со|с|ко|тут|здесь|там|может|можешь|давай|эт(?:им|ой|у|от|ому)|всю|весь|целую|целый|всё|все",
   "хочу|хочется|хотелось|неохота|люблю|проводить|провести|спать|засыпать|ночевать|переночевать|быть|остаться|оставаться|сидеть|скучаю|скучать",
   `одной|одна|одиноко|одиночестве|скучно|грустно|тоскливо|холодно|${NIGHT.slice(0, -1)}`,
-  "составишь|составь|компанию|компашку|скрасишь|скрась|согреешь|согрей|досуг|одиночество|пожалуйста|жду|пиши|напиши|до|утра|утром|у|канале|странице",
+  "составишь|составь|компанию|компашку|скрасишь|скрась|согреешь|согрей|поможешь|досуг|одиночество|пожалуйста|жду|буду|будет|ждать|ждет|ждёт|стесняйся|пиши|напиши|до|утра|утром|у|канале|странице|лс|личк(?:у|е|а)|по|ссылк(?:е|у|а|ой)|про",
   // Endearments: "милый", "любимый", "сладкий", "солнце", "зайка", "darling", "sweetie".
   "мил(?:ый|ая|ашка|ок|енький|енькая)|любим(?:ый|ая|ой)|сладк(?:ий|ая|ой)|сладенький|сладенькая|солнце|солнышко|дорог(?:ой|ая|уша)|родн(?:ой|ая|енький|енькая)|красав(?:чик|ица|ец|а)|зайка|зайчик|зайчонок|зая|котик|котёнок|котенок|малыш|малышка|хорош(?:ий|ая|о)",
-  // The post's pitch: "там всё", "там интересно", "тебе понравится", "не пожалеешь", "подробности", "мой первый пост".
-  "понравится|пожалеешь|интересно|интересное|подробнее|подробности|первый|первом|первую|последний|последнем|новый|свежий",
+  // The post's pitch: "там всё", "там интересно", "тебе точно понравится", "не пожалеешь", "подробности", "мой первый пост",
+  // "мой горячий пост", "там мои фотки", "там сюрприз", "если интересно, переходи"; a DM or link tail: "жду в лс", "переходи по ссылке".
+  "понравится|понравятся|пожалеешь|точно|обязательно|интересно|интересное|самое|самые|если|переходи|сюрприз|подробнее|подробности|подробно|написано|первый|первом|первую|последний|последнем|новый|свежий",
+  "горяч(?:ий|ая|ее|ие|ую|ем|ей|его|о)|фото|фоточки|фотк(?:и|а|у|ами|ах)|фотографи(?:и|ю|я|й|ями|ях)",
   `${LOOK}|внимательнее|внимательно|пост(?:ик|ы|а|у|е|ом|ов|ах|ам|ами)?|постик(?:и|а|у|е|ом|ов)?|выше|ниже`,
-  "i|i'm|im|i’m|me|my|myself|another|you|you'll|youll|you’ll|so|very|really|just|again|today|now|and|the|a|this|that|it|it's|its|it’s|to|by|at|on|in|up|out|here|there|please|all|everything",
+  "i|i'm|im|i’m|i'll|i’ll|waiting|shy|me|my|myself|another|you|you'll|youll|you’ll|so|very|really|just|again|today|now|and|the|a|this|that|it|it's|its|it’s|to|by|at|on|in|up|out|here|there|please|all|everything",
   "don't|dont|don’t|won't|wont|won’t|do|not|want|hate|spend|spending|stay|staying|sleep|sleeping|be|being|am|feel|feeling|night|evening|tonight|alone|lonely|bored|sad|cold",
   "keep|company|warm|help|with|would|will|can|could|post|posts|above|below|maybe|wanna|u|pls|plz|come|your|latest|new|last|recent|first",
-  "babe|baby|honey|handsome|darling|sweetie|sweetheart|sweety|dear|cutie|love|like|interesting|details",
+  "babe|baby|honey|handsome|darling|sweetie|sweetheart|sweety|dear|cutie|love|like|interesting|details|regret|definitely|hot|pic|pics|photo|photos",
 ].join("|")})$`);
 // Inside the wish itself, the words right before the night may also describe it: when, how long, the weather, the mood or
 // the romance ("эту холодную ночь", "долгую зимнюю ночь", "эту страстную ночь", "another long night"). Any other word there names a plan, a place or a feast
@@ -886,9 +888,9 @@ const NIGHT_WORD = re(`^(?:${[
   "(?:сегодняшн|завтрашн|вчерашн|очередн|холодн|морозн|прохладн|дождлив|душн|жарк|долг|длинн|бесконечн|бессонн|т[её]мн|тих|зимн|осенн|весенн|летн|одинок|скучн|грустн|тоскливн|пуст|так|горяч|страстн|романтич|романтическ|свободн|уютн|прекрасн|чудесн|волшебн|лунн|зв[её]здн|последн|нежн|ласков|сладостн|незабываем|особенн)\\p{L}*",
   "ещ[её]|одну|один|целую|целый|всю|весь|another|whole|entire|long|cold|lonely|dark|quiet|rainy|winter|one|more|hot|romantic|free|cozy|cosy|beautiful|perfect|last|sweet|special|such",
 ].join("|")})$`);
-// "18+" marks the adult post, so it is bare; any other number names a meetup ("в 19:00", "12.11"). Quotes around a word ('пост')
+// "18+" or "+18" marks the adult post, so it is bare; any other number names a meetup ("в 19:00", "12.11"). Quotes around a word ('пост')
 // are no part of it.
-const ADULT_AGE = /\(?\s*18\s*\+\s*\)?/gu;
+const ADULT_AGE = /\(?\s*(?:18\s*\+|\+\s*18(?!\d))\s*\)?/gu;
 const wordsOf = (text: string) => text.split(/[^\p{L}\p{N}'’]+/u).map((word) => word.replace(/^['’]+|['’]+$/gu, "")).filter(Boolean);
 function bareInvite(text: string): boolean {
   const words: string[] = [];
