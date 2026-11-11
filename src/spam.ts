@@ -361,6 +361,21 @@ export type SpamAssessment = {
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+/**
+ * The model server gave no verdict (#625): it timed out, the connection failed or it answered with an HTTP error, or the
+ * bot paused model calls after repeated timeouts (classifier-resilience.ts). A timeout, a transport failure, 429 and 5xx
+ * are worth another try; any other 4xx or a pause is not.
+ */
+export class ClassifierRequestError extends Error {
+  readonly retryable: boolean;
+  constructor(message: string, readonly reason: "timeout" | "network" | "paused" | `http_${number}`, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ClassifierRequestError";
+    const status = reason.startsWith("http_") ? Number(reason.slice(5)) : undefined;
+    this.retryable = reason === "timeout" || reason === "network" || status === 429 || status !== undefined && status >= 500;
+  }
+}
+
 export class JevSpamClassifier {
   constructor(
     private readonly apiKey: string,
@@ -423,21 +438,29 @@ export class JevSpamClassifier {
     // for its empty text (Laya scores the state, not the question wording).
     const current = mediaButtons(message) ? { ...message, text: message.inlineButtons!.map(button => button.text).join("\n") } : message;
     const request = { model: this.options.model, state: { message: current, recentMessages }, questions };
-    const response = await fetcher(this.options.url ?? "https://api.typesafe.ai/v1/systemone", {
-      method: "POST",
-      headers: {
-        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(this.options.timeoutMs),
-    });
-
-    if (!response.ok) {
-      throw new Error(`TypeSafe request failed with HTTP ${response.status}`);
+    const signal = AbortSignal.timeout(this.options.timeoutMs);
+    let raw: string;
+    // Only the exchange itself can be retried (#625): a reply that is no valid verdict fails the same way every time.
+    try {
+      const response = await fetcher(this.options.url ?? "https://api.typesafe.ai/v1/systemone", {
+        method: "POST",
+        headers: {
+          ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        signal,
+      });
+      if (!response.ok) throw new ClassifierRequestError(`TypeSafe request failed with HTTP ${response.status}`, `http_${response.status}`);
+      raw = await response.text();
+    } catch (error) {
+      if (error instanceof ClassifierRequestError) throw error;
+      throw signal.aborted
+        ? new ClassifierRequestError(`TypeSafe request timed out after ${this.options.timeoutMs} ms`, "timeout", { cause: error })
+        : new ClassifierRequestError("TypeSafe request failed in transport", "network", { cause: error });
     }
 
-    const body: unknown = await response.json();
+    const body: unknown = JSON.parse(raw);
     let assessment = parseAssessment(body, this.options.threshold, recentMessages.length);
     if (this.options.model === APPROVED_MODEL && assessment.model !== APPROVED_MODEL) {
       throw new Error("Approved classifier identity mismatch");

@@ -8,7 +8,8 @@ import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, crypt
 import { directCryptoTradeControls, directCryptoTradeOffer } from "./fixtures/crypto-trade-courier";
 import { cryptoCorpusAds, cryptoCorpusKeeps, cryptoCorpusKnownMatches, cryptoCorpusKnownMisses } from "./fixtures/crypto-trade-corpus";
 import { corpusAds, corpusKeeps, corpusKnownMatches, corpusKnownMisses, corpusRepliedAnswers } from "./fixtures/promo-corpus";
-import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds } from "./fixtures/adult-promo";
+import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases, adultPromoReviewAds, lonelyBaitControls,
+  lonelyBaitIncident, lonelyBaitParaphrases } from "./fixtures/adult-promo";
 import { adultCorpusAds, adultCorpusKeeps, adultCorpusKnownMatches, adultCorpusKnownMisses, type AdultCorpusItem } from "./fixtures/adult-promo-corpus";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident, bookCopyLongReview, bookCopyParaphrases } from "./fixtures/book-copy-offer";
 import { bookCorpusAds, bookCorpusKeeps, bookCorpusKnownMatches, bookCorpusKnownMisses } from "./fixtures/book-copy-corpus";
@@ -252,6 +253,29 @@ test("explicit terms need a funnel, and URL buttons are one", () => {
   expect(promoPattern(plain("Private rooms · face cam · no blur — tap the button below"))).toBe(adult);
   // A quoted ad inside a moderator's reminder is not the author's offer.
   expect(promoPattern(plain("Posts like «XXX p0rn content, tap a button below» get you removed, please read the pinned message"))).toBeUndefined();
+});
+
+test("the #625 lonely-night bait matches standalone, under a channel post and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(lonelyBaitIncident, patch))).toBe(adult);
+});
+
+test.each(lonelyBaitParaphrases)("held-out lonely-night bait matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(adult);
+});
+
+test("lonely-night bait controls never match: a member's own evening, reports, jokes and posts about something else", () => {
+  expect(lonelyBaitControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+  // The bait needs a pointer and a teaser or a plea, and stays short.
+  expect(promoPattern(plain("Так не хочется сегодня проводить ночь одной, поможешь мне с этим?😏"))).toBeUndefined();
+  expect(promoPattern(plain("Так не хочется сегодня проводить ночь одной. Смотри внимательнее пост"))).toBeUndefined();
+  expect(promoPattern(plain(`${"Длинная история про мой день. ".repeat(10)}${lonelyBaitIncident}`))).toBeUndefined();
+});
+
+test("lonely-night bait matching stays fast on 4,096-character adversarial input", () => {
+  for (const unit of ["ночь ", "одной ", "смотри ", "ночь одной смотри ", "night alone check ", "скучно ", "a "]) {
+    const text = unit.repeat(Math.ceil(4096 / unit.length)).slice(0, 4096);
+    expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
+  }
 });
 
 test("the pinned adult review corpus keeps its exact outcome", () => {

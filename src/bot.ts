@@ -12,7 +12,8 @@ import { PROFILE_TEXT_LIMIT, SenderProfileCache, personalChannelLocator } from "
 import { publicChannelUrl } from "./personal-posts";
 import { PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
 import { profileChannelFunnel } from "./profile-funnel";
-import { CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
+import { ClassifierRequestError, CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
+import { classifyWithRetries, retryableClassification } from "./classifier-resilience";
 import { cacheEligible, cacheFingerprint, confirmedSpam, type SpamCache } from "./spam-cache";
 import { escalatedScore, MemoryRepeatStore, REPEAT_MIN_SCORE, repeatKey, RepeatSnapshots, type RepeatCopy, type RepeatStore } from "./repeat-sends";
 import type { StatsRecorder } from "./stats";
@@ -37,6 +38,7 @@ export function registerBotHandlers(bot: Bot, {
   isNewChat = async () => false,
   deleteRetries = new DeleteRetryQueue({ logger }),
   intentRetry,
+  classifyRetry,
 }: {
   classifier: Pick<JevSpamClassifier, "classify">;
   shadowClassifier?: Pick<JevSpamClassifier, "classify">;
@@ -56,6 +58,8 @@ export function registerBotHandlers(bot: Bot, {
   deleteRetries?: DeleteRetryQueue;
   // The inline intent retry's clock (prepareIntent's defaults: real time); tests drive it by hand.
   intentRetry?: Parameters<typeof prepareIntent>[4];
+  // Waits between classification tries (#625; classifyWithRetries' defaults: real time); tests shorten them.
+  classifyRetry?: Omit<NonNullable<Parameters<typeof classifyWithRetries>[1]>, "onRetry">;
 }): void {
   const admins = new AdminCache();
   const history = new MessageHistory();
@@ -262,17 +266,30 @@ export function registerBotHandlers(bot: Bot, {
         : () => {};
       let assessment: SpamAssessment | undefined;
       let classificationFailed = false;
+      let attempts = 0;
       try {
         if (!cacheHit) {
           stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
           const chatId = ctx.chat.id, messageId = ctx.msgId;
-          assessment = await classifier.classify(classifierInput, context, trainingCapture
-            && ((request, answers, result) => trainingCapture.record(chatId, messageId, request, answers, result)));
+          // A timeout or transport failure is tried again before the message is kept unchecked (#625); this update keeps
+          // its place meanwhile, so its sender's later updates still wait for it.
+          // Counted as each try starts, so a shutdown during a wait logs only the tries that ran.
+          assessment = await classifyWithRetries(() => (attempts++, classifier.classify(classifierInput, context, trainingCapture
+            && ((request, answers, result) => trainingCapture.record(chatId, messageId, request, answers, result)))), {
+            ...classifyRetry,
+            onRetry: (failed, error, delayMs) => {
+              logger.info(JSON.stringify({ event: "classification_retry", chatId, messageId, attempt: failed,
+                kind: `classifier_${error.reason}`, delayMs }));
+            },
+          });
         }
       } catch (error) {
         classificationFailed = true;
         logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, undefined, recentMessages.length);
-        logFailure("classification_failed", error, ctx.chat.id, ctx.msgId);
+        // The terminal event: the message is kept unclassified after `attempts` tries.
+        logFailure("classification_failed", error, ctx.chat.id, ctx.msgId, { attempts,
+          outcome: error instanceof ClassifierRequestError && error.reason === "paused" ? "paused"
+            : !retryableClassification(error) ? "not_retryable" : classifyRetry?.signal?.aborted ? "shutdown" : "retries_exhausted" });
         logShadow("failed");
       }
       // A cache write failure is never a classification failure.
@@ -542,13 +559,14 @@ export function registerBotHandlers(bot: Bot, {
     logFailure("update_failed", error, ctx.chat?.id, ctx.msgId);
   });
 
-  function logFailure(event: string, error: unknown, chatId?: number, messageId?: number): void {
+  function logFailure(event: string, error: unknown, chatId?: number, messageId?: number, extra: Record<string, unknown> = {}): void {
     const { kind, reason } = failureClass(error);
     const retryAfter = error instanceof GrammyError ? error.parameters?.retry_after : undefined;
-    logger.error(JSON.stringify({ event, kind, ...(reason ? { reason } : {}), ...(retryAfter !== undefined ? { retryAfter } : {}), chatId, messageId }));
+    logger.error(JSON.stringify({ event, kind, ...(reason ? { reason } : {}), ...(retryAfter !== undefined ? { retryAfter } : {}), chatId, messageId, ...extra }));
   }
 
   function failureClass(error: unknown): { kind: string; reason?: string } {
+    if (error instanceof ClassifierRequestError) return { kind: `classifier_${error.reason}` };
     const kind = error instanceof GrammyError
       ? `telegram_${error.error_code}`
       : error instanceof HttpError
@@ -568,7 +586,7 @@ export function registerBotHandlers(bot: Bot, {
     const startedAt = performance.now();
     const settled = run.then(
       (shadow) => ({ shadow, durationMs: Math.round(performance.now() - startedAt) }),
-      (error: unknown) => ({ error: error instanceof Error && error.name === "TimeoutError" ? "timeout"
+      (error: unknown) => ({ error: error instanceof ClassifierRequestError && error.reason === "timeout" ? "timeout"
         : error instanceof Error ? error.message.slice(0, 120) : "unknown", durationMs: Math.round(performance.now() - startedAt) }),
     );
     return (primary: "delete" | "keep" | "cache_delete" | "failed", primaryAssessment?: SpamAssessment) => void settled.then((result) => {

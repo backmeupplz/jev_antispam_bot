@@ -10,6 +10,7 @@ import { DeleteRetryQueue } from "./delete-retry";
 import { startWithHandover } from "./handover";
 import { loadConfig } from "./config";
 import { JevSpamClassifier } from "./spam";
+import { AdaptiveClassifier } from "./classifier-resilience";
 import { createStatsRecorder } from "./stats";
 import { PostgresTrainingCapture } from "./training-capture";
 import { promos } from "./promo";
@@ -33,7 +34,8 @@ auditHealthTimer.unref();
 // Telegram's queue of updates not yet confirmed (#613): it should stay near zero.
 const backlogTimer = setInterval(() => {
   void bot.api.getWebhookInfo().then(
-    info => console.info(JSON.stringify({ event: "update_backlog", pendingUpdateCount: info.pending_update_count, handling: updates.size })),
+    info => console.info(JSON.stringify({ event: "update_backlog", pendingUpdateCount: info.pending_update_count, handling: updates.size,
+      classifierLimit: classifier.limit, classifying: classifier.running, classifierWaiting: classifier.waiting, classifierPaused: classifier.paused })),
     () => console.error(JSON.stringify({ event: "update_backlog", outcome: "unavailable", handling: updates.size })),
   );
 }, 60_000);
@@ -46,12 +48,18 @@ const spamCache = config.databaseUrl && process.env.SPAM_CACHE_ENABLED !== "fals
 const repeats = new PostgresRepeatStore(config.databaseUrl);
 const trainingCapture = config.databaseUrl && process.env.TRAINING_CAPTURE === "true"
   ? new PostgresTrainingCapture(config.databaseUrl, { retentionDays: Number(process.env.TRAINING_CAPTURE_DAYS || 30) }) : undefined;
-const classifier = new JevSpamClassifier(config.typesafeApiKey, {
+// At most JEV_CONCURRENCY model calls at once, fewer while they time out (#625).
+const classifier = new AdaptiveClassifier(new JevSpamClassifier(config.typesafeApiKey, {
   model: config.jevModel,
   threshold: config.spamThreshold,
   timeoutMs: config.jevTimeoutMs,
   url: config.jevUrl,
+}), config.concurrency, {
+  onLimit: (limit, previous) => console.info(JSON.stringify({ event: "classifier_concurrency", limit, previous })),
+  onPause: (ms) => console.error(JSON.stringify({ event: "classifier_paused", pauseMs: ms })),
 });
+// Stopping ends classification retries (#625): the handover confirms in-flight updates and exits soon after SIGTERM.
+const stopping = new AbortController();
 const shadowClassifier = config.shadow && new JevSpamClassifier(config.shadow.apiKey, {
   model: config.shadow.model,
   threshold: config.spamThreshold,
@@ -65,7 +73,7 @@ const promo = promos("jev", promoStore);
 promo.start();
 
 registerBotHandlers(bot, { classifier, shadowClassifier, trainingCapture, deletionAudit, model: config.jevModel, stats, spamCache, spamThreshold: config.spamThreshold, repeats,
-  promo, isNewChat: (chatId) => promoStore.isNewChat(chatId), deleteRetries });
+  promo, isNewChat: (chatId) => promoStore.isNewChat(chatId), deleteRetries, classifyRetry: { signal: stopping.signal } });
 
 let polling: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | undefined;
@@ -73,6 +81,7 @@ function shutdown(): Promise<void> {
   if (!shutdownPromise) {
     shutdownPromise = (async () => {
       console.info(JSON.stringify({ event: "bot_stopping", ...stats.health() }));
+      stopping.abort();
       await drainBot(bot, polling, updates.settle);
       clearInterval(auditHealthTimer);
       clearInterval(backlogTimer);
@@ -110,7 +119,11 @@ try {
   // Polls only while holding the handover lock; SIGTERM/SIGINT stop polling, then run shutdown()
   polling = startWithHandover(bot, {
     allowed_updates: ["message", "edited_message", "my_chat_member", "chat_member"],
-    onStart: ({ username }) => console.info(JSON.stringify({ event: "bot_started", username })),
+    onStart: ({ username }) => {
+      console.info(JSON.stringify({ event: "bot_started", username }));
+      // Only once polling, so the handover's own handler already keeps a signal from killing the process outright.
+      for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => stopping.abort());
+    },
   }, shutdown, updates.settle);
   await polling;
 } finally {

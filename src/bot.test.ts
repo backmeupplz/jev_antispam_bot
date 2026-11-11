@@ -5,6 +5,7 @@ import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { currentTelegramLinks, type PageRequest } from "./telegram-preview";
 import type { SpamCache } from "./spam-cache";
 import { registerBotHandlers } from "./bot";
+import { ClassifierRequestError } from "./spam";
 import { handleConcurrently } from "./lifecycle";
 import { DeleteRetryQueue, type prepareIntent } from "./delete-retry";
 import { toModerationMessage } from "./message";
@@ -134,9 +135,12 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
   });
   const humans = new Set<number>();
   bot.use(async (ctx, next) => { if (ctx.from && !ctx.from.is_bot) humans.add(ctx.from.id); await next(); });
+  const retryWaits: number[] = [];
+  const stopping = new AbortController();
   registerBotHandlers(bot, {
     model: "jev-1.13.0", stats, logger, previewRequest, spamCache, deletionAudit, ...(repeats ? { repeats } : {}),
     ...(deleteRetries ? { deleteRetries } : {}), intentRetry,
+    classifyRetry: { sleep: async (ms) => { retryWaits.push(ms); }, random: () => 0.5, signal: stopping.signal },
     shadowClassifier: shadowClassify && { classify: async (message, recent = []) => shadowClassify(message, recent) },
     classifier: { classify: async (message, recent = []) => {
       classifications.push(structuredClone({ message, recent }));
@@ -153,7 +157,7 @@ function harness(classify?: (message: CurrentModerationMessage, recent: Moderati
     return msg.message_id;
   };
   return {
-    send, bot, logs, calls, classifications, batches, stats, failedDeletes,
+    send, bot, logs, calls, classifications, batches, stats, failedDeletes, retryWaits, stop: () => stopping.abort(),
     setAnswer: (value: SpamAssessment) => { answer = value; },
     setClassifyError: () => { classifyError = true; },
     setMetadataError: () => { metadataError = true; },
@@ -192,6 +196,59 @@ test("shadow verdicts are logged beside the primary decision and never delete", 
   expect(h.logs.filter((log) => log.event === "shadow_analyzed").at(-1)).toMatchObject({
     status: "failed", primaryDecision: "delete", decision: null, error: "TypeSafe request failed with HTTP 503",
   });
+});
+
+test("a timed-out classification is tried again, waiting between tries, and its verdict applies (#625)", async () => {
+  let calls = 0;
+  const h = harness(async () => {
+    if (++calls === 1) throw new ClassifierRequestError("TypeSafe request timed out after 15000 ms", "timeout");
+    if (calls === 2) throw new ClassifierRequestError("TypeSafe request failed with HTTP 503", "http_503");
+    return assessment(true);
+  });
+  const id = await h.send({ text: "buy my token" });
+  expect(h.deletes()).toEqual([id]);
+  expect(h.classifications).toHaveLength(3);
+  expect(h.retryWaits).toEqual([2_000, 6_000]);
+  expect(h.logs.filter((log) => log.event === "classification_retry")).toEqual([
+    { event: "classification_retry", chatId: group.id, messageId: id, attempt: 1, kind: "classifier_timeout", delayMs: 2_000 },
+    { event: "classification_retry", chatId: group.id, messageId: id, attempt: 2, kind: "classifier_http_503", delayMs: 6_000 },
+  ]);
+  expect(h.logs.some((log) => log.event === "classification_failed")).toBe(false);
+  expect(h.logs.find((log) => log.event === "message_analyzed")).toMatchObject({ status: "completed", decision: "delete" });
+});
+
+test("a classification that keeps timing out stops after three tries with one terminal event (#625)", async () => {
+  const h = harness(async () => { throw new ClassifierRequestError("TypeSafe request timed out after 15000 ms", "timeout"); });
+  const id = await h.send({ text: "buy my token" });
+  expect(h.deletes()).toEqual([]);
+  expect(h.classifications).toHaveLength(3);
+  expect(h.logs.filter((log) => log.event === "classification_retry").map((log) => log.attempt)).toEqual([1, 2]);
+  expect(h.logs.filter((log) => log.event === "classification_failed")).toEqual([{ event: "classification_failed",
+    kind: "classifier_timeout", chatId: group.id, messageId: id, attempts: 3, outcome: "retries_exhausted" }]);
+  expect(h.logs.find((log) => log.event === "message_analyzed")).toMatchObject({ status: "failed", decision: "keep" });
+});
+
+test("a classification error that would fail again is not retried (#625)", async () => {
+  for (const error of [new ClassifierRequestError("TypeSafe request failed with HTTP 401", "http_401"), new Error("invalid spam answer")]) {
+    const h = harness(async () => { throw error; });
+    await h.send({ text: "buy my token" });
+    expect(h.classifications).toHaveLength(1);
+    expect(h.retryWaits).toEqual([]);
+    expect(h.logs.filter((log) => log.event === "classification_failed")).toMatchObject([{ attempts: 1, outcome: "not_retryable" }]);
+  }
+});
+
+test("a stopping bot or paused model calls end the classification at once, each with its own outcome (#625)", async () => {
+  const stopped = harness(async () => { throw new ClassifierRequestError("TypeSafe request timed out after 15000 ms", "timeout"); });
+  stopped.stop();
+  await stopped.send({ text: "buy my token" });
+  expect(stopped.classifications).toHaveLength(1);
+  expect(stopped.logs.filter((log) => log.event === "classification_failed")).toMatchObject([{ attempts: 1, outcome: "shutdown" }]);
+
+  const paused = harness(async () => { throw new ClassifierRequestError("Model calls are paused after repeated timeouts", "paused"); });
+  await paused.send({ text: "buy my token" });
+  expect(paused.retryWaits).toEqual([]);
+  expect(paused.logs.filter((log) => log.event === "classification_failed")).toMatchObject([{ kind: "classifier_paused", attempts: 1, outcome: "paused" }]);
 });
 
 test("a below-gate invite verdict keeps the message and logs a keep decision", async () => {

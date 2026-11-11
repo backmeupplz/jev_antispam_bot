@@ -826,6 +826,34 @@ function adultPromo(message: ModerationMessage, raw: string, text: string): bool
 const TME_POST = /(?:(?<![\p{L}\p{N}_.-])|(?<=www\.))(?:t|telegram)\.me\/[a-z0-9_]+\/\d+/giu;
 const JOIN = re("‹join›", "giu");
 
+// --- Lonely-night bait (#625): "Так не хочется сегодня проводить ночь одной, поможешь мне с этим?😏 Смотри внимательнее пост",
+// a reply under an adult channel's post. It names nothing adult: the post above it, the profile or the avatar sells. It is a
+// short first-person wish not to spend the night or the evening alone, a teaser emoji or a plea for company, and a pointer to
+// the post, the profile, the avatar or the pinned message. A member's lonely evening points at nothing ("Скучно одной вечером,
+// кто в кино?"), and reports, rules, jokes and talk about the bait stay out as they do for the adult promo.
+const NIGHT = "(?:ночь|ночку|ночи|ночью|вечер|вечерок|вечерком|вечера|вечером|выходные|night|evening|weekend|tonight)›";
+const LONELY = any(
+  // "проводить ночь одной", "вечером одна", "the night alone"; "в эту ночь одна из нас" counts one of many.
+  `‹(?:не хочу|не хочется|не хотелось|неохота|не люблю|don['’]?t want|do not want|hate) (?:[\\p{L}-]+ ){0,3}?${NIGHT} (?:[\\p{L}-]+ ){0,3}?(?:одной|одна(?! из›)|в одиночестве|alone|by myself)›`,
+  // "одиноко этой ночью", "so lonely this evening"; "одной ночи" is one night.
+  `‹(?:одиноко|lonely) (?:[\\p{L}-]+ ){0,3}?${NIGHT}`,
+  "‹(?:скучно|грустно|одиноко|тоскливо|холодно|bored|sad|cold) (?:[\\p{L}-]+ ){0,2}?(?:одной|alone)›",
+  "‹(?:одной|alone) (?:[\\p{L}-]+ ){0,2}?(?:скучно|грустно|одиноко|тоскливо|холодно|bored|sad|cold)›",
+  "‹(?:быть|остаться|оставаться|сидеть|спать|засыпать|ночевать|скучаю|скучать|be|sleep|stay) (?:[\\p{L}-]+ )?(?:одной|одна(?! из›)|alone)›");
+const LOOK = "(?:смотри|смотрите|посмотри|посмотрите|глянь|гляньте|загляни|загляните|зацени|зацените|взгляни|взгляните|жми|нажми|тыкни|check|see|look at|look)";
+const POINTER = any(
+  `‹${LOOK} (?:[\\p{L}-]+ ){0,3}?(?:пост\\p{L}*|профил\\p{L}*|аватар\\p{L}*|аву|аве|био|описани\\p{L}*|закреп\\p{L}*|шапк\\p{L}*|post|profile|avatar|pfp|bio|pinned)›`,
+  "‹(?:пост|post) (?:выше|ниже|above|below)›", "‹(?:в|на) (?:моем |моём |моей )?(?:профиле|аве|аватарке|био)›|‹(?:in|on) my (?:profile|bio|avatar|pfp)›");
+// A plea for company, not for help with anything ("помогите найти сиделку", "help me pick a lamp"): only the bait's own
+// "поможешь мне с этим" asks for help. The bait asks one man, so a plural or "join me" invites a group ("составите компанию?").
+const COMPANY = any("‹поможешь (?:мне )?с этим›|‹(?:составишь|составь|скрасишь|скрась|согреешь|согрей|help me with (?:this|that|it)|keep me company|warm me up)›");
+const AT_NIGHT = re(`‹${NIGHT}|‹(?:ночевать|переночевать|ночую)›`);
+function lonelyBait(raw: string, text: string): boolean {
+  if (raw.length > 280 || !LONELY.test(text) || !POINTER.test(text) || !(TEASER.test(raw) && AT_NIGHT.test(text)) && !COMPANY.test(text)) return false;
+  return !(ADULT_REPORT.test(text) || ADULT_RULE.test(text) || ADULT_TALK.test(text) || ADDRESS.test(text) || ADDRESSED.test(text)
+    || ADULT_JOKE.test(text) || LAUGHING.test(raw));
+}
+
 // --- Free-copy bait (#153): a first-person review of a book, audiobook or course + an offer to send a copy + an interest
 // or DM cue. "Недавно послушал «Время деньги» Генри Форда… Есть хорошая аудиоверсия. Если кому интересно пишите в личку, отправлю."
 // What is reviewed: a book, an audio or text version of one, or a course the author took ("курс" alone is also a rate).
@@ -1921,7 +1949,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
     return answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source)) ? undefined : "side_gig_offer";
   }
   if (cryptoTradeAsk(message, text)) return "crypto_trade_ask";
-  if (adultPromo(message, raw.replace(QUOTED, " "), text)) return "adult_content_promo";
+  if (adultPromo(message, raw.replace(QUOTED, " "), text) || lonelyBait(raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
   if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";

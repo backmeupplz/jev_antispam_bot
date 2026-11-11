@@ -84,3 +84,55 @@ export const adultPromoControls = [
   "How did this porn bot even join the chat?\nWe have captcha",
   "So many porn bots join this group daily",
 ];
+
+// #625: a lonely-night bait reply under an adult channel's post (Nikita, Telegram 24560; the support-chat forward scored
+// 0.30–0.53 on laya-jev-ckpt-v2, with or without the post as its reply source). No adult word: the post or profile sells.
+export const lonelyBaitIncident = "Так не хочется сегодня проводить ночь одной, поможешь мне с этим?😏 Смотри внимательнее пост";
+// Held out: written before the rule was tuned.
+export const lonelyBaitParaphrases = [
+  "Не хочу проводить эту ночь одной 😏 загляни в профиль",
+  "Скучно одной этим вечером... составишь компанию? Смотри пост выше",
+  "Одиноко этой ночью 😏 глянь мою аву",
+  "Не хочется спать одной, согреешь меня? Посмотри закреп 💋",
+  "Don't want to spend the night alone 😏 check my profile",
+  "So lonely tonight, keep me company? Look at the post above",
+  // Astra review round 1 (PR #74): misses the first head left.
+  "Так не хочется сегодня проводить ночь одной, поможешь мне с этим?😏 Загляни ко мне в профиль",
+  "Не хочу быть одна сегодня ночью 🥵 посмотри пост",
+  "Так грустно одной этой ночью 😏 жми на аву",
+  "Скучаю одна вечерком 😏 глянь пост",
+  "Не хочется сегодня ночевать одной, поможешь? 😏 Смотри внимательнее пост",
+];
+// A member's lonely evening, a report or a joke about the bait points at nothing to sell.
+export const lonelyBaitControls = [
+  "Скучно одной вечером, кто со мной в кино?",
+  "Не хочу проводить выходные одной, кто едет на озеро? Пишите",
+  "Опять пишут «не хочется проводить ночь одной, смотри пост 😏», админы, удалите",
+  "Снова бот: не хочется проводить ночь одной, смотри пост. Забаньте его",
+  "Эти боты «скучно одной этой ночью, загляни в профиль» уже надоели",
+  "Ещё одна ночь без сна, смотрите пост выше про расписание",
+  "В эту ночь одна из нас дежурит, смотрите пост с графиком",
+  "Lonely tonight lol, check my post about the movie marathon 😂",
+  "Посмотри пост выше, там расписание на вечер",
+  "Spent the evening alone with a good book, see my post for the review",
+  // Astra review round 1 (PR #74): a plea for help is no plea for company.
+  "Бабушка ночью одна, помогите найти сиделку, смотрите пост выше",
+  "Сегодня вечером я одна дома, поможешь с ремонтом? смотри пост выше",
+  "Не оставляйте пожилых одних, особенно ночью одной бабушке тяжело. Посмотрите пост, помогите",
+  "Скучно одной, пиши если хочешь в настолки, смотри пост с правилами",
+  "I hate being alone at night, look at the post above, help me pick a lamp",
+  "Help me, I'm alone tonight, check the post above for the address of the party",
+  // Astra review round 2: inviting a group.
+  "Вечером одна иду на концерт, составите компанию? Смотрите пост выше с афишей",
+  "Alone this weekend, join me for a hike! Check the post above for the route",
+  // Astra review round 3: being alone plus a common 😏/😈 and a pointer, with no night or no wish to spend it alone.
+  "Alone this weekend 😈 see the post above about the party",
+  "Вечером одна дома, муж в командировке 😏 смотри пост выше про ужин",
+  "Все выходные одна с детьми 😈 посмотри пост выше, там фото",
+  "Spent the night alone fixing prod 😈 see post above",
+  "I'd rather be alone 😏 see the post above",
+  "Скучно одной 😈 зацени пост выше, я связала шарф",
+  "Never sleep alone in a tent 😈 check the post above with the gear list",
+  "Working alone tonight and the build broke, can someone help me with this? See the post above for the log",
+  "Going alone to the concert tonight, anyone want to keep me company? See the post above",
+];
