@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { deleteMessages } from "./deletion";
+import { DeleteRightsChecks, deleteMessages } from "./deletion";
 import { AsyncStatsBuffer, type StatsBatch, type StatsStore } from "./stats";
 
 test("records only confirmed successful Telegram deletions without waiting for a blocked database", async () => {
@@ -45,3 +45,21 @@ test("records only confirmed successful Telegram deletions without waiting for a
 });
 
 const silentLogger = { info: () => undefined, error: () => undefined };
+
+test("#634 delete-rights lookups run once a day per chat, and 10 min after a failed lookup", () => {
+  const day = 24 * 60 * 60_000, checks = new DeleteRightsChecks(day, 10_000, 10 * 60_000);
+  expect(checks.due(-1, 0)).toBe(true);
+  // A burst of refused deletes during the lookup fires no second one.
+  expect(checks.due(-1, 1_000)).toBe(false);
+  expect(checks.due(-1, day - 1)).toBe(false);
+  expect(checks.due(-1, day)).toBe(true);
+  // A failed lookup is due again 10 min later, not a day later, and stays recorded until then.
+  expect(checks.due(-2, 0)).toBe(true);
+  checks.failed(-2, 5_000);
+  expect(checks.due(-2, 5_000 + 10 * 60_000 - 1)).toBe(false);
+  expect(checks.due(-2, 5_000 + 10 * 60_000)).toBe(true);
+  // A success after that keeps the daily cadence; a chat never looked up is not recorded by failed().
+  expect(checks.due(-2, 5_000 + 20 * 60_000)).toBe(false);
+  checks.failed(-3, 0);
+  expect(checks.due(-3, 0)).toBe(true);
+});

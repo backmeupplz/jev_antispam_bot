@@ -30,6 +30,9 @@ import { directCryptoTradeControls } from "./fixtures/crypto-trade-courier";
 import { shortRepeats, usdtAsk, usdtBareAsk, usdtBareAskVariants, usdtControls } from "./fixtures/usdt-repeat";
 import { MemoryRepeatStore, type RepeatStore } from "./repeat-sends";
 import { PATTERN_MIN_SCORE } from "./promo-patterns";
+import {
+  botSummonIncident, cjkIncidentScores, cjkJobControls, cjkJobIncident, cjkJobMentionFamily, cjkJobMentionRemarks,
+} from "./fixtures/cjk-job-spam";
 import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } from "./fixtures/promo-patterns";
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
@@ -3145,5 +3148,131 @@ test("#624 controls at 0.79 stay kept; the bait under the floor only logs and li
   await h.send({ chat: groupB, from: forwardedUser, text: oddJobIncident });
   expect(h.deletes()).toEqual([]);
   expect(baitEvents(h)).toEqual([[floor, "money_bait", "keep"]]);
+  await h.stats.stop();
+});
+
+// #634: the "mention bots, then ad" sequence of two chats at their logged scores, the support-chat forwards, and a refused delete.
+const summonEvents = (h: { logs: Record<string, unknown>[] }) => h.logs.filter((log) => log.event === "promo_pattern_detected")
+  .map((log) => [log.messageId, log.pattern, log.decision]);
+const movedChat = "Чат переехал, все сюда @new_chat_place";
+
+test("the #634 openers and the Chinese job spam are deleted at their logged scores, in both chats", async () => {
+  const h = harness();
+  // Chat A: the opener (0.7952) went by 0.0048, the spam (0.8827) was deleted by the model.
+  h.setAnswer(keepAt(cjkIncidentScores.openerChatA));
+  await h.send({ text: botSummonIncident });
+  h.setAnswer({ ...assessment(true), probability: cjkIncidentScores.spamChatA });
+  await h.send({ text: cjkJobIncident });
+  // Chat B, another account: the opener (0.7144), the spam with context (0.7846) and a second opener (0.5041) were all kept.
+  h.setAnswer(keepAt(cjkIncidentScores.openerChatB));
+  await h.send({ chat: groupB, from: forwardedUser, text: botSummonIncident });
+  h.setAnswer(keepAt(cjkIncidentScores.spamChatB));
+  await h.send({ chat: groupB, from: forwardedUser, text: cjkJobIncident });
+  h.setAnswer(keepAt(cjkIncidentScores.openerChatBAgain));
+  await h.send({ chat: groupB, from: forwardedUser, text: botSummonIncident });
+  expect(h.deletes()).toEqual([1, 2, 3, 4, 5]);
+  expect(summonEvents(h)).toEqual([[1, "bot_summon", "pattern_delete"], [3, "bot_summon", "pattern_delete"],
+    [4, "cjk_job_spam", "pattern_delete"], [5, "bot_summon", "pattern_delete"]]);
+  expect(JSON.stringify(h.logs)).not.toMatch(/Mizetz|meaitbi|兼职/);
+  await h.stats.stop();
+});
+
+test("the #634 support-chat forwards are deleted, and their forwarder is not flagged", async () => {
+  const h = harness();
+  const forwarded = { forward_origin: { type: "hidden_user", sender_user_name: "Deleted Account", date: 1 } };
+  h.setAnswer(keepAt(cjkIncidentScores.supportSpamForward));
+  await h.send({ text: cjkJobIncident, ...forwarded });
+  h.setAnswer(keepAt(cjkIncidentScores.supportOpenerForward));
+  await h.send({ text: botSummonIncident, ...forwarded });
+  h.setAnswer(keepAt(0.4));
+  await h.send({ text: movedChat });
+  expect(h.deletes()).toEqual([1, 2]);
+  expect(summonEvents(h)).toEqual([[1, "cjk_job_spam", "pattern_delete"], [2, "bot_summon", "pattern_delete"]]);
+  await h.stats.stop();
+});
+
+test("after a confirmed opener the same actor's next link goes as bot_summon_linked, in that chat and window only", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6));
+  const opener = await h.send({ text: botSummonIncident });
+  h.setAnswer(keepAt(0.4));
+  const ad = await h.send({ text: movedChat });
+  // A plain message without a link stays; another actor, another chat and the window's end are not linked.
+  const chat = await h.send({ text: "Всем привет" });
+  await h.send({ from: forwardedUser, text: movedChat });
+  await h.send({ chat: groupB, text: movedChat });
+  setSystemTime(new Date(Date.now() + 11 * 60_000));
+  try {
+    await h.send({ text: movedChat });
+  } finally { setSystemTime(); }
+  expect(h.deletes()).toEqual([opener, ad]);
+  expect(h.deletes()).not.toContain(chat);
+  expect(summonEvents(h)).toEqual([[opener, "bot_summon", "pattern_delete"], [ad, "bot_summon_linked", "pattern_delete"]]);
+  await h.stats.stop();
+});
+
+test("an opener the model deletes on its own flags its actor; one under the floor flags nobody", async () => {
+  const h = harness();
+  h.setAnswer(assessment(true));
+  await h.send({ text: botSummonIncident });
+  h.setAnswer(keepAt(0.3));
+  await h.send({ text: movedChat });
+  h.setAnswer(keepAt(PATTERN_MIN_SCORE - 0.01));
+  await h.send({ chat: groupB, text: botSummonIncident });
+  h.setAnswer(keepAt(0.5));
+  await h.send({ chat: groupB, text: movedChat });
+  expect(h.deletes()).toEqual([1, 2]);
+  expect(summonEvents(h)).toEqual([[2, "bot_summon_linked", "pattern_delete"], [3, "bot_summon", "keep"]]);
+  await h.stats.stop();
+});
+
+test("#634 Chinese controls stay kept at 0.79", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.79));
+  for (const [index, text] of cjkJobControls.entries()) await h.send({ chat: [group, groupB, groupC][index % 3], text });
+  expect(h.deletes()).toEqual([]);
+  expect(summonEvents(h)).toEqual([]);
+  await h.stats.stop();
+});
+
+test("#634 a Chinese job line ending on a bare mention is deleted only at 0.5: remarks under it stay, ads over it go", async () => {
+  const kept = harness();
+  kept.setAnswer(keepAt(0.49));
+  for (const [index, text] of [...cjkJobMentionRemarks, ...cjkJobMentionFamily].entries()) {
+    await kept.send({ chat: [group, groupB, groupC][index % 3], text });
+  }
+  expect(kept.deletes()).toEqual([]);
+  await kept.stats.stop();
+  const deleted = harness();
+  deleted.setAnswer(keepAt(0.5));
+  for (const [index, text] of cjkJobMentionFamily.entries()) await deleted.send({ chat: [group, groupB, groupC][index % 3], text });
+  expect(deleted.deletes()).toHaveLength(cjkJobMentionFamily.length);
+  await deleted.stats.stop();
+});
+
+test("a refused delete looks up Jev's own rights once per chat and logs a missing right once", async () => {
+  const h = harness(); h.setAnswer(assessment(true));
+  const refused = { error_code: 400, description: "Bad Request: message can't be deleted for everyone" };
+  h.failNext("deleteMessage", refused, refused);
+  await h.send({ text: "buy my token" });
+  await h.send({ text: "buy my token again" });
+  expect(h.logs.filter((log) => log.event === "delete_rights_missing")).toEqual([{ event: "delete_rights_missing", chatId: group.id, status: "member" }]);
+  expect(h.calls.filter((call) => call.method === "getChatMember" && call.payload.user_id === botInfo.id)).toHaveLength(1);
+  // A failure Telegram gives another reason for is not a rights question.
+  h.failedDeletes.add(3);
+  await h.send({ chat: groupB, text: "buy my token" });
+  expect(h.calls.filter((call) => call.method === "getChatMember" && call.payload.user_id === botInfo.id)).toHaveLength(1);
+  // An administrator with the delete right logs nothing (the refusal had another cause, such as a service message).
+  h.failNext("deleteMessage", refused);
+  h.failNext("getChatMember", { ok: true, result: { status: "administrator", can_delete_messages: true, user: botInfo } });
+  await h.send({ chat: groupC, text: "buy my token" });
+  expect(h.logs.filter((log) => log.event === "delete_rights_missing").map((log) => log.chatId)).toEqual([group.id]);
+  // A failed lookup logs its own reason class, never Telegram's description.
+  h.failNext("deleteMessage", refused);
+  h.failNext("getChatMember", { error_code: 400, description: "Bad Request: CHAT_ADMIN_REQUIRED" });
+  await h.send({ chat: { ...group, id: -1004 }, text: "buy my token" });
+  expect(h.logs.filter((log) => log.event === "delete_rights_check_failed")).toEqual([
+    { event: "delete_rights_check_failed", kind: "telegram_400", reason: "chat_admin_required", chatId: -1004 }]);
+  expect(JSON.stringify(h.logs)).not.toMatch(/for everyone|CHAT_ADMIN_REQUIRED/);
   await h.stats.stop();
 });

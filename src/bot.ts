@@ -3,14 +3,14 @@ import { AUDIT_CHAT_ID, type DeletionAudit } from "./audit-outbox";
 import { auditSnapshot, renderAuditReport } from "./audit-report";
 import { AdminCache, FloodWaitError } from "./admin-cache";
 import { CampaignLedger, campaignPost, campaignText } from "./campaign";
-import { deleteMessages } from "./deletion";
+import { DeleteRightsChecks, deleteMessages } from "./deletion";
 import { DeleteRetryQueue, prepareIntent, transientIntentFailure, type RetryOutcome } from "./delete-retry";
 import { deletionMessageIds, MessageHistory } from "./history";
 import { toModerationMessage } from "./message";
 import { EnrichmentBudget, TelegramPreviewCache, type PageRequest } from "./telegram-preview";
 import { PROFILE_TEXT_LIMIT, SenderProfileCache, personalChannelLocator } from "./profile";
 import { publicChannelUrl } from "./personal-posts";
-import { moneyBait, oddJobOpener, PATTERN_MIN_SCORE, promoPattern } from "./promo-patterns";
+import { botSummon, carriesLink, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern } from "./promo-patterns";
 import { BaitActors } from "./money-bait";
 import { profileChannelFunnel } from "./profile-funnel";
 import { ClassifierRequestError, CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
@@ -66,6 +66,9 @@ export function registerBotHandlers(bot: Bot, {
   const history = new MessageHistory();
   const campaigns = new CampaignLedger();
   const baitActors = new BaitActors();
+  // #634: actors whose bot-summon opener was confirmed in a chat; their next link or handle in the window goes too.
+  const summonActors = new BaitActors();
+  const deleteRights = new DeleteRightsChecks();
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
   const repeatSnapshots = new RepeatSnapshots();
@@ -344,8 +347,10 @@ export function registerBotHandlers(bot: Bot, {
       // #624: a vague odd-job opener goes only when the same actor's money bait was confirmed in this chat in the window.
       const pattern = modelDelete || repeatDelete || mediaOnly || probability === undefined ? undefined
         : promoPattern(message) ?? (profileChannelFunnel(message, senderProfile) ? "profile_channel_funnel" : undefined)
-          ?? (baitActors.flagged(ctx.chat.id, senderId) && oddJobOpener(message) ? "odd_job_linked" : undefined);
-      const patternDelete = pattern !== undefined && probability! >= PATTERN_MIN_SCORE;
+          ?? (baitActors.flagged(ctx.chat.id, senderId) && oddJobOpener(message) ? "odd_job_linked" : undefined)
+          // #634: the ad or "the chat moved" link a confirmed bot-summon opener announced.
+          ?? (summonActors.flagged(ctx.chat.id, senderId) && carriesLink(message) ? "bot_summon_linked" : undefined);
+      const patternDelete = pattern !== undefined && probability! >= patternMinScore(pattern);
       if (pattern) logger.info(JSON.stringify({
         event: "promo_pattern_detected", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, pattern,
         confidence: probability, decision: patternDelete ? "pattern_delete" : "keep",
@@ -384,6 +389,10 @@ export function registerBotHandlers(bot: Bot, {
       const bait = !mediaOnly && !message.isForwarded && (patternDelete || modelDelete || repeatDelete) && (pattern === "money_bait" || moneyBait(message));
       const oddJobIds = bait ? recentMessages.filter(m => (m.score ?? 0) >= PATTERN_MIN_SCORE && oddJobOpener(m)).map(m => m.messageId) : [];
       if (bait) baitActors.flag(ctx.chat.id, senderId);
+      // #634: a confirmed bot-summon opener flags its actor for the ad that follows; a forwarded copy flags nobody.
+      if (!mediaOnly && !message.isForwarded && (patternDelete || modelDelete || repeatDelete) && (pattern === "bot_summon" || botSummon(message))) {
+        summonActors.flag(ctx.chat.id, senderId);
+      }
       if (oddJobIds.length) logger.info(JSON.stringify({
         event: "odd_job_linked", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, linkedMessageCount: oddJobIds.length,
       }));
@@ -456,6 +465,7 @@ export function registerBotHandlers(bot: Bot, {
           async (error, messageId) => {
             logFailure("delete_failed", error, chatId, messageId);
             await handled(chatId, messageId);
+            await checkDeleteRights(ctx.api, chatId, error);
           },
         );
       }
@@ -536,6 +546,27 @@ export function registerBotHandlers(bot: Bot, {
     const member = ctx.chatMember.new_chat_member;
     admins.update(ctx.chat.id, member.user.id, member.status);
   });
+
+  /**
+   * #634: a delete Telegram refuses ("message can't be deleted", "not enough rights") usually means Jev is a plain member or an
+   * administrator without the delete permission. Its own rights are looked up at most once per chat a day, and a missing right is
+   * logged once as `delete_rights_missing`, so a group that never granted it is visible instead of a stream of failed deletes.
+   */
+  async function checkDeleteRights(api: Api, chatId: number, error: unknown) {
+    const reason = telegramErrorReason(error);
+    if ((reason !== "message_cant_be_deleted" && reason !== "chat_admin_required") || !deleteRights.due(chatId)) return;
+    try {
+      const me = await api.getChatMember(chatId, bot.botInfo.id, AbortSignal.timeout(3_000) as Parameters<Api["getChatMember"]>[2]);
+      const canDelete = me.status === "creator" || me.status === "administrator" && me.can_delete_messages;
+      if (!canDelete) logger.error(JSON.stringify({ event: "delete_rights_missing", chatId, status: me.status }));
+    } catch (lookupError) {
+      // A timeout, 429, 5xx or network error is retried after 10 min; another 4xx is Telegram's answer for the day.
+      const terminal = lookupError instanceof GrammyError && lookupError.error_code >= 400 && lookupError.error_code < 500
+        && lookupError.error_code !== 429;
+      if (!terminal) deleteRights.failed(chatId);
+      logFailure("delete_rights_check_failed", lookupError, chatId);
+    }
+  }
 
   /** deleteMessage under a prepared intent (if auditing), then records the intent's outcome. */
   async function deleteUnderIntent(api: Api, chatId: number, messageId: number, intent?: string) {

@@ -20,7 +20,14 @@ import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialCo
   profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
 import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookParaphrases, mindsetHookRequest, mindsetHookReview2Ads, mindsetHookReview2Controls, mindsetHookReview4Ads, mindsetHookReview4Controls, mindsetHookReview5Ads, mindsetHookReview5Controls, mindsetHookReview6Ads, mindsetHookReview6Controls, mindsetHookReview7Ads, mindsetHookReview7Controls, mindsetHookReview8Controls, mindsetHookReview9Ads, mindsetHookReview9Controls, mindsetHookReview10Ads, mindsetHookReview10Controls, mindsetHookReview11Ads, mindsetHookReview11Controls, mindsetHookReview12Controls, mindsetHookReview13Ads, mindsetHookReview13Controls, mindsetHookReview15Ads, mindsetHookReview15Controls, mindsetHookReview16Ads, mindsetHookReview16Controls, mindsetHookReview18Ads, mindsetHookReview18Controls, mindsetHookReview19Ads, mindsetHookReview19Controls, mindsetHookReviewAds,
   mindsetHookReviewControls, mindsetHookReviewReplies } from "./fixtures/mindset-hook";
-import { moneyBait, oddJobOpener, promoPattern, promoText } from "./promo-patterns";
+import {
+  botSummonControls, botSummonFamily, botSummonIncident, cjkIncidentScores, cjkJobControls, cjkJobFamily, cjkJobIncident, cjkJobMentionFamily,
+  cjkJobMentionRemarks,
+} from "./fixtures/cjk-job-spam";
+import {
+  botSummon, carriesLink, CJK_MENTION_MIN_SCORE, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
+  promoText,
+} from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
 
 // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI runner can exceed a bound once,
@@ -523,4 +530,58 @@ test("money bait and odd-job matching stays linear on adversarial input", () => 
   expect(fastest(() => { promoPattern(plain(long)); oddJobOpener(plain(long)); })).toBeLessThan(LINEAR_MS);
   const digits = ("за 1" + "1".repeat(60) + " ").repeat(60).slice(0, 4096);
   expect(fastest(() => promoPattern(plain(digits)))).toBeLessThan(LINEAR_MS);
+});
+
+// #634: Chinese part-time-job recruitment, and the bot-summon opener that announces an ad.
+test("the #634 Chinese job spam matches standalone, as a channel-post comment and forwarded, with its family", () => {
+  // Rebuilt from the screenshot: 220 characters against the logged 221, so one whitespace character is not visible in it.
+  expect(cjkJobIncident.length).toBe(220);
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(cjkJobIncident, patch))).toBe("cjk_job_spam");
+  for (const text of cjkJobFamily) expect([text, promoPattern(plain(text))]).toEqual([text, "cjk_job_spam"]);
+});
+
+test("a Chinese job line ending on a bare mention is a cjk_job_mention match, ad or remark alike, with its own floor", () => {
+  for (const text of [...cjkJobMentionFamily, ...cjkJobMentionRemarks]) {
+    expect([text, promoPattern(plain(text)), cjkJobSpam(plain(text))]).toEqual([text, "cjk_job_mention", false]);
+  }
+  expect(patternMinScore("cjk_job_mention")).toBe(CJK_MENTION_MIN_SCORE);
+  expect(patternMinScore("cjk_job_spam")).toBe(PATTERN_MIN_SCORE);
+  expect(CJK_MENTION_MIN_SCORE).toBeLessThan(Math.min(...Object.values(cjkIncidentScores).filter((score) => score > 0.6)));
+});
+
+test("Chinese conversation, @-addressed remarks, seekers, questions and warnings are no job spam", () => {
+  for (const text of cjkJobControls) expect([text, promoPattern(plain(text)), cjkJobSpam(plain(text))]).toEqual([text, undefined, false]);
+  // An answer to another member's job question is a requested answer; the same text alone is the ad.
+  const answer = "日结兼职，联系 @ad_synth9";
+  expect(promoPattern(plain(answer))).toBe("cjk_job_spam");
+  expect(promoPattern(plain(answer, memberReply("哪里有日结兼职？")))).toBeUndefined();
+  expect(promoPattern(plain(answer, channelReply))).toBe("cjk_job_spam");
+  expect(cjkJobSpam(plain(cjkJobIncident, { mediaOnly: true }))).toBe(false);
+});
+
+test("a message of nothing but two or more bot mentions is the #634 bot-summon opener", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(botSummonIncident, patch))).toBe("bot_summon");
+  for (const text of botSummonFamily) expect([text, promoPattern(plain(text)), botSummon(plain(text))]).toEqual([text, "bot_summon", true]);
+  for (const text of botSummonControls) expect([text, botSummon(plain(text))]).toEqual([text, false]);
+  // A member replying to someone's message with bots summons them to it.
+  expect(botSummon(plain(botSummonIncident, memberReply("купите крипту")))).toBe(false);
+  expect(botSummon(plain(botSummonIncident, { mediaOnly: true }))).toBe(false);
+});
+
+test("a follow-up carries a link when it has a handle, a URL, a bare domain, a text link or URL buttons", () => {
+  for (const text of ["Чат переехал, все сюда @new_chat_x", "Мы переехали https://example.com/x", "Все в t.me/+abcdef", "go to newchat.xyz now"]) {
+    expect([text, carriesLink(plain(text))]).toEqual([text, true]);
+  }
+  expect(carriesLink(plain("Мы переехали, все сюда", { embeddedLinks: ["https://t.me/+abc"] }))).toBe(true);
+  expect(carriesLink(plain("", { mediaOnly: true, inlineButtons: [{ text: "Join", url: "https://t.me/+abc" }] as never }))).toBe(true);
+  for (const text of ["Всем привет", "Мы переехали, все сюда", "hello @ab", "README.md"]) expect([text, carriesLink(plain(text))]).toEqual([text, false]);
+});
+
+test("#634 matching stays linear on 4,096-character adversarial input", () => {
+  const inputs = [
+    "兼职".repeat(2048), "联/".repeat(1365) + "系", ("飞机加群小兼职壹个二十 @Mizetz\n").repeat(200), "@a_bot ".repeat(585),
+    "@" + "a".repeat(4000) + "bot", "联系" + " ".repeat(4000) + "@abcd", ("兼职 " + "一".repeat(60) + " ").repeat(60), "日结 " + "@abcd_".repeat(800),
+    "赚钱 " + "二".repeat(4090), "兼职 " + "百".repeat(4090), "兼职 " + "1".repeat(4090),
+  ].map((text) => text.slice(0, 4096));
+  for (const text of inputs) expect(fastest(() => { promoPattern(plain(text)); carriesLink(plain(text)); })).toBeLessThan(LINEAR_MS);
 });

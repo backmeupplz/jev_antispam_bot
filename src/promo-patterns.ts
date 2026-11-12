@@ -13,6 +13,8 @@ import type { ModerationMessage } from "./spam";
 // mindset claim + a closing rhetorical question to the reader).
 // #624 adds a ninth: short Russian money bait (a quick-money offer with a call, or an unsolicited offer to help with debts), and
 // links the same actor's vague odd-job opener to it (`odd_job_linked`, decided in src/bot.ts).
+// #634 adds Chinese part-time-job recruitment (`cjk_job_spam`) and the bot-summon opener (`bot_summon`: a message of nothing but
+// two or more bot mentions), and links the same actor's next link or handle to a confirmed opener (`bot_summon_linked`, src/bot.ts).
 export type PromoPattern =
   | "side_gig_offer"
   | "bot_testimonial"
@@ -23,10 +25,19 @@ export type PromoPattern =
   | "mindset_hook"
   | "money_bait"
   | "odd_job_linked"
+  | "cjk_job_spam"
+  | "cjk_job_mention"
+  | "bot_summon"
+  | "bot_summon_linked"
   | "profile_channel_funnel";
 // A match deletes only when the model sees some spam signal too: under this
 // score the model is confident the post is benign and the rule stays silent.
 export const PATTERN_MIN_SCORE = 0.2;
+// #634: a Chinese offer line ending on a bare @mention ("兼职日结 @x") is an ad or a remark to a friend ("兼职太累 @x"), so it
+// needs the model halfway there; the Nov 12 incident scored 0.68–0.88 and real ones of this shape in the Oct capture score ≥ 0.8.
+export const CJK_MENTION_MIN_SCORE = 0.5;
+export const patternMinScore = (pattern: PromoPattern): number =>
+  pattern === "cjk_job_mention" ? CJK_MENTION_MIN_SCORE : PATTERN_MIN_SCORE;
 
 // Lookalike letters fold to one form in both the text and the patterns, so a
 // swapped Latin/Cyrillic letter matches either way.
@@ -2179,13 +2190,252 @@ function linkedText(message: ModerationMessage, raw: string, text: string): stri
     ? `${linked.replace(LINK_TAIL, "")} https://link` : linked;
 }
 
+// #634: a hijacked account summons bots first ("@meaitbi12bot @meaitbi13bot"), then posts its ad or a "the chat moved, go
+// here" link. The opener is nothing but mentions of two or more distinct bot usernames; one bot in a sentence ("спроси
+// @somebot", "/start@somebot") stays conversation. The known campaign bots also count alone. A reply to another member's
+// message is a member summoning bots to it, so it stays with the model.
+const BOT_MENTION = /@[a-z][a-z0-9_]{0,29}bot(?![a-z0-9_])/giu;
+const SEED_BOT = /^@meaitbi\d{1,4}bot$/iu;
+export function botSummon(message: ModerationMessage): boolean {
+  if (message.mediaOnly || repliesToMember(message)) return false;
+  const raw = message.text.trim();
+  if (raw.length > 400) return false;
+  const bots = new Set((raw.match(BOT_MENTION) ?? []).map((bot) => bot.toLowerCase()));
+  return (bots.size >= 2 || [...bots].some((bot) => SEED_BOT.test(bot))) && !/[\p{L}\p{N}_@/]/u.test(raw.replace(BOT_MENTION, " "));
+}
+
+// #634: after a summon opener the same actor's next message that carries a link, a handle or URL buttons goes as the ad it
+// announced (`bot_summon_linked`, decided in src/bot.ts): the "chat moved, everyone go here" post has no promo words of its own.
+const LINKISH = /@[a-z][a-z0-9_]{3,}|https?:\/\/|(?:t|telegram)\.(?:me|dog)\/|tg:\/\//iu;
+const BARE_LINK_ONE = new RegExp(BARE_LINK.source, "u");
+export function carriesLink(message: ModerationMessage): boolean {
+  if (message.inlineButtons?.length) return true;
+  if (message.mediaOnly) return false;
+  return message.embeddedLinks.length > 0 || LINKISH.test(message.text) || BARE_LINK_ONE.test(message.text);
+}
+
+// #634: Chinese part-time-job and group-join recruitment ("飞机加群小兼职壹个二十 @Mizetz" ten times, then "联络 @Mizetz", scored
+// 0.68–0.88 by sender and context). An offer word (兼职, 日结, 招聘, 佣金…, or a looser 赚钱/拉群/接单 next to a pay amount) and a
+// contact handle or link: after a contact word ("联系：@…", "联/系 @…", "飞机 @…"), closing the offer's line, or alone on a line.
+// Members talk about such jobs constantly, so an @-addressed remark ("@x 兼职粉可以讲讲吗"), a question, a seeker ("求兼职",
+// "有没有兼职"), a warning ("小心骗子") and an answer to a member's job question stay with the model. Only an unmistakable contact
+// (联系/私聊… or 飞机：right before the handle, or a bot handle) is `cjk_job_spam`; a bare mention, a link alone, or an ad with
+// unrelated lines around it is `cjk_job_mention`, deleted only at CJK_MENTION_MIN_SCORE.
+const HAN = /\p{Script=Han}/gu;
+const CJK_OFFER = /兼[职職]|日[结結入赚賺薪]|[诚誠急]招|招(?:聘|募|人|工|收|代理)|高薪|[佣傭]金|副[业業]|刷[单單]|返(?:利|[佣傭])|躺[赚賺]|[秒现現][结結]|[稳穩包][赚賺]|[无無免]押|小白可[做带帶]|手机[挂掛]机|带[单單]|搬砖|搬磚/u;
+const CJK_LOOSE = /[赚賺挣掙](?:钱|錢)|拉(?:人|群)|[加进進]群|[做接][单單]|工[资資]|薪[资資]|收[入益]|[结結]算/u;
+// A number starts only where a run of numerals starts: 万/千/百 are both numerals and units, so a match tried inside a long run
+// would backtrack over the rest of it at every position (quadratic on "二" × 4096).
+const CJK_NUMERAL = "一二两兩三四五六七八九十百千万萬壹贰貳叁參肆伍陆陸柒捌玖拾佰仟";
+const CJK_NUM = `(?:(?<!\\d)\\d+(?:[.,]\\d+)?|(?<![${CJK_NUMERAL}])[${CJK_NUMERAL}]+)`;
+const CJK_PAY = new RegExp(`${CJK_NUM}\\s?(?:元|块|塊|米|u|usdt|rmb|k|w|万|萬|千|百|[个個]|[单單]|起)|[一每壹单單](?:[个個单單]|人)\\s?${CJK_NUM}`, "iu");
+// A contact word, with the separators these ads put inside it ("联/系", "联-系"), then a handle or link within a few characters.
+const sep = (word: string) => [...word].join("[\\s/|\\\\.·*\\-_]{0,2}");
+// Words that only ever ask to be contacted, and words that also have an everyday sense (坐飞机, 做客服, 报名参加).
+const CJK_CONTACT_SURE = ["联系", "聯繫", "联络", "聯絡", "私聊", "私信", "私我", "加我", "咨询", "諮詢", "详询", "詳詢", "滴滴", "找我", "戳我"].map(sep).join("|");
+const CJK_CONTACT_EVERYDAY = ["飞机", "飛機", "电报", "電報", "客服", "对接", "對接", "报名", "報名", "商务", "商務", "机器人", "機器人", "双向", "雙向"].map(sep).join("|");
+const CJK_CONTACT_WORD = `${CJK_CONTACT_SURE}|${CJK_CONTACT_EVERYDAY}`;
+const CJK_HANDLE = "(?:@[a-z][a-z0-9_]{3,}|(?:https?://)?(?:t|telegram)\\.me/\\S+|https?://\\S+)";
+const CJK_CONTACT = new RegExp(`((?:${CJK_CONTACT_WORD}|tg|telegram)[^\\n@]{0,6}?)${CJK_HANDLE}`, "giu");
+const CJK_CONTACT_ALL = new RegExp(CJK_CONTACT_WORD, "gu");
+const CJK_CONTACT_SURE_START = new RegExp(`^(?:${CJK_CONTACT_SURE}|tg|telegram)`, "iu");
+// An everyday word counts only right before the handle ("飞机：@x", "双/向/联/系：@x_bot"), and not as a verb's object.
+const CJK_CONTACT_DIRECT = new RegExp(`^(?:${CJK_CONTACT_EVERYDAY})[\\s:：/|\\\\.·*\\-_]*$`, "u");
+const CJK_CONTACT_AS_OBJECT = /[做当當坐下上乘搭是去在]$/u;
+const HAN_ONE = /\p{Script=Han}/u;
+const CJK_CONTACT_CASUAL = /有事|急事|有空|有疑问|有疑問|有问题|有問題|的话|的話|有需要/u;
+// A job everyone already knows about ("那个日结兼职", "上次说的", "刷单返佣那事"): pointed back at, not offered.
+const CJK_KNOWN_JOB = /那[个個件]|那[事种種]|[这這][件事]|上次|之前[说說提]|刚[才说說]|剛[才說]/u;
+// The member's own doubt or inexperience ("我不懂", "这个我不熟", "这些我没做") in any clause before the handle, on the contact's line
+// or the one above it: a remark about the job, so a hand-off at most. Ads speak for the firm ("我们/我司/我这里不收押金") and deny
+// fees ("找我不收费", "我从不收押金").
+const CJK_FIRM = "[们們司方]|[这這](?:边|邊|里|裡)?|公司|[团團][队隊]";
+const CJK_OWN_DOUBT = new RegExp(`我(?!${CJK_FIRM})[^我，,、。！？!?；;:：\\n]{0,3}?(?:[没沒未]|不(?!收|要[钱錢]))`, "u");
+// A spoken closing particle on an offer clause ("日结兼职这个我不懂啊"); an ad's call to join ("一起赚钱吧", "快来吧") is no remark.
+// Clauses are cut at punctuation, line breaks and spaces here ("日结兼职一天100块啊 联系 @x").
+const CJK_OFFER_PARTICLE = /[啊吧哦呢][~～!！.。]*$/u;
+const CJK_PARTICLE_CLAUSE = /[，,、。！？!?；;:：\s]+/u;
+const CJK_CALL_TO_JOIN = /[来來]|一起|快|赶紧|趕緊/u;
+// A clause after the handle in the member's own voice ("联系 @x，我试过还行"): talk about the contact, not an ad's call to action
+// ("我带你", "我等你", "我手把手教", "我24小时在线").
+const CJK_OWN_AFTER = new RegExp(`^\\s*我(?!${CJK_FIRM}|[带帶]你|等你|手把手|\\d|全天|[随隨]时|[随隨]時|在[线線])`, "u");
+// A question without its mark: how, where, how much, when, "A不A" ("靠不靠谱"), or 吗/呢 inside the line.
+const CJK_ASKS_HOW = /怎[么麼样樣]|在哪|哪[里裡儿兒个個家]|[吗嗎呢]|多少|[几幾]|什[么麼]时候|什[么麼]時候|(\p{Script=Han})[不没沒]\1/u;
+// The offer itself reads as an ad: pay, an offer word only ads use ("日赚", "诚招", "躺赚"), a selling idiom, or two offer words
+// ("日结兼职"). A bare 兼职 or 副业 next to a contact is a member's hand-off ("兼职上班中，紧急联系 @x").
+const CJK_OFFER_ALL = new RegExp(CJK_OFFER.source, "gu");
+const CJK_OFFER_PITCH = /日[入赚賺薪]|[诚誠急]招|招(?:聘|募|工|收|代理)|躺[赚賺]|[秒现現][结結]|[稳穩包][赚賺]|[无無免]押|小白可[做带帶]|手机[挂掛]机|带[单單]/u;
+const CJK_AD_IDIOM = /手机就能|手機就能|在家就能|轻松|輕鬆|小白|宝妈|寶媽|[无無零]门槛|[无無零]門檻|月入|日入|名[额額]有限|不封顶|不封頂|多劳多得|多勞多得/u;
+const CJK_BOT_HANDLE = /@[a-z][a-z0-9_]{1,}bot\b/u;
+// Without a contact word only a Telegram handle or t.me link advertises; a trailing article URL or an @-address on a remark does not.
+const CJK_TG_HANDLE = "(?:@[a-z][a-z0-9_]{3,}|(?:https?://)?(?:t|telegram)\\.me/\\S+)";
+// What may trail a handle at the end of a line: punctuation, and emoji, symbols, variation selectors and joiners ("@x 🔥").
+const CJK_TAIL = "[\\s.!。！~～)）\\p{S}\\p{Extended_Pictographic}\\p{M}\\p{Cf}]*";
+const CJK_LINE_END = new RegExp(`${CJK_TG_HANDLE}${CJK_TAIL}$`, "iu");
+const CJK_LINE_ALONE = new RegExp(`^[\\s:：>»→-]*${CJK_TG_HANDLE}${CJK_TAIL}$`, "iu");
+// Question, past/aspect particles, negation, first person, thanks: a remark addressed to someone, not an ad line.
+const CJK_REMARK = /[吗嗎呢吧了啊呀么麼的不没沒我谢謝感怎咋?？]/u;
+const CJK_LINE_START = /^\s*@[a-z][a-z0-9_]{3,}/iu;
+// A contact word in conversation: about a topic ("返佣的问题请联系客服", "副业的事"), third person ("他知道"), own experience or not
+// knowing ("我做过", "不清楚"), putting it off ("回头再说"), done or thanked ("问了客服 @x", "我联系过 @x", "谢谢客服 @x",
+// "收到了"). Ads speak in their own idioms ("加我", "你直接私聊", "不是骗子", "不封顶", "有意的话", "欢迎您咨询", "了解详情",
+// "月入过万", "看过来", "有什么不懂的问题", "我们的事业"), so a bare 我/你/不/的 is no remark here. It is read only in the clauses
+// that carry the offer word and in the contact clause up to the handle: ads put "名额满了", "感谢信任", "做过的都说好" elsewhere.
+const CJK_CONTACT_REMARK = /的事(?![业業务務])|(?<!不懂|任何|什么|什麼)的(?:问题|問題)|(?<!其)[他她]|我(?:做过|做過|干过|幹過|觉得|覺得|知道|听说|聽說|朋友|同事)|不(?:清楚|知道|太|了解|确定|確定)|回[头頭]|再[说說]|(?<![来來])了(?![解結结])|(?<![错錯超])[过過](?![万萬千百亿億\d来來])|[谢謝]|回[复覆]|[坏壞]|收到/u;
+const CJK_CLAUSE = /[，,、。！？!?；;:：]/u;
+// An advertised contact closes its clause: only punctuation, emoji, a sign-off ("谢谢") or an ad's call to action ("了解详情",
+// "领取任务", "即可", "速来", "(24小时在线)", "名额有限") follows the handle, or an offer or pay clause ("联系 @x 日结200").
+// Conversation goes on after the person it names ("你联系 @x 就行", "客服 @x 说的", "@x 回复了").
+// Each call to action is listed with its own endings: a free window would let "了解一下就行", "咨询就好", "在线的那个" through.
+const CJK_AD_TAIL = "谢谢|謝謝|感谢|感謝|了解(?:详情|詳情|更多)?|(?:免费|免費)?(?:咨询|諮詢)(?:详情|詳情)?|详询|詳詢|领取(?:任务|福利)?|領取(?:任務|福利)?|即可|速来|速來|备注(?:兼职|来意|[a-z0-9]{1,8})?|備註(?:兼職|來意|[a-z0-9]{1,8})?|报名|報名|(?:24\\s?(?:小时|小時|h)|随时|隨時)?在[线線]|名[额額](?:有限)?|欢迎(?:咨询|私聊|加入)?|歡迎(?:諮詢|私聊|加入)?|带你[赚賺](?:钱|錢)|帶你[赚賺](?:钱|錢)|马上开始|馬上開始|[(（][^)）\\n]{0,16}[)）]";
+const CJK_HANDLE_CLOSES = new RegExp(`^${CJK_TAIL}(?:(?:${CJK_AD_TAIL})${CJK_TAIL})?(?:$|[，,、；;。！!])`, "u");
+// A line an ad carries around its offer: job and pay words, a contact, a call to action, its selling points, or only emoji.
+const CJK_AD_CONTENT = new RegExp(`${CJK_OFFER.source}|${CJK_LOOSE.source}|${CJK_PAY.source}|${CJK_CONTACT_WORD}|${CJK_HANDLE}|${CJK_AD_TAIL}`
+  + "|项目|項目|风险|風險|稳定|穩定|长期|長期|多劳多得|多勞多得|轻松|輕鬆|手机|手機|在家|无门槛|無門檻|零门槛|零門檻|^[^\\p{L}]*$", "iu");
+// The clause after a closed contact may still be talk about it: "联系 @x，他们说一周", "客服 @x，谁试过", "…，我也不清楚". Ads close on
+// a rhetorical question ("还在等什么？", "谁来谁赚", "手把手教你怎么做"), which cjkJobSpam drops before reading the lines.
+const CJK_TALK_AFTER = /[?？吗嗎呢谁誰怎咋]|(?<!其)[他她]|不(?:清楚|知道|太|了解|确定|確定)|我(?:也|做过|做過|觉得|覺得|知道|听说|聽說)/u;
+const CJK_RHETORIC = /(?:[还還](?:在)?(?:等|犹豫|猶豫)(?:什[么麼])?|谁来谁[赚賺]|誰來誰賺|教你怎[么麼])[?？呢吗嗎]*/gu;
+// "兼职的话可以问问 @friend", "兼职这块找 @bob": a member pointing at someone to ask, not a contact the line advertises.
+const CJK_POINTS_AT = /[问問]|请教|請教|认识|認識|朋友|同事|老师|老師|找(?!我)/u;
+// Seeking work, asking or warning, not offering; "找兼职的朋友看过来" and "想做兼职的朋友联系 @x" call seekers to an ad.
+// Ads deny being a scam ("不是骗子", "非诈骗"), so a denial is no warning.
+const CJK_SEEK = /(?:找(?!我)|(?<![要需追请請])求|想[找做要]|在找|有没有|有沒有|谁有|誰有|哪里有|哪裡有|哪有|求介[绍紹]|求推荐|求推薦)[^\n。！？!?]{0,4}?(?:兼[职職]|副[业業]|工作|活|事做|[赚賺挣掙](?:钱|錢))(?!的(?:朋友|人|看|来|來|宝|寶|姐妹|兄弟|伙伴|夥伴|小伙伴|进|進|加|私|联|聯|速|赶|趕))/u;
+// An ad's hook asks the reader whether they want work ("想做兼职吗", "有想做兼职的吗？"): no seeker, so it is dropped before CJK_SEEK.
+const CJK_SEEK_HOOK = /有?想[找做要][^\n。！？!?]{0,4}?(?:兼[职職]|副[业業]|工作|活|事做|[赚賺挣掙](?:钱|錢))的?[吗嗎]/gu;
+// Around a quoted ad: an introduction before it ("这人天天发：", "又来了", "你们看这个") or talk after it ("烦不烦", "谁能处理一下",
+// "是真的假的？"). An ad's own hook before the offer may ask ("缺钱吗？"), so only an introduction counts there.
+const CJK_QUOTE_INTRO = /天天|大家看|群里|群裡|又有|又[来來发發是]|[这這]人|[这這]个人|[这這]家伙|看[这這]个|看[这這]個|你[们們]看|[这這]种|[这這]種/u;
+const CJK_TALK_LINE = /[?？吗嗎呢谁誰怎咋烦煩]|处理|處理|真的假的|有人|管管|[这這][种種]|明显|明顯|笑死|哈哈|无语|無語|离谱|離譜/u;
+// An admin is addressed, not hired: "管理员，…", "请管理…"; "诚招群管理" is the ad.
+const CJK_REPORT = /骗|騙|诈|詐|假的|是假|小心|当心|當心|警惕|举报|舉報|别信|別信|不要信|曝光|拉黑|广告|廣告|垃圾|踢了|封了|删了|刪了|(?:^|[\s,，。！!?？@])管理(?:[员員]|$|[\s,，。！!?？呢在快来來看踢删刪封处處])|[请請]管理/u;
+// A rule reminder bans the job posts before it names any: "禁止发兼职日结，违者踢", "本群严禁招聘兼职", "不准在本群发兼职". The ban
+// sits right before the first job word, with at most "在本群", "一律" and a posting verb between, it states no pay, and every clause,
+// whole, is one a reminder is made of: a ban on the job posts ("日结类一律不准发"), a heading ("群规第三条"), the penalty ("违者踢出",
+// "再发就踢"), or where to ask ("有事私聊 @admin", "要发联系群主"). An ad bans things after its offer ("兼职日结，禁止中介") or before
+// it ("禁止学生兼职", "【严禁未成年】兼职"), and around a disclaimer it pitches, in words no list can hold ("禁止刷单，正规兼职日结",
+// "禁止兼职！想赚米的私我", "严禁兼职中介直招日结", "兼职日结群主担保", "诚招兼职群管理"), so any other clause makes it no reminder.
+const CJK_JOB_WORD = /兼[职職]|日[结結]|招聘|招人|刷[单單]|副[业業]/u;
+const CJK_BAN = "禁止|严禁|嚴禁|不准(?![时時确確])|不许|不許|不允许|不允許|请勿|請勿";
+const CJK_RULE_PLACE = "(?:[在于於]?(?:本|此|该|該|[这這][个個])?群[里裡内內中]?)?";
+const CJK_RULE_VERB = "(?:[发發](?:布|佈|帖|送)?|张贴|張貼|转发|轉發|招)?";
+const CJK_BAN_BEFORE = new RegExp(`(?:${CJK_BAN})${CJK_RULE_PLACE}(?:一律)?${CJK_RULE_VERB}$`, "u");
+const CJK_RULE_OBJECT = "(?:兼[职職]|日[结結]|招聘|招人|刷[单單]|副[业業]|、|和|及|[类類]|的|信息|[资資][讯訊]|广告|廣告|[东東]西|消息|[项項]目)+";
+const CJK_RULE_BAN = new RegExp(`^${CJK_RULE_PLACE}(?:(?:${CJK_BAN})${CJK_RULE_PLACE}(?:一律)?${CJK_RULE_VERB}${CJK_RULE_OBJECT}`
+  + `|${CJK_RULE_OBJECT}(?:一律)?(?:${CJK_BAN})${CJK_RULE_VERB})$`, "u");
+const CJK_RULE_HEADING = /^(?:本?群[规規]|群公告|公告|温馨提示|溫馨提示|提醒|注意|再[说說]一遍)?(?:第?[一二三四五六七八九十\d]+[条條])?(?:[谢謝][谢謝](?:配合|合作)?)?$/u;
+const CJK_RULE_PENALTY = /^(?:[违違](?:者|[规規]者?)(?:直接|一律)?|(?:再[发發]|[发發]了)(?:就|直接)?|直接|一律)?(?:踢|踢出|踢人|移出|封|封[号號]|禁言|拉黑)(?:群|[处處]理)?$|^[请請]?管(?:一下|管)$/u;
+const CJK_RULE_ASK = /^(?:有事|有[问問]题|有[问問]題|要[发發]|[违違][规規]|[举舉][报報])?[请請]?(?:[联聯][系繫络絡]|找|私聊|私信|咨询|諮詢|[问問])(?:群主|管理[员員]?|admin)?$/u;
+// Clauses split on punctuation, spaces and brackets, but not on "、", which lists the banned jobs; handles are dropped.
+const CJK_RULE_CLAUSE = /[\s,，。.！!？?；;:：()（）【】\[\]『』「」《》]+/u;
+const CJK_EARNING = /\d{2,}|日[赚賺入薪]|月[入薪]|[时時]薪|一[单單]一[结結]/u;
+const cjkRuleClause = (clause: string) => !clause || CJK_RULE_BAN.test(clause) || CJK_RULE_HEADING.test(clause)
+  || CJK_RULE_PENALTY.test(clause) || CJK_RULE_ASK.test(clause);
+const cjkRuleReminder = (raw: string) => {
+  // Handles go first: an admin's "@admin_88" states no pay.
+  const text = raw.replace(/@[a-z0-9_]+/gu, " ");
+  const job = CJK_JOB_WORD.exec(text);
+  return Boolean(job) && CJK_BAN_BEFORE.test(text.slice(0, job!.index)) && !CJK_PAY.test(text) && !CJK_EARNING.test(text)
+    && text.split(CJK_RULE_CLAUSE).every(cjkRuleClause);
+};
+const CJK_DENIAL = /(?:不是|绝不是|絕不是|并非|並非|非|绝非|絕非|绝不|絕不|不|没有|沒有|无|無|拒绝|拒絕)(?:骗子?|騙子?|诈骗|詐騙|骗局|騙局|广告|廣告|假的)/gu;
+// A question may end on the person it asks: "日结的那种工作靠谱吗 @bob".
+const CJK_QUESTION = new RegExp(`[?？吗嗎呢么麼]${CJK_TAIL}(?:@[a-z][a-z0-9_]{3,}${CJK_TAIL})*$`, "iu");
+// Pay that has not arrived is a complaint, not an offer: "佣金还没到账", "工资一直不发".
+const CJK_UNPAID = /(?:[佣傭]金|工[资資]|薪[资資]|收[入益]|返利|返[佣傭]|日[结結]|兼[职職])(?:[还還都也]|一直)?(?:没有?|沒有?|未|不)(?:[到发發给給结結付打]|到[账帳])/gu;
+const CJK_ASKS = /[?？吗嗎呢]|[找求]|有没有|有沒有|谁|誰|哪/u;
+const CJK_TOPIC = /兼[职職]|工作|副[业業]|[赚賺挣掙](?:钱|錢)|招|活/u;
+// An answer to another member's question about work.
+const answersCjkJob = (message: ModerationMessage) => (message.preview ?? []).some((item) => item.sourceKind !== "channel"
+  && item.sourceAuthor !== "same_author" && Boolean(item.text?.trim()) && CJK_ASKS.test(item.text!) && CJK_TOPIC.test(item.text!));
+function cjkJob(message: ModerationMessage): false | "ad" | "mention" {
+  if (message.mediaOnly) return false;
+  const raw = message.text.replace(QUOTED, " ").normalize("NFKC").toLowerCase();
+  if ((raw.match(HAN) ?? []).length < 4) return false;
+  if (CJK_REPORT.test(raw.replace(CJK_DENIAL, " ")) || cjkRuleReminder(raw) || CJK_SEEK.test(raw.replace(CJK_SEEK_HOOK, " "))) {
+    return false;
+  }
+  // A rhetorical closing ("还在等什么？") asks nothing, so it neither makes the offer a question nor the contact talk.
+  const lines = raw.replace(CJK_RHETORIC, " ").split("\n").map((line) => line.trim()).filter(Boolean);
+  // An offer line: an offer word, or a looser earning word with an amount, in a clause that asks nothing.
+  const offers = (line: string) => line.split(/(?<=[。！？!?；;])/u).map((clause) => clause.replace(CJK_UNPAID, " "))
+    .some((clause) => !CJK_QUESTION.test(clause) && (CJK_OFFER.test(clause) || CJK_LOOSE.test(clause) && CJK_PAY.test(clause)));
+  if (!lines.some(offers)) return false;
+  const body = lines.join("\n");
+  const pitched = CJK_PAY.test(body) || CJK_OFFER_PITCH.test(body) || CJK_AD_IDIOM.test(body)
+    || new Set(body.match(CJK_OFFER_ALL)).size >= 2;
+  // A remark about the job sits in its offer clauses, on the contact's line or the one before ("兼职的问题\n请联系客服 @x").
+  const offerRemark = (line = "") => line.split(CJK_CLAUSE)
+    .some((clause) => (CJK_OFFER.test(clause) || CJK_LOOSE.test(clause)) && CJK_CONTACT_REMARK.test(clause));
+  // "ad" when the contact is unmistakable, "mention" when the words also have an everyday sense, false when it is no contact.
+  const contactAt = (line: string, index: number): false | "ad" | "mention" => {
+    if (CJK_LINE_START.test(line)) return false;
+    let found: false | "ad" | "mention" = false;
+    for (const match of line.matchAll(CJK_CONTACT)) {
+      const after = line.slice(match.index + match[0].length), next = after.split(CJK_CLAUSE)[0]!;
+      const closes = (CJK_HANDLE_CLOSES.test(after) || offers(next) || CJK_PAY.test(next))
+        && !CJK_TALK_AFTER.test(after.split(CJK_CLAUSE)[1] ?? "");
+      const before = line.slice(0, match.index + match[1]!.length).split(CJK_CLAUSE).at(-1)!;
+      if (!closes || CJK_CONTACT_REMARK.test(before) || offerRemark(line) || offerRemark(lines[index - 1])) continue;
+      // Unmistakable: 联系/私聊/咨询… (or tg) with nothing but other contact words between it and the handle ("联系客服 @x"), or
+      // 飞机/客服/电报… right before the handle and not as an object ("飞机：@x", not "坐飞机回家 @x", "副业做客服 @x").
+      const gap = match[1]!.replace(CJK_CONTACT_SURE_START, "").replace(CJK_CONTACT_ALL, "").replace(/[我方式即可]/gu, "");
+      const sure = CJK_CONTACT_SURE_START.test(match[1]!) && !HAN_ONE.test(gap)
+        || CJK_CONTACT_DIRECT.test(match[1]!) && !CJK_CONTACT_AS_OBJECT.test(line.slice(0, match.index));
+      // A hand-off ("有事联系 @x", "副业的话联系 @x") or a question without its mark ("日结工资怎么算，联系 @x") reads like an ad too.
+      const upToHandle = `${lines[index - 1] ?? ""}\n${line.slice(0, match.index + match[1]!.length)}`;
+      const casual = CJK_CONTACT_CASUAL.test(before) || CJK_KNOWN_JOB.test(line) || CJK_OWN_DOUBT.test(upToHandle)
+        || CJK_OWN_AFTER.test(after.split(CJK_CLAUSE)[1] ?? "")
+        || line.split(CJK_CLAUSE).some((clause) => (CJK_OFFER.test(clause) || CJK_LOOSE.test(clause)) && CJK_ASKS_HOW.test(clause))
+        || upToHandle.split(CJK_PARTICLE_CLAUSE).some((clause) => (CJK_OFFER.test(clause) || CJK_LOOSE.test(clause))
+          && CJK_OFFER_PARTICLE.test(clause) && !CJK_CALL_TO_JOIN.test(clause));
+      if (sure && !casual && pitched) return "ad";
+      found = "mention";
+    }
+    return found;
+  };
+  // An offer line ending on a bare mention ("兼职日结 @x") reads the same as a remark to a friend ("兼职太累 @x", "刷单都是坑 @x",
+  // "兼职送外卖一单5块 太累 @x"), so it is a "mention" match, which bot.ts deletes only at CJK_MENTION_MIN_SCORE. Only a bot handle
+  // makes it an ad outright: members address people, not bots ("博彩副业 @x_bot").
+  // A handle alone on its line belongs to the nearest offer line (above it, else below), which must not be a remark
+  // ("我也在做兼职，挺累的\n@x").
+  const offerAt = lines.map(offers);
+  const nearestOffer = (index: number) => lines[offerAt.lastIndexOf(true, index)] ?? lines[offerAt.indexOf(true, index)] ?? "";
+  const alone = (line: string, index: number) => CJK_LINE_ALONE.test(line)
+    && !offerRemark(nearestOffer(index)) && !CJK_TALK_AFTER.test(nearestOffer(index));
+  // Only the clause that ends on the handle is read for remark words: an ad may open on a hook ("缺钱吗？兼职日结 @x").
+  const lineEnd = (line: string) => offers(line) && CJK_LINE_END.test(line) && !CJK_LINE_START.test(line) && !CJK_POINTS_AT.test(line)
+    && !CJK_REMARK.test(line.split(CJK_CLAUSE).at(-1)!) && !CJK_TALK_AFTER.test(line.split(CJK_CLAUSE).at(-1)!) && !offerRemark(line);
+  const contacts = lines.map(contactAt);
+  let tier: false | "ad" | "mention" = lines.some((line, index) => contacts[index] === "ad"
+    || (alone(line, index) || lineEnd(line)) && CJK_BOT_HANDLE.test(line))
+    ? "ad" : lines.some((line, index) => contacts[index] || alone(line, index) || lineEnd(line)) ? "mention" : false;
+  if (!tier || answersCjkJob(message)) return false;
+  // A member quoting the ad to complain about it: an introduction before its first line, or talk after its last. Any other line
+  // around it that is no ad content ("截图给你们", "服了") leaves the call to the model, as a mention.
+  const adIndexes = lines.flatMap((line, index) => offers(line) || CJK_LINE_ALONE.test(line) || contacts[index] ? [index] : []);
+  const first = adIndexes[0]!, last = adIndexes.at(-1)!;
+  const around = [...lines.slice(0, first), ...lines.slice(last + 1)];
+  if (lines.slice(0, first).some((line) => CJK_QUOTE_INTRO.test(line)) || lines.slice(last + 1).some((line) => CJK_TALK_LINE.test(line))) {
+    return false;
+  }
+  if (tier === "ad" && around.some((line) => !CJK_AD_CONTENT.test(line))) tier = "mention";
+  return tier;
+}
+
+/** #634: Chinese job recruitment with an advertised contact (`cjk_job_spam`). */
+export const cjkJobSpam = (message: ModerationMessage): boolean => cjkJob(message) === "ad";
+
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
   if (message.mediaOnly) return;
+  if (botSummon(message)) return "bot_summon";
   const raw = message.text.trim();
   if (!raw || isAttributed(raw)) return;
   const text = promoText(raw.replace(QUOTED, " "));
   const undenied = text.replace(DENIAL, " ");
   if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied)) return;
+  const cjk = cjkJob(message);
+  if (cjk) return cjk === "ad" ? "cjk_job_spam" : "cjk_job_mention";
   // A question about pay, or about whether the offer is real, is conversation, not an offer.
   const linked = linkedText(message, raw, text);
   if ((GIG.test(text) || hires(text)) && PAY.test(text) && callsToDm(linked) && !seeksWork(text) && !ownJob(text)
