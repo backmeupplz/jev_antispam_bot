@@ -1,6 +1,7 @@
 import type { Message, MessageEntity } from "grammy/types";
 import type { ModerationMessage } from "./spam";
 import { inlineUrlButtons } from "./inline-buttons";
+import { guestBotCaller } from "./guest-bot";
 
 const MAX_CURRENT_CHARS = 4_096;
 const MAX_SOURCE_CHARS = 1_200;
@@ -39,7 +40,9 @@ function kind(origin: { type: string } | undefined): "user" | "chat" | "channel"
 export function toModerationMessage(message: Message): ModerationMessage | null {
   const current = sourceText(message, MAX_CURRENT_CHARS);
   const inlineButtons = inlineUrlButtons(message);
-  const mediaOnly = !current.text?.trim() && ("sticker" in message || "photo" in message || "video" in message || "animation" in message);
+  // A guest bot's textless reply (any content kind) still goes through, so it can go with the summon it answers (#668).
+  const mediaOnly = !current.text?.trim() && ("sticker" in message || "photo" in message || "video" in message || "animation" in message
+    || guestBotCaller(message) !== undefined);
   if (!current.text?.trim() && !mediaOnly) return null;
 
   const preview: NonNullable<ModerationMessage["preview"]> = [];

@@ -112,6 +112,20 @@ test("a guest-bot reply to a deleted message goes; another bot's reply to it sta
   expect(h.event("guest_reply_linked")[0]).toMatchObject({ messageId: reply, link: "reply_to_deleted", guestBotMessage: true });
 });
 
+test("a textless guest-bot message (no text, no sticker/photo) called by a deleted summon's member goes too; unlinked it is skipped", async () => {
+  const h = harness({ audit: true });
+  const summon = await h.send({ text: guestSummon });
+  const textless = { from: guestBot, text: undefined, dice: { emoji: "🎲", value: 3 } };
+  const reply = await h.send({ ...textless, guest_bot_caller_user: member });
+  expect(h.deletes).toEqual([summon, reply]);
+  expect(h.event("spam_deleted").at(-1)).toMatchObject({ messageId: reply, rule: "guest_bot_reply" });
+  expect(h.reports.has(reply)).toBe(true);
+  // Called by a member whose message was never deleted: skipped like any uncaptioned bot media.
+  await h.send({ ...textless, guest_bot_caller_user: other });
+  expect(h.deletes).toEqual([summon, reply]);
+  expect(h.classified).toEqual([guestSummon]);
+});
+
 test("a guest-bot reply to a normal message is classified as usual and kept, and a human reply to a deleted message is never auto-deleted", async () => {
   const h = harness();
   const normal = await h.send({ text: "кто знает хороший бот для гифок?" });
