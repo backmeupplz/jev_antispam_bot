@@ -1,5 +1,6 @@
 import { type Bot, BotError, type Context } from "grammy";
 import type { Update } from "grammy/types";
+import { guestBotCaller } from "./guest-bot";
 
 /**
  * Handles updates concurrently (#613) while keeping each actor's updates in order. One update at a
@@ -57,7 +58,16 @@ export function updateKeys(update: Update): string[] {
   const message = update.message ?? update.edited_message;
   if (message) {
     if (message.sender_chat) return [`chat:${message.sender_chat.id}`];
-    if (message.from) return [`user:${message.from.id}`];
+    if (message.from) {
+      const caller = message.from.is_bot ? guestBotCaller(message) : undefined;
+      if (!caller) return [`user:${message.from.id}`];
+      // #668: a Guest Mode reply waits for the member (or chat) that called it and for the member it answers: Jev has decided
+      // about the summon by then, and a summon that arrives later waits for the reply instead.
+      // A forum topic's messages "reply" to its creation message: no reply to anyone.
+      const replied = message.reply_to_message && !message.reply_to_message.forum_topic_created ? message.reply_to_message : undefined;
+      const target = replied?.sender_chat ? `chat:${replied.sender_chat.id}` : replied?.from ? `user:${replied.from.id}` : undefined;
+      return [...new Set([`user:${message.from.id}`, caller, ...target ? [target] : []])];
+    }
     return [`in:${message.chat.id}`];
   }
   if (update.chat_member) return [`user:${update.chat_member.new_chat_member.user.id}`];

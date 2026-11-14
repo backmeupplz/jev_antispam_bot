@@ -25,10 +25,11 @@ import {
   cjkJobMentionRemarks,
 } from "./fixtures/cjk-job-spam";
 import {
-  botSummon, carriesLink, CJK_MENTION_MIN_SCORE, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
+  botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
   promoText,
 } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
+import { chatMovedControls, chatMovedFamily, chatMovedHidden, chatMovedIncident, chatMovedLink, guestSummon } from "./fixtures/chat-moved-lure";
 
 // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI runner can exceed a bound once,
 // while backtracking is slow on every run. A warm run takes ~20 ms here (55 ms on the Easypanel build host) and
@@ -584,4 +585,38 @@ test("#634 matching stays linear on 4,096-character adversarial input", () => {
     "赚钱 " + "二".repeat(4090), "兼职 " + "百".repeat(4090), "兼职 " + "1".repeat(4090),
   ].map((text) => text.slice(0, 4096));
   for (const text of inputs) expect(fastest(() => { promoPattern(plain(text)); carriesLink(plain(text)); })).toBeLessThan(LINEAR_MS);
+});
+
+// #668: the guest-bot "chat is moving, tap this text, press Start" lure.
+test("the #668 chat-moved lure matches with or without its hidden link, from bot or human, as a reply too", () => {
+  for (const text of chatMovedFamily) expect([text, promoPattern(plain(text)), chatMovedLure(plain(text))]).toEqual([text, "chat_moved_lure", true]);
+  for (const patch of [{}, { embeddedLinks: [chatMovedLink] }, memberReply(guestSummon), channelReply]) {
+    expect(promoPattern(plain(chatMovedIncident, patch))).toBe("chat_moved_lure");
+  }
+  // No visible call: only a bot's ?start= link behind the text or on a button makes it the lure.
+  expect(chatMovedLure(plain(chatMovedHidden.text))).toBe(false);
+  expect(chatMovedLure(plain(chatMovedHidden.text, { embeddedLinks: [chatMovedHidden.link] }))).toBe(true);
+  expect(chatMovedLure(plain(chatMovedHidden.text, { inlineButtons: [{ kind: "url", text: "Join", url: chatMovedHidden.link }] }))).toBe(true);
+  expect(chatMovedLure(plain(chatMovedHidden.text, { embeddedLinks: ["https://t.me/+AbCdEf"] }))).toBe(false);
+  expect(chatMovedLure(plain(chatMovedHidden.text, { embeddedLinks: ["https://t.me/news_channel?start=x"] }))).toBe(false);
+  expect(chatMovedLure(plain(chatMovedIncident, { mediaOnly: true }))).toBe(false);
+});
+
+test("a member saying where the chat moved, bot help, warnings and ordinary chat are no chat-moved lure", () => {
+  for (const text of chatMovedControls) expect([text, chatMovedLure(plain(text)), promoPattern(plain(text))]).toEqual([text, false, undefined]);
+  // The single-handle summon stays with the model (it scored 0.94); only two or more bot handles are a bot_summon opener.
+  expect(promoPattern(plain(guestSummon))).toBeUndefined();
+  expect(botSummon(plain("@gif cats"))).toBe(false);
+});
+
+test("#668 matching stays linear on adversarial input up to the rule's 1,000-character bound", () => {
+  // Over 1,000 characters the rule does not run; at the bound every regex does.
+  const inputs = ["чат ".repeat(250), "группа переехала ".repeat(58), "нажмите на ".repeat(90), "we moved to a new ".repeat(55),
+    "t.me/" + "a".repeat(900) + "bot?start", "чат переехал " + "t.me/a_bot?start ".repeat(58), "a".repeat(999) + "?",
+    "чат переносится в ".repeat(54) + "нажмите на этот текст", "нажмите кнопку ".repeat(66),
+    "чат " + "переехал ".repeat(110), "мы переезжаем " + "в ".repeat(490)].map((text) => text.slice(0, 1_000));
+  for (const text of inputs) {
+    expect(text.length).toBeLessThanOrEqual(1_000);
+    expect(fastest(() => { chatMovedLure(plain(text)); chatMovedLure(plain(text, { embeddedLinks: [text] })); })).toBeLessThan(LINEAR_MS);
+  }
 });

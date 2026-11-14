@@ -242,6 +242,46 @@ The incident sequences replay in `src/bot.test.ts` at their logged scores. In ch
 
 **Missing delete rights.** Jev is a plain member in -1003581025423 (checked with `getChatMember` on Nov 12), so every delete there fails with `message_cant_be_deleted`: msgs 241607 and 241632, and the new rules' deletions would fail too. Three more groups have Jev as a member, and one (-1002578064977) has it as an administrator without the delete right, which caused 323 failed deletes in 72 hours. A delete Telegram refuses with `message_cant_be_deleted` or `chat_admin_required` now makes Jev look up its own rights in that chat, at most once a day per chat, and log `delete_rights_missing` (chat ID and status) when it cannot delete. A failed lookup logs `delete_rights_check_failed` with its reason class.
 
+### `chat_moved_lure` (#668)
+
+On Nov 14 a hijacked member posted a bot handle (`@TURAN732_BOT`), and a Guest Mode bot answered that message as itself, "for" the member: "‼️ Чат переносится в новую группу. Нажмите на этот текст, чтобы перейти в группу 💬 Затем нажмите кнопку «Начать», чтобы присоединиться к группе". On the deployed Laya that text scores 0.6825 (kept). With a hidden `?start=` link on "Нажмите на этот текст" it scores 0.8142. Both scores are the same whether a bot or a human sends it.
+
+The rule matches either of two shapes:
+- the chat or group itself moves to a new (another, backup) chat or group ("Чат переносится в новую группу", "Мы переходим в новый чат", "we're moving to a new group"), and the reader is told to tap this text or this message, or to press Start/«Начать»;
+- the chat, group or channel itself (its noun) is said to move, and a bot's `?start=` link (visible, hidden or on a button) is the way there.
+
+These stay with the model:
+- a bare "click here" / "нажмите сюда";
+- a chat moving to a server, Discord, YouTube or Friday;
+- people moving ("Переезд в Сербию", "we're moving to Lisbon") next to a bot link;
+- "the chat is moving fast";
+- any message with a question mark outside a link;
+- a reporting verb ("Бот пишет что…", "Мне пришло…", "he says…");
+- "again"/"опять", a hijack word ("угнали аккаунт", "hacked") or "this bot"/"этот бот", which is how members re-type the lure to warn others.
+
+Like the other rules, a match deletes from a score of 0.20.
+
+Live on the approved endpoint (`src/guest-bot.live.test.ts`, gate 0.80):
+- **Deleted:** the incident as bot and as human, both plain (0.6825, now `chat_moved_lure`) and with its link (0.8142, deleted by the model), and ten RU/EN variants.
+- **Kept:**
+  - "we moved to @newchat" (0.38) and "Мы переехали в новый чат @newchat…" (0.76);
+  - a chat that moved on to football (0.67), a postponed chat, and "группа переехала, ссылка в описании";
+  - bot help, "/start" instructions, an inline-bot result and "@gif котики";
+  - warnings, questions and re-typed reports about the lure;
+  - people moving next to a bot link (FAQ, documents, jobs);
+  - ordinary Russian chat.
+- **Pattern controls only:** four controls are already deleted by the model on its own:
+  - a bot's "нажмите кнопку «Начать» в личке" (0.87);
+  - "our community moved to discord, click here" (0.84);
+  - a documents bot for moving to Serbia (0.88);
+  - a lure re-typed after "угнали аккаунт" (0.88).
+
+  The rule matches none of them, so they are checked against the rule and not live (`chatMovedModelOnly`).
+
+The Oct capture is no longer retained (`training_samples` is empty), so there is no capture replay. An ad-hoc run of the rule over every string in the pinned fixture corpora (8,267 ads and conversations, all families) matched none of them. That run is not a committed test; the committed controls are in `src/fixtures/chat-moved-lure.ts`.
+
+A single bot handle from a member stays with the model. The incident's 21-character summon scored 0.9355, while a bare `@TURAN732_BOT` from a member without a profile scores 0.7139 and is kept. Guest-bot replies that follow a deleted summon are removed through the link in `src/guest-bot.ts` instead (see `docs/bot-update-visibility.md`).
+
 ## Tests
 
 `src/promo-patterns.test.ts` checks the following:

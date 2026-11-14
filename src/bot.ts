@@ -12,6 +12,7 @@ import { PROFILE_TEXT_LIMIT, SenderProfileCache, personalChannelLocator } from "
 import { publicChannelUrl } from "./personal-posts";
 import { botSummon, carriesLink, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern } from "./promo-patterns";
 import { BaitActors } from "./money-bait";
+import { guestBotCaller, GuestReplyLinks } from "./guest-bot";
 import { profileChannelFunnel } from "./profile-funnel";
 import { ClassifierRequestError, CONTEXT_LINK_THRESHOLD, type JevSpamClassifier, type SpamAssessment } from "./spam";
 import { classifyWithRetries, retryableClassification } from "./classifier-resilience";
@@ -68,6 +69,8 @@ export function registerBotHandlers(bot: Bot, {
   const baitActors = new BaitActors();
   // #634: actors whose bot-summon opener was confirmed in a chat; their next link or handle in the window goes too.
   const summonActors = new BaitActors();
+  // #668: what Jev deleted lately, so a (guest) bot's reply to it or for its actor goes too, and bot replies kept meanwhile.
+  const guestReplies = new GuestReplyLinks();
   const deleteRights = new DeleteRightsChecks();
   const profiles = new SenderProfileCache();
   const destinations = new TelegramPreviewCache({ request: previewRequest });
@@ -108,10 +111,33 @@ export function registerBotHandlers(bot: Bot, {
         return;
       }
       // An edit is moderated afresh under its new content; it supersedes a deletion still waiting for its intent.
-      if ("edited_message" in ctx.update) deleteRetries.forget(ctx.chat.id, ctx.msgId);
+      if ("edited_message" in ctx.update) {
+        deleteRetries.forget(ctx.chat.id, ctx.msgId);
+        guestReplies.forget(ctx.chat.id, ctx.msgId);
+      }
 
       const message = toModerationMessage(ctx.msg);
       const mediaOnly = Boolean(message?.mediaOnly);
+      // #668: a message a bot posts, in particular a Guest Mode reply "for" the member who mentioned it. Counts and kinds only
+      // (no text, no identities): this is how we see whether Telegram delivers guest-bot replies to other bots at all.
+      const caller = ctx.senderChat ? undefined : guestBotCaller(ctx.msg);
+      const botSent = Boolean(caller) || !ctx.senderChat && Boolean(ctx.from?.is_bot) && ctx.from!.id !== bot.botInfo.id;
+      const replied = "reply_to_message" in ctx.msg ? ctx.msg.reply_to_message : undefined;
+      // A forum topic's messages "reply" to its creation message: no reply to anyone.
+      const replyTo = replied && !("forum_topic_created" in replied && replied.forum_topic_created) ? replied.message_id : undefined;
+      if (botSent) logger.info(JSON.stringify({
+        event: "bot_message",
+        chatId: ctx.chat.id,
+        messageId: ctx.msgId,
+        guestBotMessage: Boolean(caller),
+        callerKind: caller ? caller.slice(0, caller.indexOf(":")) : null,
+        replyToMessageId: replyTo ?? null,
+        characterCount: message?.text.length ?? 0,
+        embeddedLinkCount: message?.embeddedLinks.length ?? 0,
+        inlineButtonCount: message?.inlineButtons?.length ?? 0,
+        viaBot: "via_bot" in ctx.msg && Boolean(ctx.msg.via_bot),
+        isEdited: "edited_message" in ctx.update,
+      }));
       if (!message) {
         await skip("no_text_or_caption");
         return;
@@ -176,6 +202,11 @@ export function registerBotHandlers(bot: Bot, {
         // but never human-profile enrichment (including media-only eligibility).
         if (!ctx.from.is_bot) profileUserId = ctx.from.id;
       }
+      // #668: a guest bot's reply to a message Jev deleted, or called by an actor whose message Jev deleted in this chat, goes without
+      // the model: the scam's "chat is moving, tap this text" answer to a hijacked member's summon. Only Guest Mode messages (they
+      // name their caller): other bots' replies, e.g. a helper bot answering the spam, stay with the model.
+      const guestLink = caller ? guestReplies.linked(ctx.chat.id, replyTo, caller) : undefined;
+      const forced = guestLink !== undefined;
 
       const analysisStartedAt = performance.now();
       let senderProfile;
@@ -202,12 +233,12 @@ export function registerBotHandlers(bot: Bot, {
       }
       // Uncaptioned media needs actual sender-owned profile metadata, unless the
       // post carries its own URL buttons (#428): those are the author's content.
-      if (mediaOnly && !senderProfile && !message.inlineButtons?.length) {
+      if (mediaOnly && !senderProfile && !message.inlineButtons?.length && !forced) {
         await skip("media_profile_unavailable");
         return;
       }
       const enrichmentBudget = new EnrichmentBudget();
-      try {
+      if (!forced) try {
         const destinationPreviews = await destinations.enrich(ctx.msg, (result, source, durationMs) =>
           logger.info(JSON.stringify({ event: "telegram_preview_lookup", result, source, durationMs })), enrichmentBudget);
         if (destinationPreviews.length) message.destinationPreviews = destinationPreviews;
@@ -260,20 +291,20 @@ export function registerBotHandlers(bot: Bot, {
       const snapshot = deletionAudit ? auditSnapshot(ctx.msg, classifierInput, "edited_message" in ctx.update) : undefined;
       const fingerprint = spamCache ? cacheFingerprint(ctx.msg, senderId, classifierInput,
         recentMessages.length, model, spamThreshold, enrichmentComplete) : undefined;
-      const cacheHit = fingerprint ? await spamCache!.lookup(fingerprint) : false;
+      const cacheHit = fingerprint && !forced ? await spamCache!.lookup(fingerprint) : false;
       const context = recentMessages.map(({ text, embeddedLinks, inlineButtons, isForwarded, preview, destinationPreviews }) => ({
         text, embeddedLinks, isForwarded, ...(preview ? { preview } : {}),
         ...(inlineButtons ? { inlineButtons } : {}),
         ...(destinationPreviews ? { destinationPreviews } : {}),
       }));
-      const logShadow = shadowClassifier
+      const logShadow = shadowClassifier && !forced
         ? startShadow(shadowClassifier.classify(classifierInput, context), ctx.chat.id, ctx.msgId, "edited_message" in ctx.update)
         : () => {};
       let assessment: SpamAssessment | undefined;
       let classificationFailed = false;
       let attempts = 0;
       try {
-        if (!cacheHit) {
+        if (!cacheHit && !forced) {
           stats.recordClassificationAttempt({ chatId: ctx.chat.id, messageId: ctx.msgId, updateId: ctx.update.update_id });
           const chatId = ctx.chat.id, messageId = ctx.msgId;
           // A timeout or transport failure is tried again before the message is kept unchecked (#625); this update keeps
@@ -302,7 +333,11 @@ export function registerBotHandlers(bot: Bot, {
         try { await spamCache!.seed(fingerprint); } catch (error) { logFailure("spam_cache_seed_failed", error, ctx.chat.id, ctx.msgId); }
       }
 
-      if (!classificationFailed) {
+      if (forced) logger.info(JSON.stringify({
+        event: "guest_reply_linked", chatId: ctx.chat.id, messageId: ctx.msgId, link: guestLink, guestBotMessage: Boolean(caller),
+        isEdited: "edited_message" in ctx.update, decision: "delete",
+      }));
+      else if (!classificationFailed) {
         if (assessment) logAnalysisResult(ctx.chat.id, ctx.msgId, analysisStartedAt, assessment, recentMessages.length);
         logShadow(cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep", assessment);
       }
@@ -311,7 +346,7 @@ export function registerBotHandlers(bot: Bot, {
       // copies lower because its training history only ever held kept messages.
       // Every eligible copy is recorded whatever the verdict, so model, cache and
       // campaign deletions all count towards the distinct posts.
-      const post = mediaOnly ? undefined : campaignPost(ctx.msg);
+      const post = mediaOnly || forced ? undefined : campaignPost(ctx.msg);
       const copyText = post === undefined ? undefined : campaignText(message.text);
       const campaign = copyText === undefined ? undefined : campaigns.observe(ctx.chat.id, senderId,
         { messageId: ctx.msgId, text: copyText, post: post!, postedAt: ctx.msg.date * 1000, auditSnapshot: snapshot });
@@ -323,7 +358,7 @@ export function registerBotHandlers(bot: Bot, {
         modelDecision: classificationFailed ? "failed" : cacheHit ? "cache_delete" : assessment!.shouldDelete ? "delete" : "keep",
       }));
 
-      const modelDelete = cacheHit || Boolean(assessment?.shouldDelete);
+      const modelDelete = cacheHit || forced || Boolean(assessment?.shouldDelete);
       // Repeat sends (#124): the same account sending the same content again, in
       // this group or another one, raises the score. Across the gate, its earlier
       // copies in the window go too. A failed classification never counts.
@@ -371,12 +406,14 @@ export function registerBotHandlers(bot: Bot, {
       const campaignIds = (campaign?.pending ?? []).map(c => c.messageId);
       if (!modelDelete && !repeatDelete && !patternDelete && !campaignIds.length) {
         if (!mediaOnly && !campaign) history.remember(ctx.chat.id, senderId, { ...message, messageId: ctx.msgId, receivedAt: Date.now(), auditSnapshot: snapshot, score: probability });
+        // #668: kept for now; it goes if the message it answers, or its guest-bot caller's message, is deleted in the window.
+        if (caller) guestReplies.keep(ctx.chat.id, { messageId: ctx.msgId, sender: senderId, replyTo, caller, ...(snapshot ? { snapshot } : {}) });
         await next();
         return;
       }
 
       // Profile-only evidence cannot prove earlier text was part of the ad.
-      const linkedIds = !modelDelete ? [] : cacheHit || mediaOnly ? [ctx.msgId] : deletionMessageIds(
+      const linkedIds = !modelDelete ? [] : cacheHit || mediaOnly || forced ? [ctx.msgId] : deletionMessageIds(
         recentMessages,
         ctx.msgId,
         assessment!.contextProbabilities,
@@ -418,11 +455,27 @@ export function registerBotHandlers(bot: Bot, {
       }
       // The rule that widened the deletion; only the current copy can be a cache hit.
       const rule = campaignIds.some(id => !linkedIds.includes(id)) ? "repeat_campaign"
-        : repeatDelete ? "repeat_send" : patternDelete ? pattern! : repeatCopies.length ? "repeat_send" : cacheHit ? "cache" : "model";
+        : repeatDelete ? "repeat_send" : patternDelete ? pattern! : repeatCopies.length ? "repeat_send" : forced ? "guest_bot_reply"
+          : cacheHit ? "cache" : "model";
       // Freeze each message’s own profile/content before clearing history.
       const snapshots = [...recentMessages, ...(campaign?.pending ?? [])].flatMap(m => m.auditSnapshot ? [m.auditSnapshot] : [])
         .concat(snapshot ? [snapshot, ...repeatCopies.map(c => repeatSnapshots.get(c, snapshot))] : []);
       if (messageIds.length > 1) history.clear(ctx.chat.id, senderId);
+      // #668: Jev decided to delete these, so a bot reply to one of them, or a guest-bot reply called by this actor, goes too: the
+      // ones it kept so far go now, with their own audit snapshots, and a later one goes when it arrives.
+      const deletion = [[ctx.chat.id, messageIds] as const, ...otherChats].map(([chatId, ids]) => {
+        guestReplies.deleted(chatId, senderId, ids);
+        const followUps = guestReplies.take(chatId, senderId, ids);
+        for (const { sender, messageId, snapshot: own } of followUps) {
+          if (own) snapshots.push(own);
+          history.forget(chatId, sender, messageId);
+        }
+        return [chatId, [...ids, ...followUps.map(f => f.messageId)], followUps.length] as const;
+      });
+      const guestFollowUpCount = deletion.reduce((n, [, , count]) => n + count, 0);
+      if (guestFollowUpCount) logger.info(JSON.stringify({
+        event: "guest_reply_linked", chatId: ctx.chat.id, messageId: ctx.msgId, isEdited, followUpCount: guestFollowUpCount, decision: "delete",
+      }));
 
       // Once one intent in this update is deferred, the rest are queued without waiting out the same stall.
       let auditDeferred = false;
@@ -453,7 +506,7 @@ export function registerBotHandlers(bot: Bot, {
         await repeats.markHandled(chatId, messageId);
       };
       let deletedMessageCount = 0;
-      for (const [chatId, chatMessageIds] of [[ctx.chat.id, messageIds] as const, ...otherChats]) {
+      for (const [chatId, chatMessageIds] of deletion) {
         deletedMessageCount += await deleteMessages(
           chatId,
           [...chatMessageIds],
@@ -476,7 +529,8 @@ export function registerBotHandlers(bot: Bot, {
           chatId: ctx.chat.id,
           messageId: ctx.msgId,
           deletedMessageCount,
-          attemptedMessageCount: messageIds.length + [...otherChats.values()].reduce((n, l) => n + l.length, 0),
+          attemptedMessageCount: deletion.reduce((n, [, ids]) => n + ids.length, 0),
+          ...(guestFollowUpCount ? { guestReplyCount: guestFollowUpCount } : {}),
           otherChatCount: otherChats.size,
           source: cacheHit ? "cache" : "jev",
           rule,

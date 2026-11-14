@@ -15,7 +15,10 @@ import type { ModerationMessage } from "./spam";
 // links the same actor's vague odd-job opener to it (`odd_job_linked`, decided in src/bot.ts).
 // #634 adds Chinese part-time-job recruitment (`cjk_job_spam`) and the bot-summon opener (`bot_summon`: a message of nothing but
 // two or more bot mentions), and links the same actor's next link or handle to a confirmed opener (`bot_summon_linked`, src/bot.ts).
+// #668 adds the "chat is moving" lure (`chat_moved_lure`): the chat or group is said to move, and the reader is told to tap this
+// text, press Start, or open a bot's ?start= link, the guest-bot reply a hijacked member's bot summon brings in.
 export type PromoPattern =
+  | "chat_moved_lure"
   | "side_gig_offer"
   | "bot_testimonial"
   | "crypto_trade_ask"
@@ -2426,6 +2429,54 @@ function cjkJob(message: ModerationMessage): false | "ad" | "mention" {
 /** #634: Chinese job recruitment with an advertised contact (`cjk_job_spam`). */
 export const cjkJobSpam = (message: ModerationMessage): boolean => cjkJob(message) === "ad";
 
+// #668: "‼️ Чат переносится в новую группу. Нажмите на этот текст, чтобы перейти в группу 💬 Затем нажмите кнопку «Начать»…",
+// posted by a guest bot "for" a hijacked member (its hidden link opens the bot). The chat or group itself moves to a new (another,
+// backup) chat or group, and the reader is told to tap this text or press Start; or the chat, group or channel itself (its noun)
+// is said to move and a bot's ?start= link (visible, hidden or on a button) is the way there. A move of people ("Переезд в
+// Сербию", "we're moving to Lisbon") next to a bot link is no chat moving. A member saying where the chat moved ("we moved to @newchat",
+// "группа переехала, ссылка в описании"), a chat that moves to a server, Discord or Friday, "the chat is moving fast", a generic
+// "click here", and a bot's own help ("нажмите Start, чтобы начать") stay with the model. So does anyone asking about the lure or
+// passing it on ("Бот пишет что чат переносится…, это правда?", "Мне пришло что…", "Опять этот бот: …", "у Карины угнали аккаунт"):
+// any question mark, a reporting verb, "again", a hijack word, or "this bot".
+const CHAT_NOUN = "(?:чат|чатик|группа|группу|беседа|беседу|сообщество|канал|chat|group|community|channel)";
+const NEW_CHAT = "(?:(?:нов|друг|резервн|запасн)\\p{L}* (?:чат|групп|бесед)\\p{L}*|(?:a |the |our )?(?:new|another|backup|reserve) (?:chat|group)›)";
+const MOVE_VERB = "(?:переносится|переносим\\p{L}*|перенесен\\p{L}*|перенесл\\p{L}*|переезжает|переехал\\p{L}*|перемещ\\p{L}*|мигрир\\p{L}*"
+  + "|moving›|moved›|migrat\\p{L}*|relocat\\p{L}*|transferr\\p{L}*|switching›|switched›)";
+// The chat's own move, anywhere: "Группа переехала", "the group has moved", "Чат переехал:".
+const CHAT_MOVES_AT_ALL = re(`‹${CHAT_NOUN}› (?:[\\p{L}'’-]+ ){0,2}?${MOVE_VERB}`);
+// ...to a new chat or group: "Чат переносится в новую группу", "Мы переходим в новый чат", "we're moving to a new group".
+const CHAT_MOVES_TO_NEW = any(
+  `‹${CHAT_NOUN}› (?:[\\p{L}'’-]+ ){0,2}?${MOVE_VERB} (?:в|на|to|into) ${NEW_CHAT}`,
+  `‹(?:мы )?(?:переезжаем|переехали|переносимся|перенеслись|переходим|переезд\\p{L}*) (?:\\p{L}+ ){0,2}?(?:в|на) ${NEW_CHAT}`,
+  `‹(?:we|we're|we’re|we've|we’ve)› (?:[\\p{L}'’]+ ){0,2}?(?:moving|moved|migrating|switching|relocating) (?:to|into) ${NEW_CHAT}`,
+);
+const TAP_VERB = "(?:нажмите|нажимайте|нажми|жмите|жми|кликните|кликайте|тапните|тапни|коснитесь|press|tap|click|hit)";
+const CHAT_MOVE_CALL = any(
+  // "Нажмите на этот текст", "tap this text", "нажмите на это сообщение".
+  `‹${TAP_VERB}› (?:на |on )?(?:этот|это|данный|this) (?:текст|сообщени\\p{L}*|надпись|text|message)›`,
+  // "нажмите кнопку «Начать»", "нажмите Start", "press the Start button".
+  `‹${TAP_VERB}› (?:на |on )?(?:кнопку |the |button )*[«"“']?\\s?(?:начать|старт|запустить|start)›`,
+);
+// Someone passing the lure on or asking about it: "Бот пишет что…", "Мне пришло что…", "he says…".
+const LURE_REPORTED = any("‹(?:пишет|пишут|писал\\p{L}*|написал\\p{L}*|пришл[оаи]|пришел|прислал\\p{L}*|присылают|говорит|говорят|утвержда\\p{L}*"
+  + "|says|said|wrote|writes|claims?|claimed|got (?:a|this|the) message)›",
+  "‹(?:опять|снова|again|угнал\\p{L}*|угон\\p{L}*|взлом\\p{L}*|взломал\\p{L}*|hacked|hijack\\p{L}*)›",
+  "‹(?:этот|тот|там|какой-то|this|that|some) (?:бот|bot)›");
+const LINK_TOKEN = /https?:\/\/|(?:t|telegram)\.(?:me|dog)\/|tg:\/\//iu;
+// A bot's start link, visible, hidden behind the text, or on a button.
+const BOT_START_LINK = /(?:(?:t|telegram)\.(?:me|dog)\/[a-z][a-z0-9_]{1,30}bot\/?\?start(?:app|group)?(?![a-z])|tg:\/\/resolve\?domain=[a-z][a-z0-9_]{1,30}bot&start)/iu;
+export function chatMovedLure(message: ModerationMessage): boolean {
+  if (message.mediaOnly) return false;
+  const raw = message.text.trim();
+  // A link's own "?start=" is no question.
+  if (raw.length > 1_000 || raw.split(/\s+/u).some((token) => /[?？]/u.test(token) && !LINK_TOKEN.test(token))) return false;
+  const own = promoText(raw.replace(QUOTED, " "));
+  const toNew = CHAT_MOVES_TO_NEW.test(own);
+  if (LURE_REPORTED.test(own) || !toNew && !CHAT_MOVES_AT_ALL.test(own)) return false;
+  const links = [...message.embeddedLinks, ...(message.inlineButtons ?? []).map((button) => button.url), raw];
+  return links.some((link) => BOT_START_LINK.test(link)) || toNew && CHAT_MOVE_CALL.test(promoText(raw));
+}
+
 export function promoPattern(message: ModerationMessage): PromoPattern | undefined {
   if (message.mediaOnly) return;
   if (botSummon(message)) return "bot_summon";
@@ -2434,6 +2485,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   const text = promoText(raw.replace(QUOTED, " "));
   const undenied = text.replace(DENIAL, " ");
   if (REPORT.test(undenied) || SEEN_AD.test(undenied) && !RECRUIT_CALL.test(undenied)) return;
+  if (chatMovedLure(message)) return "chat_moved_lure";
   const cjk = cjkJob(message);
   if (cjk) return cjk === "ad" ? "cjk_job_spam" : "cjk_job_mention";
   // A question about pay, or about whether the offer is real, is conversation, not an offer.
