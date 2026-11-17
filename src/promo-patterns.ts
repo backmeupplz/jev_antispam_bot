@@ -9,6 +9,8 @@ import type { ModerationMessage } from "./spam";
 // #470 adds a sixth, judged on the sender's profile rather than the text: see profile-funnel.ts.
 // #465 adds a seventh: an investment-profit testimonial (a first-person claim that a stake grew + a contact call + an invite or contact link).
 // #468 reads its claims and calls in French and German too.
+// #716 adds its amount-free variant (`payout_testimonial`): the author's own withdrawal that went fine + an investing or platform
+// word + a call toward a private, investing-named or credited destination.
 // #611 adds an eighth: the funnel-less "your mindset sets your limits?" warm-up post (a film or book opener + a second-person
 // mindset claim + a closing rhetorical question to the reader).
 // #624 adds a ninth: short Russian money bait (a quick-money offer with a call, or an unsolicited offer to help with debts), and
@@ -25,6 +27,7 @@ export type PromoPattern =
   | "adult_content_promo"
   | "book_copy_offer"
   | "profit_testimonial"
+  | "payout_testimonial"
   | "mindset_hook"
   | "money_bait"
   | "odd_job_linked"
@@ -1775,6 +1778,242 @@ function profitTestimonial(message: ModerationMessage, raw: string, text: string
     || language(source, "en") !== "en" && (TRADING_FR_DE.test(source) || GAIN_FR_DE.test(source)));
 }
 
+// #716: the amount-free variant of the same funnel ("…sehr skeptisch… stetige Fortschritte… Was mich überzeugt hat, war meine erste
+// Auszahlung… sie lief reibungslos. Sie können sie über den untenstehenden Link erreichen: t.me/InvestwithEmma"). profit_testimonial
+// needs a stake and a result; this shape names no amount, so it needs four other parts instead:
+// - the author's own withdrawal that went fine, told in a sentence that asks nothing (PAYOUT_CLAIM);
+// - an investing or platform word, read with handles and links stripped;
+// - a contact call toward a third person ("reach her", "Sie können sie … erreichen", "contactez-la", "свяжитесь с ней") or a pointer
+//   ("link below", "untenstehenden Link", "lien ci-dessous", "ссылке ниже", 👇);
+// - a destination that is a private invite, an investing-named handle or link ("t.me/InvestwithEmma", "@Clara_Trading_Invest"), or a
+//   credited third party, and not the author's own labelled channel.
+// The #465/#468 exclusions apply: victims, warnings, talk about such ads, laughter, an address to a member, an answer to a request.
+const PAYOUT_NOUN = {
+  en: "‹(?:(?:my|our|the) (?:(?:very )?(?:first|second|third|latest|last|recent|next|1st) )?|(?<!(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*) )(?:very )?(?:first|1st) )(?:withdrawals?|payouts?|cash ?outs?|cashouts?)›",
+  de: "‹(?:(?:meine|unsere|die) (?:(?:allererste|erste|zweite|dritte|letzte|neueste) )?|(?<!(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*) )(?:allererste|erste) )(?:auszahlung\\p{L}*|abhebung\\p{L}*)",
+  fr: "‹(?:(?:mon|notre|le) (?:(?:tout )?(?:premier|deuxieme|second|dernier) )?|(?<!(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*) )(?:tout )?premier )retraits?›",
+  ru: "‹(?<!(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*) )(?:(?:мой|наш) )?(?:(?:самый )?(?:первый|второй|последний) )?(?:вывод\\p{L}*|выплат\\p{L}*)",
+};
+const PAYOUT_VERB = {
+  en: "‹(?:i|we) (?:(?:have|had|just|finally|already|then|successfully) ){0,2}(?:withdrew|cashed out|received my (?:\\p{L}+ )?(?:payout|withdrawal|profits?|earnings))›",
+  de: "‹(?:ich|wir) (?:\\p{L}+ ){0,8}?(?:ausgezahlt|abgehoben|auszahlen lassen)›",
+  fr: "‹(?:j['’]ai|nous avons) (?:\\p{L}+ ){0,2}?retire›",
+  ru: "‹(?:я|мы) (?:\\p{L}+ ){0,2}?(?:вывел[аи]?|вывела|получил[аи]? (?:свои |мои |первые )?(?:деньги|выплат\\p{L}*|прибыль))›",
+};
+const PAYOUT_FINE = {
+  en: "‹(?:smooth\\p{L}*|seamless\\p{L}*|without (?:any |a )?(?:issues?|problems?|delays?|stress|hassle|hiccups?)|no (?:issues?|problems?|delays?|hassle)|hassle[- ]free|successful\\p{L}*|went through|came through|arrived|landed|instant\\p{L}*|on time|fine›|perfect\\p{L}*|quick\\p{L}*|fast›|easy›|easily›)",
+  de: "‹(?:reibungslos|problemlos|ohne (?:jegliche |irgendwelche )?(?:probleme|verzogerung\\p{L}*|schwierigkeiten|stress)|erfolgreich|einwandfrei|schnell|sofort|punktlich|(?:hat |hatte )?geklappt|kam (?:\\p{L}+ ){0,2}?an›|angekommen|lief (?:\\p{L}+ )?(?:gut|glatt|perfekt))",
+  fr: "‹(?:sans (?:aucun |le moindre )?(?:probleme|souci|accroc|difficulte|retard|stress)|s['’]est (?:tres |super |vraiment )?(?:bien |parfaitement )?(?:passe|deroule)|arrive|reussi|rapide\\p{L}*|fluide|parfait\\p{L}*|instantane\\p{L}*|en temps et en heure)",
+  ru: "‹(?:без (?:каких-либо |каких либо |всяких )?(?:проблем|задерж\\p{L}*|вопросов|заминок)|успешно|быстро|моментально|мгновенно|вовремя|пришл\\p{L}*|пришел|прош[её]л|прошла|прошло|гладко)",
+};
+const PAYOUT_CLAIM = Object.fromEntries((Object.keys(PAYOUT_NOUN) as (keyof typeof PAYOUT_NOUN)[]).map((lang) =>
+  [lang, { said: re(`${PAYOUT_NOUN[lang]}|${PAYOUT_VERB[lang]}`), fine: re(PAYOUT_FINE[lang], "giu"), noun: re(PAYOUT_NOUN[lang]), verb: re(PAYOUT_VERB[lang]) }])) as
+  Record<keyof typeof PAYOUT_NOUN, { said: RegExp; fine: RegExp; noun: RegExp; verb: RegExp }>;
+// A withdrawal that failed or waits is a complaint: "My first withdrawal is stuck", "Auszahlung blockiert", "вывод заблокировали".
+const PAYOUT_FAILED = any("‹(?:stuck|blocked|froze|frozen|pending|refused|declined|rejected|denied|delayed|still waiting|never (?:came|arrived)|can['’]?t withdraw|cannot withdraw|unable)",
+  "‹(?:blockiert|gesperrt|eingefroren|abgelehnt|verweigert|warte (?:\\p{L}+ )?(?:immer )?noch|bloque\\p{L}*|refuse\\p{L}*|en attente|toujours pas|impossible)",
+  "‹(?:заблокир\\p{L}*|завис\\p{L}*|заморож\\p{L}*|замороз\\p{L}*|отказ\\p{L}*|не (?:приш\\p{L}*|могу|дают|выводят)|до сих пор)");
+// A frozen, blocked or locked account anywhere after the claim tells a victim story ("My first withdrawal went smoothly, that's the
+// hook. Then they froze my account…", "Потом счёт заморозили"): the first payout was the bait, and the link is the scammer's.
+const ACCOUNT_FROZEN = any("‹(?:froze (?!the (?:moment|second|minute|instant|first)›)(?:my|our|the|his|her|their|all|everything|it|me|us|[\\p{L}\\p{N}]+['’]s?)›|frozen(?! (?:in|with|from|by) (?:disbelief|shock|fear|place|terror|awe|excitement|surprise))|(?<!(?:i|we) )blocked|suspended|locked (?:me out|us out|(?:him|her|them) out|my|our|the)|(?:account|funds|money|wallet|withdrawals?)s? (?:(?:was|were|got|is|are|has been|have been|had been) )?(?:\\p{L}+ )?locked)›",
+  "‹(?:gesperrt|eingefroren|blockiert|sperrten|sperrte|froren)›",
+  "‹(?:bloque\\p{L}*|gel(?:e|ee|es|ees|er|ent|a|aient)|suspendu\\p{L}*)›",
+  "‹(?:замороз\\p{L}*|заморож\\p{L}*|заблокир\\p{L}*|блокир\\p{L}*)");
+// Not frozen ("No frozen accounts", "nothing gets blocked", "No account has ever been frozen", "Nobody's account gets frozen",
+// "Aucun compte bloqué", "Никаких блокировок", "без блокировок") is a boast.
+const FROZEN_NEGATED = any(
+  // "without", "ohne", "sans", "без" negate only the freeze word right after them ("без блокировок", "without any frozen funds"), not
+  // a phrase of their own ("without any explanation they blocked my account", "мне без объяснений заблокировали").
+  "‹(?:without|ohne|sans|без)\\s(?:[\\p{L}'’-]+\\s(?:and|or|und|oder|et|ou|и|или)\\s)?(?:(?:any|jegliche\\p{L}*|irgendwelche\\p{L}*|aucun\\p{L}*|le moindre|la moindre|каких-либо|каких либо|всяких|любых)\\s)?$",
+  // Other negations reach up to four words, but not across a new subject, a conjunction or a "then" ("Not long after they froze my account").
+  "‹(?:not|never|no|zero|nothing|nobody['’]?s?|no one['’]?s?|don['’]?t|doesn['’]?t|won['’]?t|didn['’]?t|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t|hasn['’]?t|haven['’]?t|nicht|nie|niemals|kein\\p{L}*|nichts|niemand\\p{L}*|pas|jamais|aucun\\p{L}*|personne|rien|не|ни|никто|ничей\\p{L}*|никаких|никак\\p{L}*)\\s(?:(?!(?:and|but|or|und|aber|oder|et|mais|ou|и|а|но|или)\\s(?!$))(?!(?:they|he|she|we|i|you|it|my|our|then|later|after|until|mein\\p{L}*|unser\\p{L}*|mon|ma|mes|notre|nos|мой|моя|мою|мои|моего|моём|наш\\p{L}*|sie|er|wir|ich|man|dann|danach|bis|ils|elles|il|elle|on|nous|je|puis|ensuite|apres|jusqu\\p{L}*|они|он|она|мы|я|мне|меня|нам|им|потом|через|затем|пока)›)[\\p{L}'’-]+\\s){0,4}?$");
+// Someone else's blocked account is the ads' own story ("Her old account was blocked, so this is her new one", "Её старый аккаунт
+// заблокировали, вот новый"): a possessive right on the account, with no first-person word in the sentence, tells it. A victim
+// story naming the scammer ("Then her manager blocked the account") still counts.
+const FROZEN_FIRST = re("‹(?:my|mine|me|our|ours|us|we|i|mein\\p{L}*|mich|mir|unser\\p{L}*|ich|wir|mon|ma|mes|mien\\p{L}*|notre|nos|me|m['’]|je|nous|мой|моя|мои|моего|мою|мне|меня|наш\\p{L}*|нас|нам|я|мы)›");
+const FROZEN_OTHER = re("‹(?:her|his|their|ihr\\p{L}*|sein\\p{L}*|son|sa|ses|leur\\p{L}*|её|ее|его|их) (?:\\p{L}+ )?(?:accounts?|channels?|profiles?|pages?|konto|konten|kanal|profil|compte|chaine|canal|profil|аккаунт\\p{L}*|канал\\p{L}*|профил\\p{L}*|сч[её]т\\p{L}*|страниц\\p{L}*)›");
+const ACCOUNT_FROZEN_ALL = new RegExp(ACCOUNT_FROZEN.source, "giu");
+// A freeze verb that acts: "froze my", "locked the", "…и заблокировали" (a finite Russian verb after "и" starts a clause).
+const FROZEN_ACTS = re("^(?:froze|locked|заблокирова(?:л|ли|ла)|заморози(?:л|ли|ла))›");
+const LIST_CONJUNCTION = re("‹(?:and|or|und|oder|et|ou|и|или)\\s$");
+// A verb negation inside the list ends it: "ни копейки не вернули и заблокировали" is a victim's new clause.
+const LIST_NEGATION = re("‹(?:no|never|zero|without|nie|niemals|kein\\p{L}*|ohne|jamais|aucun\\p{L}*|sans|никаких|никогда|ни|без)\\s(?:(?!(?:не|not|nicht|pas|ne)›|n['’]|\\p{L}+n['’]t›)[\\p{L}'’-]+\\s){0,4}?(?:and|or|und|oder|et|ou|и|или)\\s$");
+const FROZEN_OBJECT = re("^\\s(?:my|our|the|his|her|their|me|us|it|everything|all|access|tout|tous|toutes|mes|alles|zugang|все|всё|мне|нам|доступ\\p{L}*|средств\\p{L}*|деньги|mein\\p{L}*|unser\\p{L}*|das|den|die|mich|uns|mon|ma|mes|notre|nos|le|la|les|l['’]|мой|мою|мои|моего|наш\\p{L}*|меня|нас|аккаунт\\p{L}*|сч[её]т\\p{L}*|кошел\\p{L}*|вывод\\p{L}*)›");
+const FROZEN_INSIDE = re("‹(?:not|never|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|hasn['’]?t|haven['’]?t)›");
+// Idioms with a negation of their own break the reach ("for no reason my account was blocked", "ни с того ни с сего заблокировали",
+// "Keine Ahnung warum mein Konto gesperrt wurde", "не объяснив причин заблокировали").
+const FROZEN_IDIOM = new RegExp(any("‹(?:for|with) no (?:\\p{L}+ )?(?:reason|explanation|warning|notice)›|‹no longer›|‹(?:nicht|nie) mehr›|‹больше не›|‹no (?:idea|clue) (?:why|how)›|‹without (?:any |a )?(?:reason|explanation|warning|notice)›",
+  "‹(?:keine ahnung|ohne (?:jeden |jeglichen )?(?:grund|erklarung|vorwarnung)|aus keinem grund|sans (?:aucune |la moindre )?(?:raison|explication|prevenir|avertissement)|pour aucune raison)›",
+  "‹(?:ни с того,? ни с сего|без (?:всяких |каких-либо )?(?:объяснени\\p{L}*|причин\\p{L}*|предупреждени\\p{L}*)|не объясн\\p{L}*(?: (?:никаких |нам |мне )?причин\\p{L}*)?|не предупреди\\p{L}*)›").source, "giu");
+const tellsFrozen = (sentence: string) => {
+  if (!FROZEN_FIRST.test(sentence) && FROZEN_OTHER.test(sentence)) return false;
+  const read = sentence.replace(FROZEN_IDIOM, ", ");
+  // A negation inside the match negates it too: "Funds are never locked", "Withdrawals are not locked".
+  return [...read.matchAll(ACCOUNT_FROZEN_ALL)].some((match) => {
+    if (FROZEN_INSIDE.test(match[0])) return false;
+    const before = read.slice(Math.max(0, match.index! - 50), match.index);
+    if (!FROZEN_NEGATED.test(before)) return true;
+    if (!LIST_CONJUNCTION.test(before)) return false;
+    // A conjunction right before the freeze word lists it under a "no", "never" or "никаких" ("No frozen or blocked accounts",
+    // "nie gesperrt oder eingefroren", "Никаких комиссий и блокировок"). After a negated verb it starts a new clause ("Support didn't
+    // answer and locked my account", "Поддержка не отвечает и заморозила все средства"), and so does a freeze acting on an object.
+    const acts = FROZEN_ACTS.test(match[0]) || FROZEN_OBJECT.test(read.slice(match.index! + match[0].length));
+    return !LIST_NEGATION.test(before) || acts;
+  });
+};
+// A later payout that failed, waits or is held for a fee tells a victim story too ("My first withdrawal went smoothly. The second one
+// never arrived", "has been pending for 3 weeks", "Then they asked for a 20% fee to release the rest", "Die zweite Auszahlung kam nie
+// an", "Le deuxième n'est jamais arrivé", "Второй вывод так и не пришёл", "потребовали налог за вывод"): the first payout was the
+// bait. A fee counts only when demanded for the payout, not the ads' "low fees on withdrawals" or "10% commission from profits".
+const PAYOUT_RELEASE = "(?:withdraw\\p{L}*|release|unlock|unfreeze|get (?:my|the|our) (?:money|funds|profits?)|auszahl\\p{L}*|ausgezahlt|abheben|abzuheben|abgehoben|auszuzahlen|freigabe|freigeben|freizugeben|freischalt\\p{L}*|retir\\p{L}*|retrait\\p{L}*|debloqu\\p{L}*|liberer|recuperer|вывод\\p{L}*|вывести|выплат\\p{L}*|разблокир\\p{L}*)›";
+const PAYOUT_FEE = "(?:fees?|tax(?:es)?|commissions?|charges?|insurance|versicherung\\p{L}*|assurance|gebuhr\\p{L}*|steuer\\p{L}*|provision\\p{L}*|frais|taxes?|commissions?|impots?|комисси\\p{L}*|налог\\p{L}*|сбор\\p{L}*|страховк\\p{L}*)";
+// A negation that governs the fee, right after the demand verb, denies it ("Ich musste nie eine Gebühr zahlen", "keine Gebühren");
+// one before an unrelated verb ("попросили не затягивать и оплатить комиссию") or a comparative ("не менее 20% комиссии", "nicht
+// weniger als", "not less than", "pas moins de") does not.
+const PAYOUT_FEE_DENIED = `(?:\\s[\\p{L}'’-]+)?\\s(?:not|never|nicht|nie|niemals|kein\\p{L}*|pas|jamais|aucun\\p{L}*|не|ни|никак\\p{L}*)›(?!\\s(?:less|more|weniger|mehr|moins|plus|менее|меньше|более|больше)›)(?:\\s(?:any|a|an|eine[nmr]?|einzige\\p{L}*|de|des|d['’]|le|la|les|une?|der|die|das|den|dem)›)?(?:\\s[\\p{L}'’-]+)?\\s‹${PAYOUT_FEE}›`;
+const PAYOUT_FAILED_LATER = new RegExp(any(
+  "‹(?:never (?:\\p{L}+ )?(?:arrived|came|showed up|went through|got paid|paid out)(?! (?:late|delayed|with a delay))|never (?:saw|got|received) (?:\\p{L}+ ){0,2}?(?:money|funds|savings|deposit|withdrawal|payout)|pending|stuck|on hold|still waiting|declined|rejected|(?:still )?(?:haven|hasn)['’]?t (?:\\p{L}+ ){0,2}?(?:received|arrived|come|got))›",
+  "‹(?:kam (?:\\p{L}+ ){0,3}?nie an|nie (?:angekommen|eingegangen|ausgezahlt)|(?:hangt|hing|steckt|steckte) (?:\\p{L}+ ){0,3}?fest|(?:bis heute|immer noch) nicht (?:angekommen|eingegangen|da)|ausstehend|(?<!‹(?:kein\\p{L}*|nie|niemals|nicht) (?:\\p{L}+ ){0,3})abgelehnt|warte\\p{L}* (?:\\p{L}+ ){0,3}?(?:immer )?noch|nie wieder gesehen)›",
+  "‹(?:jamais (?:\\p{L}+ ){0,2}?(?:arrive\\p{L}*|recu\\p{L}*|revu\\p{L}*)|en attente|(?<!n['’])(?:a ete|ont ete|est|sont|etait) refuse\\p{L}*|toujours (?:bloque\\p{L}*|rien))›",
+  "‹(?:так и не (?:приш\\p{L}*|поступ\\p{L}*)|не (?:приш\\p{L}*|поступ\\p{L}*)|завис\\p{L}*|отклон\\p{L}*|в ожидании|до сих пор (?:нет|жду)|больше не (?:видел\\p{L}*|получил\\p{L}*))›",
+  `‹(?:asked|demanded|wanted|required|requested|insisted|charged|(?:told|forced) (?:me|us) to pay|had to pay|sollte\\p{L}*|musste\\p{L}*|(?:du|devais|devait|devions) payer|verlang\\p{L}*|forder\\p{L}*|wollten|wollte|demand\\p{L}*|exig\\p{L}*|reclam\\p{L}*|потребова\\p{L}*|требу\\p{L}*|попроси\\p{L}*|просил\\p{L}*|просят|заплатить|оплатить|внести)›(?!${PAYOUT_FEE_DENIED})[^.!?\\n]{0,40}?‹${PAYOUT_FEE}›[^.!?\\n]{0,40}?‹${PAYOUT_RELEASE}`).source, "giu");
+// A negation right before the failure is a boast: "No withdrawal ever got stuck", "Ни один вывод не завис", "They never asked for a fee",
+// and so is one right after a demand verb ("Ich musste nie eine Gebühr zahlen, um abzuheben").
+// "je" ("ever") and "n'" are read inside the German and French refusals: "Keine Auszahlung wurde je abgelehnt", "Aucun retrait n'a été refusé".
+// It is read only in a sentence about money or a payout: "I was stuck in a dead-end job" tells nothing.
+const PAYOUT_CONTEXT = re("withdr|pay ?out|cash ?out|money|funds|deposit|savings|second|rest›|auszahl|ausgezahlt|auszuzahl|abheb|abzuheb|abgehoben|geld|guthaben|zweite|rest›|retir|retrait|argent|fonds|deuxieme|reste›|вывод|вывел|выплат|деньг|средств|втор|остат");
+const tellsPayoutFailed = (sentence: string) => PAYOUT_CONTEXT.test(sentence) && [...sentence.matchAll(PAYOUT_FAILED_LATER)].some((match) =>
+  !FROZEN_NEGATED.test(sentence.slice(Math.max(0, match.index! - 50), match.index)));
+// A negation right before the success word: "did not go smoothly", "kam nie an", "ne s'est pas bien passé", "не прошёл".
+// "kein" negates a noun ("problemlos und keine Gebühren bezahlt, alles abgehoben"), not the withdrawal.
+const VERB_NEGATED = re("‹(?:not|never|nicht|nie|niemals|nichts|pas|jamais|не|ни)›");
+const PAYOUT_SPEED = re("^(?:quick\\p{L}*|fast|instant\\p{L}*|on time|schnell|sofort|punktlich|rapide\\p{L}*|instantane\\p{L}*|en temps et en heure|быстро|моментально|мгновенно|вовремя)$");
+const PAYOUT_NEGATED = re("‹(?:not|never|didn['’]?t|isn['’]?t|wasn['’]?t|hasn['’]?t|nicht|nie|niemals|kein\\p{L}*|pas|jamais|не|ни)\\s(?:[\\p{L}'’]+\\s){0,2}?$");
+// Hearsay is not the author's payout: "They say the first withdrawal goes smoothly", "Говорят, вывод без проблем".
+const PAYOUT_HEARSAY = any("‹(?:they|people|someone|everyone|he|she|it) (?:say|says|said|claims?|claimed|promis\\p{L}*|told)›|‹(?:i )?(?:heard|read)›|‹(?:supposedly|allegedly|apparently)›",
+  "‹(?:man sagt|sie sagen|angeblich|heißt es|heisst es|on dit|ils disent|parait-il|soi-disant|apparemment)›",
+  "‹(?:говорят|говорил[иа]?|пишут|обещают|обещал\\p{L}*|якобы|слышал\\p{L}*|утверждают)›");
+// Someone else's payout, read right before the noun: "his (very) first withdrawal", "my friend's first payout", "его первый вывод".
+const OTHERS_PAYOUT = re("‹(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*|(?!(?:it|let|that|here|there|what|who|he|she)['’]s)\\p{L}+['’]s)\\s(?:(?:very|самый|tout|aller)\\s?)?(?:(?:first|1st|second|last|latest|erste|allererste|zweite|letzte|premier|dernier|первый|второй|последний)\\s)?(?:withdrawal|payout|cash ?out|auszahlung|abhebung|retrait|вывод|выплат)");
+// The author's own payout in the same sentence keeps the claim: "my first withdrawal went smoothly, and your first withdrawal will too".
+const OWN_PAYOUT = re("‹(?:my|meine?|mon|ma|mes|мой|моя|мои)\\s(?:(?:very|самый|tout|aller)\\s?)?(?:(?:first|1st|second|last|latest|erste|allererste|zweite|letzte|premier|dernier|первый|второй|последний)\\s)?(?:withdrawal|payout|cash ?out|auszahlung|abhebung|retrait|вывод|выплат)");
+// A first payout with no possessive: "First withdrawal went smoothly", "первый вывод прошёл без проблем".
+const ORDINAL_PAYOUT = re("‹(?<!(?:his|her|your|their|its|ihre?|seine?|deine?|eure?|sa|son|ses|ta|ton|leur|votre|его|её|ее|их|твой|твоя|ваш\\p{L}*) )(?:first|1st|allererste|erste|premier|первый|самый первый|первая) (?:withdrawal|payout|cash ?out|auszahlung|abhebung|retrait|вывод|выплат)");
+function claimsPayout(sentence: string, next: string, frozenLater: boolean, lang: keyof typeof PAYOUT_NOUN, words: string, herCall: boolean): boolean {
+  const claim = PAYOUT_CLAIM[lang];
+  if (!claim.said.test(sentence) || frozenLater || PAYOUT_FAILED.test(sentence) || PAYOUT_HEARSAY.test(sentence) || OTHERS_PAYOUT.test(sentence) && !OWN_PAYOUT.test(sentence)) return false;
+  // Russian drops the possessive ("первый вывод прошёл без проблем"), so the author's own word may stand anywhere in the message.
+  // So may "the", "die" or "le" ("Ich investiere seit zwei Monaten… Die Auszahlung hat problemlos geklappt").
+  // Read with handles and links stripped: "t.me/…" is no "me". Terse copies drop every first-person word ("Сначала не верила…, но
+  // первый вывод прошёл без проблем. Свяжитесь с ней 👇", "First withdrawal went smoothly… Reach out to her"): a first payout then
+  // counts when the message calls toward her or him.
+  if (!{ en: FIRST_EN, de: FIRST_DE, fr: FIRST_FR, ru: FIRST_RU }[lang].test(words) && !(herCall && ORDINAL_PAYOUT.test(sentence))) return false;
+  // A withdrawal alone is no success: "I withdrew my money before the collapse". A verb ("I withdrew…", "Ich habe … abgehoben") or a
+  // noun ("my first withdrawal") needs it to have gone fine, in its sentence or the next ("…war meine erste Auszahlung. Ich war
+  // nervös 😅 aber sie lief reibungslos."). A negated verb with no noun tells no payout ("I never withdrew", "Ich habe nie abgehoben").
+  // A verb alone tells only that money left: speed or timing ("Я быстро вывел деньги…, пока не поздно", "sofort abgehoben, bevor sie
+  // pleite ging", "I withdrew … fast") is no success then; a noun's speed is ("my first withdrawal was fast").
+  const verb = sentence.match(claim.verb);
+  // A generic noun beside the verb ("before the withdrawals were halted", "пока можно было выводить") is no payout of the author's.
+  const verbOnly = verb !== null && !claim.noun.test(sentence);
+  if (verbOnly && (PAYOUT_NEGATED.test(sentence.slice(0, verb.index)) || VERB_NEGATED.test(verb[0]))) return false;
+  const speedTells = verb === null || OWN_PAYOUT.test(sentence) || ORDINAL_PAYOUT.test(sentence);
+  const told = PAYOUT_FAILED.test(next) ? sentence : `${sentence} ${next}`;
+  return [...told.matchAll(claim.fine)].some((match) => !(!speedTells && PAYOUT_SPEED.test(match[0]))
+    && !PAYOUT_NEGATED.test(told.slice(Math.max(0, match.index! - 40), match.index)));
+}
+const PAYOUT_WORD = re("withdr|pay ?out|cash ?out|auszahl|ausgezahlt|abheb|abgehoben|retir|retrait|вывод|вывел|выплат|получил");
+// An investing platform or a profit word, besides TRADING: "diese Plattform", "mes gains sont réguliers", "Rendite".
+const PLATFORM = re("‹(?:platforms?|plattform\\p{L}*|plateformes?|платформ\\p{L}*|exchange|broker\\p{L}*|courtier\\p{L}*|profit\\p{L}*|gains?|gewinn\\p{L}*|rendite\\p{L}*|rendement\\p{L}*|benefices?|plus-values?|прибыл\\p{L}*|доходност\\p{L}*)›");
+// A handle or link named for investing: "@Clara_Trading_Invest", "t.me/InvestwithEmma", "wa.me/…" never names one.
+const DESTINATION_NAME = /(?:(?<![\p{L}\p{N}._])@|(?:t\.me|telegram\.(?:me|dog))\/)([a-z0-9_]{4,64})/giu;
+const INVESTING_NAME = /invest|trad(?:e|ing|er)|profit|crypto|krypto|forex|capital|kapital|wealth|financ|finanz|money|bitcoin|btc|broker|signal|(?<!l)earn|income|asset|dividend|stock|mining|miner/u;
+// A support, help or admin contact is a service, not a funnel: "t.me/TradeRepublicSupport", "@crypto_admin_max", "t.me/broker_help".
+const SERVICE_NAME = /support|(?:^|_)help|help(?:desk)?$|hilfe|admin|(?:^|_)service|service$|desk$|moderat|podderzh|kundendienst/u;
+const investingNamed = (text: string) => [...text.matchAll(DESTINATION_NAME)].some(([, name]) =>
+  INVESTING_NAME.test(name!) && !SERVICE_NAME.test(name!) && !/bot$/u.test(name!));
+// A call toward a support desk or a chat admin points at a service ("contact the platform support", "message him, he's our group
+// admin", "пишите ему, он админ чата"). Question and help phrases alone ("Bei Fragen…", "По всем вопросам…") are the ads' own
+// stock calls, and praise ("her support is amazing", "thanks to the admins") names no service. Read only toward a public handle.
+const SERVICE_CALL = re("‹(?:(?:the|our|customer|tech\\p{L}*|platform|exchange|broker) support|support (?:team|chat|service|desk|line|agents?)|help ?desk|customer (?:service|care)|(?:group|chat) (?:admin|moderator)s?|(?:he|she|who)(?: is|['’]s) (?:(?:our|the|an?|one of (?:the|our)) )?(?:group |chat )?(?:admins?|mods?|moderators?)›|(?:platform|exchange|broker|bank|company|app)['’]s support|support (?:manager|specialist|staff|employee|reps?|representatives?|officer|operator)s?|works? (?:in|at|for) (?:the )?(?:\\p{L}+['’]s |\\p{L}+ )?support|(?:er|sie) ist (?:hier |unser\\p{L}* |der |die |ein\\p{L}* )?(?:gruppen-?|chat-?)?(?:admin|moderator)\\p{L}*|(?:arbeit\\p{L}*|ist|sitzt|mitarbeiter\\p{L}*) (?:im|beim) support|(?<!(?:begeistert|berrascht|beeindruckt|zufrieden|profitier\\p{L}*(?: sie)?) )vom support|(?:il|elle) est (?:l['’]|un |une |notre )?(?:admin|moderat)\\p{L}*|admin\\p{L}* du (?:groupe|chat)|(?:travaill\\p{L}*|bosse\\p{L}*|est|fait partie) (?:au|du) support|kundenservice|kundendienst|support-team|service client|из поддержк\\p{L}*|(?:работа\\p{L}*|сид\\p{L}*) в поддержк\\p{L}*|в поддержк\\p{L}* (?:работа(?:ет|ют|ю|ешь|л\\p{L}*)|сид(?:ит|ят|ел\\p{L}*))|служб\\p{L}* поддержк\\p{L}*|техподдержк\\p{L}*|админ\\p{L}* (?:чата|группы|канала)|(?:он|она) (?:тут |здесь |наш |наша )?(?:админ|модератор)\\p{L}*)›");
+// The author's own channel labelled with a qualifier: "My investing channel 👇 t.me/tom_invest", "Mein Trading-Kanal 👇 t.me/…",
+// "I post my trading journal here 👇", "Ma chaîne trading 👇". OWN_LINK reads only a label right after "my". Only ownership and topic
+// words qualify it ("my mentor's channel", "my favourite channel" are someone else's), and only filler words stand before the link.
+const OWN_LABELLED = re(`‹(?:my|mein\\p{L}*|ma|mon|mes|мой|моя|мои|мою|моём|моем|свой|своя|свои|свою|своём|своем|своего|своих)\\s(?:(?:own|personal|private|free|small|daily|new|telegram|notes|signals?|long-term|longterm|investing|investment|invest|trading|crypto|krypto|forex|stock|stocks|finance|finanz|eigene[nmr]?|personliche[nmr]?|kleine[nmr]?|neue[nmr]?|propre|perso|petit\\p{L}*|nouve\\p{L}*|личн\\p{L}*|инвест\\p{L}*|трейдинг\\p{L}*|крипто\\p{L}*|торгов\\p{L}*|нов\\p{L}*)[\\s-]){0,2}(?:channel|blog|notes|journal|diary|newsletter|kanal|notizen|tagebuch|chaine|canal|канал\\p{L}*|блог\\p{L}*|заметк\\p{L}*|дневник\\p{L}*)›(?:\\s(?:trading|crypto|krypto|invest\\p{L}*|perso|personnel\\p{L}*|finance\\p{L}*|bourse|forex)›)?(?:\\s(?:about|on|for|with|of|про|о|об|по|zum(?: thema)?|über|uber|sur(?: (?:le|la|les|l['’]))?|de)\\s(?:daily |free |my )?(?:trading|trades|crypto|krypto|invest\\p{L}*|stocks?|forex|finance\\p{L}*|finanz\\p{L}*|signals?|bourse|инвестиц\\p{L}*|трейдинг\\p{L}*|крипт\\p{L}*|бирж\\p{L}*|акци\\p{L}*|сигнал\\p{L}*)›)?(?:[^\\p{L}\\p{N}@\\n]{1,6}(?:is|are|here|below|link|links|free|on|in|telegram|тут|здесь|ниже|вот|ссылка|бесплатно|в|телеграм\\p{L}*|est|sont|ici|ci-dessous|voici|gratuit\\p{L}*|sur|dans|en|ist|sind|hier|unten|auf|im|kostenlos|gratis)›){0,3}[^\\p{L}\\p{N}@]{0,12}(?:https?://)?(?:(?:t\\.me|telegram\\.(?:me|dog))/|@[a-z])`);
+// A contact call toward a third person, read in a sentence that asks nothing. German puts the object first ("Sie können sie über den
+// untenstehenden Link erreichen"), so both orders are read; a negation inside the call ("ich kann sie nicht mehr erreichen") tells.
+// "Ihr" and "Sie" are also the subject "you": a first-person object between them and the verb ("Ihr könnt mich hier erreichen")
+// calls toward the author.
+const THIRD_CALL = any(
+  "‹(?:contact|reach(?: out to)?|message|text|dm|write to|talk to|speak (?:to|with)|chat with|connect with|get in touch with) (?:her|him|the manager)›",
+  "‹(?:kontaktier\\p{L}*|schreib\\p{L}*|erreich\\p{L}*|wend\\p{L}* (?:sie )?(?:sich|dich|euch) an) (?:sie|ihn|ihr|ihm)›(?! (?:gern\\p{L}* |einfach |ruhig |direkt )*(?:mich|mir)›)",
+  "‹(?:sie|ihn|ihr|ihm)› (?:(?!(?:mich|mir|uns)›)[\\p{L}'’-]+ ){0,5}?(?:erreichen|kontaktieren|anschreiben|schreiben)›(?! (?:mich|mir)›)",
+  "‹(?:la|le|lui) (?:contacter|joindre|ecrire)›|‹(?:contactez|joignez|ecrivez)-(?:la|le|lui)›",
+  "‹(?:связаться|свяжитесь|свяжись|пишите|напишите|пиши|напиши|обращайтесь|обратитесь) (?:с |со |к )?(?:ней|ним|ей|ему)›",
+  "‹(?:с ней|с ним|ей|ему) (?:можно |нужно )?(?:связаться|написать)›");
+const THIRD_CALL_ALL = new RegExp(THIRD_CALL.source, "giu");
+// A call toward the author marks the destination as their own ("You can reach me via the link below", "Ask me", "my profile 👇",
+// "I post my portfolio updates at…", "Ihr könnt mich hier erreichen", "Можете написать мне", "Vous pouvez me contacter").
+const DEST = "(?:(?:t\\.me|telegram\\.(?:me|dog))/|@[a-z]|https?://)";
+// A profile label stands right before the link or a pointer: "my profile 👇 t.me/…", "Mein Profil: @…", "мой профиль ниже".
+const LABEL_TO_LINK = `[^\\p{L}\\p{N}]{0,8}?(?:${DEST}|(?:is |ist |est |link |lien )?(?:below|here|unten|hier|ici|ci-dessous|ниже|тут|здесь)›)`;
+const SELF_CALL = any(
+  "‹(?:contact|reach(?: out to)?|message|text|dm|write(?: to)?|ask(?! me how)|ping|talk to|speak (?:to|with)|chat with|connect with|get in touch with|follow|add) me›",
+  `‹my (?:profile|dms?|pms?|inbox|handle|contacts?(?: details)?)›${LABEL_TO_LINK}`,
+  `‹(?:i|ich|je|я) (?:(?:also|regularly|usually|often|now|auch|regelmassig|aussi|regulierement|тоже|регулярно) )?(?:post|publish|poste|veroffentliche|publie|публикую|выкладываю|пишу)›[^.!?\\n]{0,80}?${DEST}`,
+  "‹(?:kontaktier\\p{L}*|schreib\\p{L}*|erreich\\p{L}*|meld\\p{L}*|frag\\p{L}*|folg\\p{L}*) (?:(?:sie|gern\\p{L}*|einfach|ruhig|direkt) )*(?:mich|mir)›",
+  "‹wend\\p{L}* (?:sie |euch |dich )?(?:sich |euch |dich )?an mich›",
+  "‹(?:mich|mir)› (?:(?!(?:sie|ihn|ihm|ihr)›)[\\p{L}'’-]+ ){0,5}?(?:erreichen|kontaktieren|anschreiben|schreiben|fragen|folgen|finden)›",
+  `‹mein\\p{L}* (?:profil|account)›${LABEL_TO_LINK}`,
+  "‹(?:me (?:contacter|joindre|ecrire|parler|suivre|demander)|m['’](?:ecrire|ajouter|envoyer)|(?:contactez|ecrivez|joignez|demandez|suivez|ajoutez|contacte|ecris|demande)-moi)›",
+  `‹mon profil›${LABEL_TO_LINK}`,
+  "‹(?:свяжитесь|связаться|свяжись|пишите|напишите|написать|писать|пиши|напиши|обращайтесь|обратитесь|обращаться|спрашивайте|спросите|задавайте вопросы) (?:со |с |ко |к )?(?:мной|мне)›",
+  "‹(?:мне|со мной|ко мне) (?:можно |нужно |лучше )?(?:написать|писать|связаться|обратиться|обращаться)›",
+  `‹мой профиль›${LABEL_TO_LINK}`);
+// A phrase handing over someone's link, running straight into it: "Hier ist der Link: t.me/…", "Here's her link 👇 @…", "Вот ссылка:".
+// A link handed over to her or him counts too ("Here's the link to her channel", "Вот ссылка на неё"); "Hier ist der Link zur
+// Gruppe: t.me/…" names what it links to and hands over nothing. "Schreiben Sie uns" calls toward a team, not the author.
+const LINK_HANDOVER = re(`‹(?:hier (?:ist )?(?:der |ihr |sein )?link|here(?: is|['’]s) (?:the |her |his )?link|voici (?:le |son )?lien|вот (?:её |ее |его )?ссылка)›(?:[^\\p{L}\\p{N}]{0,8}?${DEST}| (?:to (?:her|his)|zu (?:ihr|ihm|ihrem|ihrer|seinem|seiner)|(?:vers|de) (?:elle|lui|sa|son)|на (?:неё|нее|него|её|ее|его))›)`);
+const HER_HIM = re("‹(?:her|him|sie|ihn|ihr|ihm|la|le|lui|ней|ним|ей|ему)›");
+const CALL_NEGATED = re("‹(?:not|never|don['’]?t|didn['’]?t|can['’]?t|cannot|nicht|nie|niemals|kein\\p{L}*|ne|n['’]|pas|jamais|plus|не|нельзя|никогда)›");
+function payoutTestimonial(message: ModerationMessage, raw: string, text: string): boolean {
+  // Cheap checks first: most messages carry no link, and fewer still a withdrawal word.
+  const linked = CONTACT_LINK.test(text) || (message.inlineButtons?.length ?? 0) > 0 || message.embeddedLinks.some((url) => LINKED_URL.test(url));
+  if (!linked || !PAYOUT_WORD.test(text)) return false;
+  const words = text.replace(HANDLES, " ");
+  const lang = language(words, "en");
+  // A hidden text link or a URL button is a destination too.
+  const destinations = [text, ...message.embeddedLinks, ...(message.inlineButtons ?? []).map((button) => button.url)].join(" ").toLowerCase();
+  // An investing-named destination stands in for the platform word: "My first withdrawal went smoothly. Reach her: t.me/InvestwithEmma".
+  if (!TRADING.test(words) && !PLATFORM.test(words) && (lang === "en" || !TRADING_FR_DE.test(words)) && !investingNamed(destinations)) return false;
+  const undenied = text.replace(DENIAL, " ");
+  if (ADDRESS.test(text) || ADDRESSED.test(text) || VICTIM.test(undenied) || ABOUT_ADS.test(text) || /😂|🤣|😹/u.test(raw)
+    || lang !== "en" && (VICTIM_FR_DE.test(undenied) || warnedLead(undenied) || ABOUT_ADS_FR_DE.test(text))) return false;
+  const told = (lang === "en" ? claimSentences : claimSentencesFrDe)(text).filter((part) => !isQuestion(part));
+  // A call in a sentence about help, questions or support points at a service.
+  // A support desk never funnels through a private invite, a hidden link or a button.
+  const funnel = PRIVATE_INVITE.test(destinations) || message.embeddedLinks.length > 0 || (message.inlineButtons?.length ?? 0) > 0;
+  const asked = funnel ? told : told.filter((part) => !SERVICE_CALL.test(part));
+  const thirdCalls = asked.flatMap((part) => [...part.matchAll(THIRD_CALL_ALL)].filter((match) =>
+    !CALL_NEGATED.test(part.slice(Math.max(0, match.index! - 30), match.index) + match[0])).map((match) => match[0]));
+  const calls = thirdCalls.length > 0 || POINTER_CALL.test(asked.join("")) || LINK_HANDOVER.test(asked.join("")) || ARROW.test(raw);
+  if (!calls) return false;
+  const herCall = thirdCalls.some((call) => HER_HIM.test(call));
+  const payoutLang = (part: string): keyof typeof PAYOUT_NOUN => CYRILLIC.test(part) ? "ru" : language(part, lang);
+  // One pass from the end: whether a frozen account, or a payout that failed, waits or is held for a fee, is told in this sentence or
+  // any later one.
+  const frozenFrom: boolean[] = [];
+  for (let i = told.length - 1; i >= 0; i--) frozenFrom[i] = (frozenFrom[i + 1] ?? false) || tellsFrozen(told[i]!) || tellsPayoutFailed(told[i]!);
+  if (!told.some((part, i) => claimsPayout(part, told[i + 1] ?? "", frozenFrom[i]!, payoutLang(part), words, herCall))) return false;
+  // A call toward the author, with no call toward or credit to a third person ("thanks to Mrs Emma… follow me"), points at their
+  // own handle. "uns" is a team's, not the author's.
+  const own = OWN_LINK.test(text) || OWN_LABELLED.test(text) || lang !== "en" && OWN_LINK_FR_DE.test(text)
+    || thirdCalls.length === 0 && SELF_CALL.test(text) && !thirdParty(words, raw, lang);
+  if (!PRIVATE_INVITE.test(destinations) && (own || !investingNamed(destinations) && !thirdParty(words, raw, lang))) return false;
+  return !answersRequest(message, (source) => TRADING.test(source) || GAIN.test(source) || PLATFORM.test(source)
+    || language(source, "en") !== "en" && (TRADING_FR_DE.test(source) || GAIN_FR_DE.test(source)));
+}
+
 // What the message tells, without its questions. A funnel inside a question asks about it: "My friend wants to join
 // OnlyFans, is it worth it?". Punctuation inside a link or domain ("t.me/x_bot?start=1", "onlyfans.com?") ends no sentence.
 function toldPart(text: string): string {
@@ -2499,6 +2738,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (adultPromo(message, raw.replace(QUOTED, " "), text) || lonelyBait(raw.replace(QUOTED, " "), text)) return "adult_content_promo";
   if (bookCopyOffer(message, raw, text)) return "book_copy_offer";
   if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
+  if (payoutTestimonial(message, raw.replace(QUOTED, " "), text)) return "payout_testimonial";
   if (moneyBaitIn(message, raw, text) && !callsItACon(undenied)) return "money_bait";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;

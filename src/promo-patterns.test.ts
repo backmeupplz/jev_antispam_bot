@@ -18,6 +18,7 @@ import { profitTestimonialAnswer, profitTestimonialArrowAds, profitTestimonialCo
   profitTestimonialFrDeControls, profitTestimonialFrDeIncidents, profitTestimonialFrDeParaphrases, profitTestimonialFrDePointerAds,
   profitTestimonialFrDePointerControls, profitTestimonialFrDeReviewAds, profitTestimonialFrDeReviewControls, profitTestimonialIncident,
   profitTestimonialParaphrases, profitTestimonialRequest, profitTestimonialReviewAds } from "./fixtures/profit-testimonial";
+import { payoutTestimonialAds, payoutTestimonialControls, payoutTestimonialIncident } from "./fixtures/payout-testimonial";
 import { mindsetHookAnswer, mindsetHookControls, mindsetHookIncident, mindsetHookParaphrases, mindsetHookRequest, mindsetHookReview2Ads, mindsetHookReview2Controls, mindsetHookReview4Ads, mindsetHookReview4Controls, mindsetHookReview5Ads, mindsetHookReview5Controls, mindsetHookReview6Ads, mindsetHookReview6Controls, mindsetHookReview7Ads, mindsetHookReview7Controls, mindsetHookReview8Controls, mindsetHookReview9Ads, mindsetHookReview9Controls, mindsetHookReview10Ads, mindsetHookReview10Controls, mindsetHookReview11Ads, mindsetHookReview11Controls, mindsetHookReview12Controls, mindsetHookReview13Ads, mindsetHookReview13Controls, mindsetHookReview15Ads, mindsetHookReview15Controls, mindsetHookReview16Ads, mindsetHookReview16Controls, mindsetHookReview18Ads, mindsetHookReview18Controls, mindsetHookReview19Ads, mindsetHookReview19Controls, mindsetHookReviewAds,
   mindsetHookReviewControls, mindsetHookReviewReplies } from "./fixtures/mindset-hook";
 import {
@@ -401,6 +402,91 @@ test("a profit testimonial answering another member's trading request is a reque
   }
   expect(promoPattern(plain(profitTestimonialAnswer, memberReply("Vous connaissez un bon courtier pour les placements ?")))).toBeUndefined();
   expect(promoPattern(plain(profitTestimonialAnswer))).toBe(profit);
+});
+
+const payout = "payout_testimonial";
+test("the #716 amount-free payout testimonial matches standalone, as a channel-post comment and forwarded", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }]) expect(promoPattern(plain(payoutTestimonialIncident, patch))).toBe(payout);
+});
+
+test.each(payoutTestimonialAds)("#716 payout testimonial variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(payout);
+});
+
+test("#716 payout testimonial controls never match: own broker experience, own channel, warnings, hearsay, replies and complaints", () => {
+  expect(payoutTestimonialControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#716 each part is needed: a fine payout, an investing word, a call and an investing, private or credited destination", () => {
+  const ad = "I was skeptical about this platform at first. My first withdrawal went smoothly. You can reach her through the link below:\nhttps://t.me/InvestwithMara";
+  expect(promoPattern(plain(ad))).toBe(payout);
+  // No payout, or one that failed, was negated or is hearsay.
+  expect(promoPattern(plain(ad.replace("My first withdrawal went smoothly.", "Everything was organized.")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("went smoothly", "is stuck")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("went smoothly", "did not go smoothly")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("My first withdrawal", "They say the first withdrawal")))).toBeUndefined();
+  // No investing or platform word, and no investing-named destination standing in for one.
+  expect(promoPattern(plain(ad.replace("this platform", "this cafe").replace("InvestwithMara", "+AbCdEf123xyz")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("this platform", "this cafe")))).toBe(payout);
+  // No call or pointer.
+  expect(promoPattern(plain(ad.replace("You can reach her through the link below:", "Thanks for reading.")))).toBeUndefined();
+  // A public link that is not named for investing and credits no one; the author's own channel.
+  expect(promoPattern(plain(ad.replace("InvestwithMara", "mara_cooking")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("InvestwithMara", "mara_cooking").replace("reach her", "reach Mrs Mara")))).toBe(payout);
+  expect(promoPattern(plain(ad.replace("InvestwithMara", "+AbCdEf123xyz")))).toBe(payout);
+  expect(promoPattern(plain(ad.replace("You can reach her through the link below:", "My channel:")))).toBeUndefined();
+  // Through buttons or a hidden link too.
+  const bare = ad.replace("\nhttps://t.me/InvestwithMara", "");
+  expect(promoPattern(plain(bare))).toBeUndefined();
+  expect(promoPattern(plain(bare, { embeddedLinks: ["https://t.me/+AbCdEf123xyz"] }))).toBe(payout);
+});
+
+test("#716 a first payout without a first-person word needs a call toward her or him", () => {
+  const terse = "First withdrawal went smoothly, steady growth on the platform. Reach out to her 👇 t.me/InvestwithEmma";
+  expect(promoPattern(plain(terse))).toBe(payout);
+  expect(promoPattern(plain(terse.replace("Reach out to her", "Link below")))).toBeUndefined();
+  expect(promoPattern(plain(terse.replace("First withdrawal", "The withdrawal")))).toBeUndefined();
+});
+
+test("#716 a call toward a support desk or a chat admin, or a support-named contact, is no call", () => {
+  const ad = "My first withdrawal from this platform went smoothly. Contact her via the link below t.me/InvestwithMara";
+  expect(promoPattern(plain(ad))).toBe(payout);
+  expect(promoPattern(plain(ad.replace("Contact her", "For questions, contact her")))).toBe(payout);
+  expect(promoPattern(plain(ad.replace("Contact her", "She's our group admin, contact her")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("Contact her", "She's our group admin, contact her").replace("InvestwithMara", "+AbCdEf123")))).toBe(payout);
+  expect(promoPattern(plain(ad.replace("InvestwithMara", "InvestSupport")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("Contact her", "Contact them")))).toBe(payout); // the pointer still calls toward an investing name
+  expect(promoPattern(plain(ad.replace("Contact her via the link below", "Contact them")))).toBeUndefined();
+});
+
+test("#716 a call toward the author marks their own handle, unless a third person is called too or the link is a private invite", () => {
+  const own = "My first withdrawal from my broker went smoothly. You can reach me via the link below: t.me/max_investing";
+  expect(promoPattern(plain(own))).toBeUndefined();
+  expect(promoPattern(plain(own.replace("reach me", "reach her")))).toBe(payout);
+  expect(promoPattern(plain(own.replace("You can reach me", "Ask me anything, or reach her")))).toBe(payout);
+  expect(promoPattern(plain(own.replace("t.me/max_investing", "t.me/+AbCdEf123xyz")))).toBe(payout);
+  // German "Ihr"/"Sie" as the subject "you" is no third person; "sie" as the object still is.
+  const de = "Meine erste Auszahlung beim Broker lief problemlos. Ihr könnt mich hier erreichen: @max_invest";
+  expect(promoPattern(plain(de))).toBeUndefined();
+  expect(promoPattern(plain(de.replace("Ihr könnt mich", "Ihr könnt sie")))).toBe(payout);
+});
+
+test("#716 a payout testimonial answering another member's investing question is a requested answer", () => {
+  const answer = "My first withdrawal from this platform went smoothly, contact her via the link below t.me/InvestwithMara";
+  expect(promoPattern(plain(answer))).toBe(payout);
+  expect(promoPattern(plain(answer, memberReply("Which investment platform pays out reliably?")))).toBeUndefined();
+  expect(promoPattern(plain(answer, memberReply("Как дела у всех?")))).toBe(payout);
+});
+
+test("#716 payout testimonial matching stays fast on 4,096-character adversarial input", () => {
+  const inputs = ["my first withdrawal ".repeat(205), "sie konnen sie ".repeat(273), "ich habe ".repeat(455) + "ausgezahlt t.me/invest",
+    "platform withdrawal t.me/invest_x not ".repeat(105), "смотри, мой первый вывод ".repeat(160) + "t.me/invest", "@invest_a ".repeat(409),
+    "mon premier retrait s'est ".repeat(157) + "@invest_x", "they say ".repeat(455) + "my withdrawal went smoothly t.me/invest",
+    "my first withdrawal went smoothly. my a-b c-d ".repeat(90) + "t.me/invest_x", "if anyone needs ".repeat(256) + "reach her t.me/invest_x",
+    "first withdrawal ".repeat(240) + "reach out to her t.me/invest_x"].map((text) => text.slice(0, 4096));
+  for (const text of inputs) {
+    expect(fastest(() => promoPattern(plain(text)))).toBeLessThan(LINEAR_MS);
+  }
 });
 
 test("profit testimonial matching stays fast on 4,096-character adversarial input", () => {

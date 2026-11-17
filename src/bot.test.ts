@@ -37,6 +37,7 @@ import { botTestimonialFloorIncident, botTestimonialIncident, sideGigIncident } 
 import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, cryptoTradeRepliedAnswers } from "./fixtures/crypto-trade-asks";
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
+import { payoutTestimonialAds, payoutTestimonialControls, payoutTestimonialIncident } from "./fixtures/payout-testimonial";
 import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
   profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
@@ -2851,6 +2852,30 @@ test("French and German profit testimonials are deleted by the pattern; their co
   expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.chatId, log.pattern, log.confidence, log.decision])).toEqual([
     [group.id, "profit_testimonial", 0.705, "pattern_delete"], [groupB.id, "profit_testimonial", 0.696, "pattern_delete"],
   ]);
+  await h.stats.stop();
+});
+
+// #716: the amount-free payout testimonial. No score was captured (training capture is off); its reconstruction scored 0.6704 on the
+// live model, and the English variant 0.7342.
+test("the #716 payout testimonial is deleted by its pattern, forwarded or not; controls stay kept; telemetry carries no text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6704));
+  await h.send({ text: payoutTestimonialIncident, from: forwardedUser, forward_origin: forwarded });
+  h.setAnswer(keepAt(0.7342));
+  await h.send({ chat: groupB, text: payoutTestimonialAds[2] });
+  h.setAnswer(keepAt(0.79));
+  const controls: number[] = [];
+  for (const [index, text] of payoutTestimonialControls.entries()) controls.push(await h.send({ chat: [group, groupB, groupC][index % 3], text }));
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: payoutTestimonialIncident });
+  expect(controls).toHaveLength(payoutTestimonialControls.length);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected" && controls.includes(log.messageId as number))).toEqual([]);
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.messageId, log.pattern, log.confidence, log.decision])).toEqual([
+    [1, "payout_testimonial", 0.6704, "pattern_delete"], [2, "payout_testimonial", 0.7342, "pattern_delete"], [floor, "payout_testimonial", 0.19, "keep"],
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([[1, "payout_testimonial"], [2, "payout_testimonial"]]);
+  expect(JSON.stringify(h.logs)).not.toContain("Auszahlung");
   await h.stats.stop();
 });
 
