@@ -41,7 +41,7 @@ jobs:
         run: |
           froms=$(grep -E '^FROM ' Dockerfile)
           echo "$froms"
-          if [ -z "$froms" ] || echo "$froms" | grep -v -E "^FROM oven/bun:${BUN_VERSION}-slim( AS [a-z]+)?$"; then
+          if [ -z "$froms" ] || echo "$froms" | grep -v -E "^FROM oven/bun:${BUN_VERSION}-slim(@sha256:[0-9a-f]{64})?( AS [a-z]+)?$"; then
             echo "::error file=Dockerfile::every FROM must be oven/bun:${BUN_VERSION}-slim"
             exit 1
           fi
