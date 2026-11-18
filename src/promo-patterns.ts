@@ -17,6 +17,9 @@ import type { ModerationMessage } from "./spam";
 // links the same actor's vague odd-job opener to it (`odd_job_linked`, decided in src/bot.ts).
 // #634 adds Chinese part-time-job recruitment (`cjk_job_spam`) and the bot-summon opener (`bot_summon`: a message of nothing but
 // two or more bot mentions), and links the same actor's next link or handle to a confirmed opener (`bot_summon_linked`, src/bot.ts).
+// #725 adds coded courier recruitment (`courier_recruitment`): a need for a driver or courier dressed in road romance or a dismissal
+// of money ("Нам нужен надежный водитель с тонким чувством прекрасного… встречать рассветы и провожать закаты"), naming no task,
+// date, place, vehicle, licence or employer.
 // #668 adds the "chat is moving" lure (`chat_moved_lure`): the chat or group is said to move, and the reader is told to tap this
 // text, press Start, or open a bot's ?start= link, the guest-bot reply a hijacked member's bot summon brings in.
 export type PromoPattern =
@@ -30,6 +33,7 @@ export type PromoPattern =
   | "payout_testimonial"
   | "mindset_hook"
   | "money_bait"
+  | "courier_recruitment"
   | "odd_job_linked"
   | "cjk_job_spam"
   | "cjk_job_mention"
@@ -2381,6 +2385,207 @@ export function oddJobOpener(message: ModerationMessage): boolean {
   return Boolean(raw) && ODD_JOB.test(promoText(raw.replace(QUOTED, " ")));
 }
 
+// --- #725 courier recruitment: coded drug-courier recruitment written as road romance. ---
+// "Нам нужен надежный водитель с тонким чувством прекрасного… в пути наслаждаться пейзажами, встречать рассветы и провожать
+// закаты": an unsolicited need for a driver or courier, dressed in road romance or a dismissal of money, that names no task,
+// date, place, trip, vehicle, licence or employer and asks the chat nothing. A member's real hire names what the driver is for
+// ("на свадьбу 14 июня", "для поездки по Алтаю"), a job ad names the truck or the company, and a travel story needs no driver.
+export const COURIER_LENGTH = 700;
+const COURIER_ROLE = "(?:водител(?:ь|я|и|ей)|водил(?:а|у|ы)|курьер(?:а|ы|ов)?|перевозчик(?:а|и|ов)?|драйвер(?:а|ы|ов)?|экспедитор(?:а|ы|ов)?|человек(?:а)? (?:с (?:личным )?(?:авто|машиной|автомобилем)|за рул[её]м))›";
+// Adjectives (and a few adverbs) may stand between the need and the role, never a noun: "ищу работу водителя" seeks work.
+const COURIER_ADJ = "(?:[\\p{L}-]+(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ую|юю|ых|их)|очень|срочно|сейчас|просто|тоже)";
+const COURIER_ADVERB = "(?:очень|срочно|сейчас|снова|тоже|активно|давно|ещ[её]|постоянно|по-прежнему)";
+const COURIER_TEAM = "(?:в (?:нашу |свою |дружную )?команду\\s)";
+// The need opens its clause or follows the author ("нам", "мне", "мы") or the team: "Сыну нужен водитель" and "нам не нужен"
+// are no need.
+const COURIER_NEED = re(`(?:^\\s*|[,:;—–-]\\s?|‹(?:нам|мне|мы)\\s|‹${COURIER_TEAM})(?:${COURIER_ADVERB}\\s)?`
+  + `(?:нужен|нужна|нужны|требуется|требуются|ищем|ищу|набираем|приглашаем|в поиске|в поисках)\\s${COURIER_TEAM}?`
+  + `(?:${COURIER_ADJ},?\\s){0,3}${COURIER_ROLE}`);
+// Road romance and a dismissal of money: the bait sells the trip, not the job. Two distinct kinds are needed. The last kind
+// (money) carries its own negation; the others do not count when their clause negates them before the cue ("смотрит на дорогу,
+// а не на закаты", "не будет любоваться рассветами"), except "не только".
+const COURIER_ALLURE = [
+  re("‹рассвет"),
+  re("‹закат"),
+  re("‹пейзаж|‹красот\\p{L}* (?:природы|дорог|мира)›|‹виды за окном›"),
+  re("‹(?:чувств\\p{L}*|ценит\\p{L}*|ценящ\\p{L}*|видит|видеть) (?:\\p{L}+ )?прекрасн|‹прекрасное›"),
+  re("‹романтик\\p{L}* (?:дорог|пут|трасс)|‹душ\\p{L}* путешественник|‹свобод\\p{L}*(?!\\p{L})(?!\\s(?:график|графика|графиком|режим|режимом)›)|‹приключени|‹дорог\\p{L}* (?:зов|манит)|‹(?:любит|любишь|любящ\\p{L}*) (?:дорогу|путешеств|трассу)|‹новые (?:города|места)›"),
+];
+const COURIER_MONEY = re("‹цифр\\p{L}* на сч[её]т|‹(?:деньги|доход|заработок) (?:это |[—–-] )?не главное›|‹не (?:только )?в деньгах›|‹какая (?:\\p{L}+ ){0,2}?крипт|‹(?:зачем|нафиг|нахрен) (?:\\p{L}+ ){0,2}?крипт|‹(?:забудь|забудьте|хватит|брось|бросай)\\p{L}* (?:\\p{L}+ )?(?:крипт|бирж|трейд|офис)|‹(?:сидеть|торчать) в офисе›|‹истинн\\p{L}* ценност");
+// "не"/"ни" up to two words (and one list item) before the cue, or "а не" anywhere before it in the clause; "не … ни" is a
+// double negation ("чтобы не пропускать ни одного рассвета") and "не только" negates nothing.
+const COURIER_NEGATED = re("(?:‹(?:не(?! только›)|ни)\\s(?:[\\p{L}-]+\\s){0,2}(?:[\\p{L}-]+\\s(?:и|или)\\s)?$|‹а не›)");
+const DOUBLE_NEGATION = re("‹не›(?:\\s[\\p{L}-]+){0,3}\\sни›");
+const COURIER_CLAUSES = /[,;:—–.!?\n]|\s-\s/u;
+function allureKinds(text: string): number {
+  const clauses = text.split(COURIER_CLAUSES);
+  return COURIER_ALLURE.filter((cue) => clauses.some((clause) => {
+    const found = cue.exec(clause);
+    if (found === null) return false;
+    const before = clause.slice(0, found.index);
+    return !COURIER_NEGATED.test(before) || DOUBLE_NEGATION.test(before);
+  })).length + (COURIER_MONEY.test(text) ? 1 : 0);
+}
+// What the driver is for, where or for whom, and who employs them: a real hire, a member's trip or a job ad.
+// A count or a range in digits or words ("на две недели", "на трое суток", "на 2-3 дня"); "полдня" is its own word.
+const COUNT = "(?:пару|несколько|один|одн[уа]|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|полтора|полторы|двое|трое|четверо|пятеро)";
+const MONTH = "(?:январ|феврал|март|апрел|ма[йея]›|июн|июл|август|сентябр|октябр|ноябр|декабр)";
+const COURIER_CONCRETE = any(
+  "‹категори\\p{L}*\\s[a-eавсде]{1,3}›|‹кат\\.?\\s?[a-eавсде]{1,2}›|‹права (?:кат|категор)",
+  "‹(?:фур(?:а|у|ы|ой|е|ах)|грузовик|газел|тягач|автобус|микроавтобус|такси|таксо|эвакуатор|самосвал|манипулятор|спецтехник|погрузчик|камаз|минивэн|катафалк|дальнобой|кемпер|автодом|дом\\p{L}* на кол[её]сах)",
+  // An employer by its legal form or name ("ООО", "компания «Вектор»"); "в дружную компанию" names nobody.
+  "‹(?:ооо|ип|оао|зао|ао)›|‹компани\\p{L}*\\s?[«\"“]|‹(?:логистик|склад|магазин|ресторан|служб\\p{L}* доставки)",
+  "\\+?\\d(?:[\\s()-]?\\d){9,13}",
+  `‹\\d{1,2}\\s?${MONTH}|‹\\d{1,2}:\\d{2}›|‹в \\d{1,2} (?:утра|вечера|ночи|час)|‹на (?:(?:\\d+|${COUNT})(?:\\s?[-–—]\\s?(?:\\d+|${COUNT}))? )?(?:час|дн[яей]|день|ден[её]к|недел|месяц|сутки|суток)|‹на пол(?:часа|дня|суток|недели|месяца)›`,
+  "‹(?:свадьб|переезд|похорон|юбиле|выпускн|экскурси|трансфер|корпоратив|мероприяти|праздник|рыбалк|аэропорт|вокзал|лагер|школ|садик|инструктор|фотосесси|фотосет|фототур|фотопрогулк|(?:фото|видео)?съ[её]м(?:к|ок)|фотограф|(?:по)?сним(?:ать|аю|аем|у|ем)›|палатк|бензин\\p{L}* пополам›|девичник|мальчишник|вечеринк|банкет|дач(?:а|у|е|и|ей)›)",
+  "‹(?:отвезти|отвез[её]т|в[её]з|везл[аи]|возил\\p{L}*|свозить|свозит|довезти|довез[её]т|подвезти|подвез[её]т|встретить|забрать|заберёт|заберет|покатать|покатает|прокатить|прокатит|возить|возит|катать|катает)\\s(?:\\p{L}+\\s)?(?:нас|меня|е[её]|его|детей|ребенка|ребёнка|гостей|семью|родителей|маму|папу|бабушку|дедушку|жену|мужа|туристов|группу)›",
+  // The author's own trip and a referral asked of the chat: the bait never asks for one.
+  "‹(?:хотим|хочу|хотели|мечтаем|мечтаю|планируем|собираемся|поедем|едем|летим|путешествуем|путешествую)›",
+  "‹(?:посоветуйте|посоветуете|подскажите|порекомендуйте|кто может посоветовать)›",
+  // The author does not drive ("Сами не водим"), an overnight trip to the mountains, or a job ad's schedule and pay.
+  "‹(?:сами|сам|сама) (?:\\p{L}+ )?не (?:водим|вожу|водит|ездим|умеем|умею)›", "‹с ноч[её]вкой›|‹в горы›",
+  "‹график \\d\\s?/\\s?\\d|‹сдельн|‹(?:хорош|высок|стабильн|бел|достойн)\\p{L}* (?:зарплат|заработн)",
+  // A member's own trip shared with a companion ("водитель-напарник для автопутешествия, расходы пополам", "на нашу экспедицию,
+  // оплата бензина наша"), a sober driver home, or a volunteer for a charity.
+  // Only with the member's own trip ("на нашу экспедицию"): the bait sells "путешествия" and "экспедицию за мечтой" too.
+  "‹автопутешестви|‹(?:на|в) (?:нашу|свою|мою) экспедици|‹расходы (?:\\p{L}+ )?пополам›|‹оплат\\p{L}* бензин|‹бензин\\p{L}* (?:наш|за нами|оплачива)",
+  "‹трезв|‹на обратн\\p{L}* (?:дорог|пут)|‹волонт[её]р|‹фонд(?:а|у|ом|е)?›|‹благотвор",
+);
+// In the need's own sentence only, since the bait's copy uses them too ("Сегодня ты встречаешь рассветы, а завтра…", "Каждая
+// поездка — это рассветы", "Если хочется встречать рассветы — это к нам"): a day, a month, a trip, a guide or a wish.
+const COURIER_NEED_CONCRETE = any("‹(?:завтра|сегодня|послезавтра|вчера|понедельник|вторник|сред[уы]›|четверг|пятниц|суббот|воскресень|выходн)",
+  `‹(?:в|во|с|до) ${MONTH}`, "‹(?:(?:тур|авто)?поездк|турпох|маршрут|гид›|гида›|гидом›|тур›|тура›|туре›|туром›|хотелось|хочется)");
+// A place by name after a preposition, in the raw text ("на Байкал", "по Алтаю", "в Карелию", "над Сулаком"): the bait names
+// none. Messengers are no place ("пиши в Телеграм", "в ЛС").
+const PLACE_NAMED = /(?<![\p{L}\p{N}])(?:на|в|во|по|до|через|из|под|над|у|к|за|около|возле|вокруг)\s+(?!(?:Вы|Вас|Вам|Ваш\p{L}*|Вами|Телег\p{L}*|Вотсап\p{L}*|Ватсап\p{L}*|Вайбер\p{L}*|Инст\p{L}*|Контакт\p{L}*|Директ\p{L}*|Личк\p{L}*|Личн\p{L}*|Команд\p{L}*)(?![\p{L}]))[А-ЯЁ][а-яё]+/u;
+// A member asking about the paste: "Что это вообще значит?", "Кто знает, что за контора?", "Это реально работа?". The bait's own
+// rhetorical questions ("Какая может быть крипта, дружище?", "Надоел офис?", "Ты с нами?") ask none of these.
+// "что такое"/"что за" after "знает", "понимаешь", "узнать" or "неважно" is the bait's own copy ("Тот, кто знает, что такое
+// настоящая свобода", "Хочешь узнать, что такое свобода?").
+// …unless a "не" asks it ("Не знаешь, что за контора?").
+const NOT_ASKED = "(?<!(?<!‹не\\s)‹(?:знает|знаешь|знают|понимает|понимаешь|понимают|узнать|узнаешь|узнаете|помнит|помнишь|неважно|важно|покажем|расскажем),?\\s)";
+const MEMBER_ASKS = any(`${NOT_ASKED}‹что (?:это|за|значит|такое)›`, "‹что (?:думаете|скажете)›",
+  "‹как вам (?:\\p{L}+ )?(?:такое|это|подобное)›",
+  "‹кто(?:-(?:нибудь|то))? (?:знает|понял|сталкивал\\p{L}*|получал|пишет|это|такие|их)›", "‹кто (?:\\p{L}+ )?такое›",
+  "‹кто-нибудь›(?! (?:из (?:вас|нас) )?(?:готов|хочет|желает|с нами)›)", "‹это (?:\\p{L}+ )?(?:реально|нормально|правда|развод|законно|легально|серь[её]зно)›", "‹(?:правда|серь[её]зно|реально)\\s?\\?",
+  "‹(?:куда|кому) (?:жаловаться|писать|сообщить)›", "‹(?:зачем|почему|откуда) (?:им|они|это|такое|эти|этот)›", "‹(?:как|что) (?:думаете|считаете)›",
+  "‹(?:стоит ли|реально ли|не знаете|подскаж|посовету)", // Only a pronoun that closes the question: "Вы видели такие закаты?" is the bait's own rhetoric.
+  "‹(?:видели|встречали|сталкивались|получали) (?:\\p{L}+ )?(?:такое|это|подобное)(?=\\s*(?:[?!.,…]|$))",
+  "‹(?:такое|подобное) (?:\\p{L}+ )?(?:видели|встречали|получали)›",
+  // "Кому-то ещё приходило?", "У кого-то было такое?": a member asks the chat whether others got the paste.
+  "‹кому-(?:то|нибудь) (?:ещ[её] |тоже )?(?:приходил|писал|присылал|пришл)", "‹у кого-(?:то|нибудь) (?:\\p{L}+ )?(?:было|такое)›");
+// After the need, a question about the cargo, the pay or who falls for it reacts to the paste ("Что везти-то?", "Кто на такое
+// ведётся?", "Сколько за это дают?", "Платят хоть?"), unless it asks the reader ("Сколько тебе платят в офисе?" opens the bait).
+const ASKS_AFTER = any("‹(?:везти|везут|возить|везу|повезу)›", "‹(?:по)?вед(?:[её]тся|утся)›",
+  "‹сколько (?:\\p{L}+ )?(?:плат|дают|получа)|‹сколько за это›|‹(?:платят|платит|заплатят)›|‹(?:зарплат|оплат)\\p{L}*|‹по деньгам›");
+// The bait calls its reader "ты" ("дружище"); a member asking the chat says "вы" ("Вы знаете, сколько за это платят?").
+const ASKS_READER = any("‹(?:ты|тебе|тебя|тобой|твой|твоей|твоя|твою|твоё|твое|твоём|твоем|твоего|твоих|твои)›", "‹сколько можно›");
+// A lead that scorns the paste ("Опять этот бред: …", "Что за странные объявления: …"): a scorn word anywhere; "опять", "снова"
+// or "очередной" with a demonstrative or a sender before a colon ("Снова в пути: …" is the bait's); a sentence that opens with
+// "что за", "что это" or "это что", asked or not ("Что за фигня", "Это что вообще").
+const COURIER_SCORN = any("‹(?:бред|дичь|хрень|херн|жесть|ерунд|чушь|треш|кринж|фигн|маразм|ерес|лохотрон|подозрительн|мутн(?:ая|ый|ое|ые|ой|ую)›|ловушк|скам›|скамер)",
+  "(?:^|[.!?\\n])[^.!?\\n:]{0,40}‹(?:опять|снова|очередн\\p{L}*)›[^.!?\\n:]{0,40}‹(?:этот|эта|это|эти|такое|такие|они|он|кто-то|пишут|прислали|рассылают)›[^.!?\\n:]{0,40}:",
+  `(?:^|[.!?\\n])[^.!?\\n:]{0,40}${NOT_ASKED}‹что (?:за|такое)›[^.!?\\n:]{0,40}:`,
+  "(?:^|[.!?\\n])\\s*(?:(?:ну|а|и|блин|ох|так|ребят|ребята|народ|люди|слушайте|админ\\p{L}*),?\\s)?(?:что (?:за|это|такое)|это что)›(?!-)");
+// Talk about the bait rather than the bait: who it recruits, that it is spam or a crime, a warning, a joke about it, or a paste
+// someone received or copied.
+const COURIER_TALK = any("‹(?:нарко|кладмен|криминал|полици|мвд|уголовк|стать(?:я|и|ю)›|сажают|посадят|колони|реклам|спам|бот(?:ы|ов)?›|лол›|ахах|хаха|ха-ха|ржу›|ору›)",
+  "‹будь(?:те)? (?:внимательн|бдительн|аккуратн|осторожн|начеку›)", "‹(?:вот )?(?:такое|что|это) (?:\\p{L}+ )?(?:пишут|присылают|рассылают|кидают|постят|приход(?:ит|ят|ило)|пришл[оаи]|прислали)›",
+  "‹(?:пишут|рассылают|присылают|шлют|кидают|спамят) (?:\\p{L}+ )?(?:в личк|в лс›|всем›)",
+  "‹(?:такие|такого|таких|подобн\\p{L}*|этот|эти) (?:\\p{L}+ )?(?:пост|сообщени|объявлени|текст)",
+  "‹(?:скинул\\p{L}*|переслал\\p{L}*|кинул\\p{L}*|прислал\\p{L}*|написал\\p{L}*|пишут|пришл[оаи]|пришел|получил\\p{L}*)\\s?:",
+  // A relay verb before the colon that pastes it, up to two words after it ("в чатах рассылают: …", "Опять постят: …", "В группы кидают такое: …").
+  "‹(?:рассыла(?:ют|ет|ется|ются|л\\p{L}*)|присыла(?:ют|ет|л\\p{L}*)|кида(?:ют|ет|л\\p{L}*)|скидыва(?:ют|ет|л\\p{L}*)|пост(?:ят|ит|ил\\p{L}*)|шлют|распространя(?:ют|ет|л\\p{L}*)|спам(?:ят|ит|ил\\p{L}*)|публику(?:ют|ет)|выкладыва(?:ют|ет|л\\p{L}*))›(?:\\s[\\p{L}-]+){0,2}\\s?:",
+  "‹из (?:соседнего|другого|того|какого-то|одного) (?:чата|канала|паблика)›|‹скопировал\\p{L}*");
+// A lead before the first need is talk about the paste when it alerts, relays or receives ("Внимание, родители!", "Пришло в личку
+// —", "Получила такое сообщение —", "Скрин из лички:", "Смотрите что пришло"), and so is a line or sentence before it that opens on
+// no greeting, header or dismissal and carries no allure of its own ("Я в шоке."): the bait opens on the need, a greeting
+// ("Доброго времени суток!", "Всем привет!"), a header ("Срочно!", "Вакансия:"), a rhetorical question or its own allure and money
+// dismissal ("Какая может быть крипта, дружище?", "Деньги — не главное, дружище.", "Крипта? Забудь, дружище.", "Сколько тебе платят
+// в офисе? Копейки.").
+// Receiving the paste counts in a question too, with a word that points at it ("Вам тоже пришло?", "Тебе тоже скинули?",
+// "Получали такое сообщение?"); the bait asks "Устал от сообщений начальника?" or "Не пришло ли время сменить работу?".
+const LEAD_RECEIPT = any("‹(?:приход|пришл|прислал|присылал|получил|получал|скинул|кинул|подкинул|отправил(?:а|и)?›|пишут›|прилетел|сообщени|в личк|в лс›)");
+// Showing, finding or relaying it only outside a question: the bait asks "Ещё не нашёл работу мечты?".
+// …or a "вы" or the chat ("Вам пришло?", "Кому пришло?", "Получали?"): the bait only ever speaks to "ты".
+const LEAD_POINTS = re("‹(?:тоже|ещ[её]|такое|такие|такую|это|подобное|вам|вас|кому|кого|кто|получали|прислали|скинули|присылали)›");
+const LEAD_ALERT = any("‹(?:предложил(?:и|а)?›|смотрите|гляньте|зацените|полюбуйтесь|цитат|в тг›|в телег|написал|показал|нашл|наш[её]л›|увидел|ход(?:ит|ят|ило)›|гуля(?:ет|ют|ло)›|вот (?:такое|это|что)›)",
+  "‹(?:наткнул|попал(?:ось|ся|ась|ось)›|видел(?:а|и)?›|вижу›|встретил(?:а|и)? в›|распространя|крутит(?:ся|ь)›|по чатам›|из (?:чата|группы|канала)›)",
+  "‹(?:держите|обсудим|обсуждаем)›|‹вот\\s?:");
+// Anywhere, also after the paste ("Родители, проверьте телефоны детей!", "⚠️ Внимание ⚠️"); the bait addresses none of them.
+// "Внимание, вакансия!" is the bait's own header.
+const PASTE_ALERT = any("‹(?:внимани(?!\\p{L}*[,!:]*\\s*ваканс)|родител|подрост|дет(?:и|ей|ям|ьми)›|ребён|ребен|сын(?:у|а|ом)?›|доч(?:ь|ке|ка|ери|ерью)›|скрин|переписк|пересла|провер(?:яй|ьте|ить)|шок|ужас|кошмар|капец)");
+const LEAD_ENDS = /(?<=[.!?\n:…])/u;
+// A short line that opens on a greeting, an address, a header or the bait's dismissal; the first word is read, so nothing backtracks.
+// A greeting may run on when it exclaims ("Добрый день, уважаемые участники чата!", but not "Всем привет, мне тут такое
+// предложили:"); an address or header is a short line.
+const LEAD_GREETS = re("^\\s*(?:всем|привет|приветству|здравств|добр|хорош(?:его|ей|их)›|хей›|хай›|салют|хелло|салам|ассалам|йоу›|hello|hi›|hey›)");
+const LEAD_OPENS = re("^\\s*(?:нов(?:ая|ые)›|друзья›|друг›|ребят|народ›|бро›|дружище|дорог(?:ие|ой|ая)›|уважаем|коллеги|братья|братан|пацаны|господа|ваканс|работа›|подработк|срочн|отличн|новост|надоел|устал|рутин|забудь|хватит|брос|копейк|водител|курьер)");
+// Up to four words, without sarcasm ("Работа курьером, ага."): a longer line is talk ("Народ, вот такое ходит по чатам.").
+const LEAD_SARCASM = re("‹(?:ага|угу|ну-ну|конечно|щас|ну да|да-да|да уж|блин)›");
+function leadOpens(segment: string): boolean {
+  const short = segment.trim().split(/\s+/u).length <= 4;
+  return !LEAD_SARCASM.test(segment) && (LEAD_GREETS.test(segment) && (short || /!\s*$/u.test(segment)) || short && LEAD_OPENS.test(segment));
+}
+// The bait's own statement voice, at any length: a dismissal of crypto, money or work ("Крипта — это прошлое.", "Крипта уже не
+// то.", "Трейдинг — не твоё.", "Офис — это скучно.", "Это не жизнь.", "Деньги — это не всё.", "Крипта подождёт.", "Не про крипту."),
+// an address ("дружище", "бро") or a job header ("Есть работа.", "Есть интересное предложение.", "Высокий доход.", "Свободный
+// график.", "Внимание, вакансия!"). A receipt or a relay in the same line still makes it talk, and a vacancy counts only as a
+// bare header line ("Подозрительная вакансия:" is a member's warning).
+const LEAD_VOICE = any("‹(?:дружище|бро|братан|братишка)›",
+  "‹не тво(?:[её]|и|я)›|‹это прошлое›|‹прошлый век›|‹уже не то›|‹подожд[её]т›|‹не жизнь›|‹не (?:вс[её]|главное)›|‹скучн|‹отстой›(?!,? а не›)|‹для лохов›",
+  "‹не про (?:крипт|бирж|трейд|деньг|работ|офис)",
+  "^\\s*есть (?:\\p{L}+ )?(?:работа|предложени|ваканси|тема)|^\\s*(?:высок|хорош|стабильн|достойн)\\p{L}* (?:доход|заработ)|^\\s*свободн\\p{L}* график",
+  "^\\s*(?:(?:топ|нов(?:ая|ые)|срочн(?:ая|ые)|горяч(?:ая|ие)|внимание)[,!:]?\\s*)?ваканси[яи][!.:]?\\s*$");
+function leadsAboutPaste(lead: string): boolean {
+  return lead.split(LEAD_ENDS).some((segment) => /\?\s*$/u.test(segment) ? LEAD_RECEIPT.test(segment) && LEAD_POINTS.test(segment)
+    : LEAD_RECEIPT.test(segment) || LEAD_ALERT.test(segment)
+    || /[.!:…\n]\s*$/u.test(segment) && /\p{L}/u.test(segment) && !leadOpens(segment) && allureKinds(segment) === 0
+      && (LEAD_SARCASM.test(segment) || !LEAD_VOICE.test(segment)));
+}
+// After the bait's last line, a member's receipt or reaction ("Мне пришло сегодня.", "Жене написали.", "Забанил отправителя.",
+// "Офигеть.") is talk about the paste unless it is the bait's own call to write ("Пиши в личку", "Кому интересно — в лс"); a bare
+// "в лс" is the bait's pointer, not a receipt. A question is a member asking only when it asks the chat about the paste ("Что
+// делать?", "Кто рассылает?", "Знакомо?", "Откуда у них мой номер?", "Вам тоже?"): the bait closes on its own questions ("Есть
+// желающие?", "Кто со мной?", "Ты с нами?", "Готов?").
+const TRAIL_TALK = any("‹(?:приход(?:ит|ят|ило|или)|пришл(?:о|а|и)|пришел|пришёл|прислал\\p{L}*|присылал\\p{L}*|прилетел\\p{L}*|скинул\\p{L}*|кинул\\p{L}*|подкинул\\p{L}*|получил\\p{L}*|получал\\p{L}*|написал\\p{L}*|переслал\\p{L}*|отправил(?:а|и)?|пишут)›",
+  "‹(?:за)?банил|‹забан|‹(?:за)?блокир|‹заблочи|‹отправител|‹(?:аккуратн|осторожн)ее›|‹удали(?:л|ла|ли|те)?›|‹офиге|‹обалде|‹жуть›|‹мда›|‹ну и ну›|‹мне тоже›");
+const BAIT_CTA = any("‹(?:на)?пиш(?:и|ите)›|‹отпиш|‹стучи|‹обращай|‹подробн|‹детал|‹вопрос|‹жд(?:у|[её]м)›|‹отправ(?:ь|ьте)›|‹интерес|‹заинтересова|‹залета|‹скинь|‹отклик|‹связь›|‹услови");
+const TRAIL_ASKS = any("‹что делать›|‹кто (?:\\p{L}+ )?(?:рассылает|пишет|присылает|шл[её]т|спамит)›|‹знакомо›|‹откуда (?:у них|они|это)|‹(?:вы|вам|вас|ваш\\p{L}*)›");
+const BAIT_CLOSER = any("‹(?:готов\\p{L}*|хочешь|интересно|интересует|заинтересова\\p{L}*|согласен|в деле|с нами|поехали|вперед|вперёд)›",
+  "\\p{L}{2,}(?:ешь|[её]шь|ишь)›");
+function trailsAboutPaste(part: string): boolean {
+  if (isQuestion(part)) return (MEMBER_ASKS.test(part) || TRAIL_ASKS.test(part)) && !ASKS_READER.test(part) && !BAIT_CLOSER.test(part);
+  return TRAIL_TALK.test(part) && !BAIT_CTA.test(part);
+}
+function lastBaitLine(parts: string[]): number {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i]!;
+    if (COURIER_NEED.test(part) || COURIER_MONEY.test(part) || COURIER_ALLURE.some((cue) => cue.test(part))) return i;
+  }
+  return -1;
+}
+// Laughter or an eye-roll at the paste (normalization drops emoji, so the raw text is read).
+const LAUGHS = /[😂🤣🙄🤡😅]/u;
+// A reply to another member asking about drivers or work is a requested answer.
+const DRIVER_TOPIC = any("‹(?:водител|водил[аы]›|курьер|перевоз|драйвер|экспедитор|подраб|работ)");
+function courierRecruitment(message: ModerationMessage, raw: string, text: string): boolean {
+  if (raw.length > COURIER_LENGTH || /^\s*@/u.test(raw) || ADDRESSED.test(text)) return false;
+  const parts = sentences(text);
+  const needs = parts.filter((part) => !isQuestion(part) && COURIER_NEED.test(part));
+  if (!needs.length || allureKinds(text) < 2) return false;
+  const firstNeed = parts.indexOf(needs[0]!);
+  const needAt = COURIER_NEED.exec(needs[0]!)!.index;
+  const needLead = needs[0]!.slice(0, needAt) + /^\s*[:…]?/u.exec(needs[0]!.slice(needAt))![0];
+  if (leadsAboutPaste(parts.slice(0, firstNeed).join("") + needLead)) return false;
+  if (parts.slice(lastBaitLine(parts) + 1).some(trailsAboutPaste)) return false;
+  if (parts.some((part, i) => isQuestion(part) && (MEMBER_ASKS.test(part)
+    || i > firstNeed && ASKS_AFTER.test(part) && !ASKS_READER.test(part)))) return false;
+  if (COURIER_CONCRETE.test(text) || needs.some((part) => COURIER_NEED_CONCRETE.test(part)) || PLACE_NAMED.test(raw)
+    || COURIER_TALK.test(text) || PASTE_ALERT.test(text) || COURIER_SCORN.test(text) || LAUGHS.test(raw) || seeksWork(text) || ownJob(text)) return false;
+  return !answersRequest(message, (source) => DRIVER_TOPIC.test(source));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -2740,6 +2945,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (profitTestimonial(message, raw.replace(QUOTED, " "), text)) return "profit_testimonial";
   if (payoutTestimonial(message, raw.replace(QUOTED, " "), text)) return "payout_testimonial";
   if (moneyBaitIn(message, raw, text) && !callsItACon(undenied)) return "money_bait";
+  if (courierRecruitment(message, raw, text)) return "courier_recruitment";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {

@@ -26,10 +26,11 @@ import {
   cjkJobMentionRemarks,
 } from "./fixtures/cjk-job-spam";
 import {
-  botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
+  botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, COURIER_LENGTH, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
   promoText,
 } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
+import { courierRecruitmentAds, courierRecruitmentAnswer, courierRecruitmentControls, courierRecruitmentIncident, courierRecruitmentRequest, courierRecruitmentReview2Ads, courierRecruitmentReview2Controls, courierRecruitmentReview3Ads, courierRecruitmentReview3Controls, courierRecruitmentReview4Ads, courierRecruitmentReview4Controls, courierRecruitmentReview5Controls, courierRecruitmentReview6Ads, courierRecruitmentReview6Controls, courierRecruitmentReview7Ads, courierRecruitmentReview7Controls, courierRecruitmentReview8Ads, courierRecruitmentReview8Controls, courierRecruitmentReview9Ads, courierRecruitmentReview9Controls, courierRecruitmentReviewAds, courierRecruitmentReviewControls } from "./fixtures/courier-recruitment";
 import { chatMovedControls, chatMovedFamily, chatMovedHidden, chatMovedIncident, chatMovedLink, guestSummon } from "./fixtures/chat-moved-lure";
 
 // Best of 3 runs: a cold first call (regex compilation, JIT) or a busy CI runner can exceed a bound once,
@@ -704,5 +705,56 @@ test("#668 matching stays linear on adversarial input up to the rule's 1,000-cha
   for (const text of inputs) {
     expect(text.length).toBeLessThanOrEqual(1_000);
     expect(fastest(() => { chatMovedLure(plain(text)); chatMovedLure(plain(text, { embeddedLinks: [text] })); })).toBeLessThan(LINEAR_MS);
+  }
+});
+
+const courier = "courier_recruitment";
+test("the #725 courier recruitment matches standalone, as a channel-post comment, forwarded and as a reply to a crypto question", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }, memberReply("Ребята, во что сейчас лучше вложиться, в крипту?")]) {
+    expect(promoPattern(plain(courierRecruitmentIncident, patch))).toBe(courier);
+  }
+});
+
+test.each([...courierRecruitmentAds, ...courierRecruitmentReviewAds, ...courierRecruitmentReview2Ads, ...courierRecruitmentReview3Ads, ...courierRecruitmentReview4Ads, ...courierRecruitmentReview6Ads, ...courierRecruitmentReview7Ads, ...courierRecruitmentReview8Ads, ...courierRecruitmentReview9Ads])("#725 courier recruitment variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(courier);
+});
+
+test("#725 courier recruitment controls never match: real hires, job ads, own stories, travel, seekers, warnings and jokes", () => {
+  expect([...courierRecruitmentControls, ...courierRecruitmentReviewControls, ...courierRecruitmentReview2Controls, ...courierRecruitmentReview3Controls, ...courierRecruitmentReview4Controls, ...courierRecruitmentReview5Controls, ...courierRecruitmentReview6Controls, ...courierRecruitmentReview7Controls, ...courierRecruitmentReview8Controls, ...courierRecruitmentReview9Controls]
+    .filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#725 an answer to a member asking about drivers is requested; the same text standalone is not", () => {
+  expect(promoPattern(plain(courierRecruitmentAnswer, memberReply(courierRecruitmentRequest)))).toBeUndefined();
+  expect(promoPattern(plain(courierRecruitmentAnswer))).toBe(courier);
+});
+
+test("#725 each part is needed: the need for a driver, two kinds of allure, and no named task or employer", () => {
+  // No need for a driver: a travel story.
+  expect(promoPattern(plain("Тот, кто понимает, что истинная ценность это не только цифры на счете, но и возможность в пути наслаждаться пейзажами, встречать рассветы и провожать закаты."))).toBeUndefined();
+  // One kind of allure only.
+  expect(promoPattern(plain("Нам нужен надежный водитель. Рассветы в пути."))).toBeUndefined();
+  expect(promoPattern(plain("Нам нужен надежный водитель. Рассветы и закаты в пути."))).toBe(courier);
+  // A named date, vehicle or employer.
+  expect(promoPattern(plain("Нам нужен надежный водитель на пятницу. Рассветы и закаты в пути."))).toBeUndefined();
+  expect(promoPattern(plain("Нам нужен надежный водитель на газель. Рассветы и закаты в пути."))).toBeUndefined();
+  expect(promoPattern(plain("Нам нужен надежный водитель в ООО «Вектор». Рассветы и закаты в пути."))).toBeUndefined();
+  // A day in the need's own sentence; the bait's "сегодня… а завтра…" elsewhere names none.
+  expect(promoPattern(plain("Нам нужен надежный водитель на субботу. Рассветы и закаты в пути."))).toBeUndefined();
+  // Allure the clause negates does not count.
+  expect(promoPattern(plain("Нам нужен надежный водитель, а не любитель закатов. Рассветы в пути."))).toBeUndefined();
+  // A question other than the dismissal of money is a member asking.
+  expect(promoPattern(plain("Нам нужен надежный водитель. Рассветы и закаты в пути. Кто это пишет?"))).toBeUndefined();
+  // Too long for a hook.
+  expect(promoPattern(plain(courierRecruitmentIncident + " Рассветы и закаты.".repeat(30)))).toBeUndefined();
+});
+
+test("#725 matching stays fast on long adversarial input", () => {
+  // At the 700-character bound, where the rule still runs.
+  for (const text of ["нам нужен " + "надежный ".repeat(80), "нам нужен " + "надежный, ".repeat(80), "рассвет закат ".repeat(60),
+    ("нам нужен водитель, " + "8 ".repeat(20)).repeat(20), "нам нужен водитель. " + "не ".repeat(300) + "закат", "-".repeat(690),
+    "доброе ".repeat(90) + "х.\nНам нужен водитель. Рассветы и закаты.", "я. ".repeat(220) + "нам нужен водитель, рассвет, закат"]) {
+    const bounded = text.slice(0, COURIER_LENGTH);
+    expect(fastest(() => promoPattern(plain(bounded)))).toBeLessThan(LINEAR_MS);
   }
 });

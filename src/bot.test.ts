@@ -38,6 +38,7 @@ import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, crypt
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
 import { payoutTestimonialAds, payoutTestimonialControls, payoutTestimonialIncident } from "./fixtures/payout-testimonial";
+import { courierRecruitmentAds, courierRecruitmentControls, courierRecruitmentIncident } from "./fixtures/courier-recruitment";
 import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
   profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
@@ -2876,6 +2877,35 @@ test("the #716 payout testimonial is deleted by its pattern, forwarded or not; c
   ]);
   expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([[1, "payout_testimonial"], [2, "payout_testimonial"]]);
   expect(JSON.stringify(h.logs)).not.toContain("Auszahlung");
+  await h.stats.stop();
+});
+
+// #725: the coded courier recruitment. No message text is logged, so its own score is unknown; the reported text scored 0.4912 on the
+// live model standalone and 0.3436 as a reply to a member's crypto question.
+test("the #725 courier recruitment is deleted by its pattern, also as a reply in a crypto thread; controls stay kept; telemetry carries no text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.4912));
+  await h.send({ text: courierRecruitmentIncident });
+  h.setAnswer(keepAt(0.3436));
+  await h.send({ chat: groupB, text: courierRecruitmentIncident, reply_to_message: { message_id: 900, date: 1, chat: groupB,
+    from: forwardedUser, text: "Ребята, во что сейчас лучше вложиться, в крипту?" } });
+  h.setAnswer(keepAt(0.668));
+  await h.send({ chat: groupC, text: courierRecruitmentAds[0] });
+  h.setAnswer(keepAt(0.79));
+  const controls: number[] = [];
+  for (const [index, text] of courierRecruitmentControls.entries()) controls.push(await h.send({ chat: [group, groupB, groupC][index % 3], text }));
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: courierRecruitmentIncident });
+  expect(controls).toHaveLength(courierRecruitmentControls.length);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected" && controls.includes(log.messageId as number))).toEqual([]);
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2], [groupC.id, 3]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.messageId, log.pattern, log.confidence, log.decision])).toEqual([
+    [1, "courier_recruitment", 0.4912, "pattern_delete"], [2, "courier_recruitment", 0.3436, "pattern_delete"],
+    [3, "courier_recruitment", 0.668, "pattern_delete"], [floor, "courier_recruitment", 0.19, "keep"],
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([
+    [1, "courier_recruitment"], [2, "courier_recruitment"], [3, "courier_recruitment"]]);
+  expect(JSON.stringify(h.logs)).not.toContain("водитель");
   await h.stats.stop();
 });
 
