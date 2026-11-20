@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { AUDIT_CHAT_ID, LIVE_PARTS_SQL, PostgresDeletionAudit } from "./audit-outbox";
+import { AUDIT_CHAT_ID, LIVE_PARTS_SQL, PACK_SEPARATOR, PostgresDeletionAudit } from "./audit-outbox";
 import { renderAuditReport, type AuditSnapshot } from "./audit-report";
 import { auditor, fixture, integration, options, owned, testPool, transport } from "./audit-outbox.fixture";
 
@@ -439,4 +439,116 @@ integration("#277: a failed prepare() remembers its id, so the retry finds which
     expect(await audit.prepare(-69, 1, "fixture")).toBe(remembered!); // nothing landed: same id, fresh insert
     expect(uncertain.size).toBe(0);
   } finally { holder.release(); await audit.close(); await f.close(); }
+});
+
+const texts = (calls: unknown[]) => calls.map(call => (call as { text: string }).text);
+const partStates = async (f: Awaited<ReturnType<typeof fixture>>) =>
+  (await f.pool.query("SELECT o.message_id,p.sequence,p.state,p.attempts,p.receipt_message_id FROM deletion_audit_parts p JOIN deletion_audit_outbox o ON o.id=p.audit_id ORDER BY o.message_id,p.sequence")).rows
+    .map(row => [Number(row.message_id), row.sequence, row.state, row.attempts, row.receipt_message_id === null ? null : Number(row.receipt_message_id)]);
+async function queued(f: Awaited<ReturnType<typeof fixture>>, reports: Array<string | string[]>) {
+  for (const [i, report] of reports.entries()) await f.audit.confirmed((await f.audit.prepare(-69, i + 1, report))!);
+}
+
+integration("#782: single-part reports share one paced send and its receipt; multipart reports go alone", async () => {
+  const f = await fixture();
+  try {
+    await queued(f, ["one", ["m1", "m2"], "two", "three"]);
+    f.t.action(async () => accepted(501)); await f.audit.runOnce();
+    expect(texts(f.t.calls)).toEqual(["one" + PACK_SEPARATOR + "two" + PACK_SEPARATOR + "three"]);
+    expect(f.audit.health().sent).toBe(3);
+    for (const id of [502, 503]) { await f.ready(); f.t.action(async () => accepted(id)); await f.audit.runOnce(); }
+    expect(texts(f.t.calls).slice(1)).toEqual(["m1", "m2"]);
+    expect(await partStates(f)).toEqual([[1, 1, "sent", 1, 501], [2, 1, "sent", 1, 502], [2, 2, "sent", 1, 503], [3, 1, "sent", 1, 501], [4, 1, "sent", 1, 501]]);
+    expect((await f.pool.query("SELECT DISTINCT state FROM deletion_audit_outbox")).rows).toEqual([{ state: "sent" }]);
+  } finally { await f.close(); }
+});
+
+integration("#782: a rejected batch retries each report alone, so only the bad one ends terminal", async () => {
+  const f = await fixture();
+  try {
+    await queued(f, ["good", "bad", "fine"]);
+    f.t.action(async () => { const text = texts(f.t.calls).at(-1)!; return text.includes("bad") ? { ok: false, error_code: 400, description: "fixture" } : accepted(f.t.calls.length); });
+    for (let i = 0; i < 4; i++) { await f.ready(); await f.audit.runOnce(); }
+    expect(texts(f.t.calls)).toEqual(["good" + PACK_SEPARATOR + "bad" + PACK_SEPARATOR + "fine", "good", "bad", "fine"]);
+    expect(await partStates(f)).toEqual([[1, 1, "sent", 2, 2], [2, 1, "terminal", 2, null], [3, 1, "sent", 2, 4]]);
+    expect(f.audit.health()).toMatchObject({ sent: 2, retried: 3, terminal: 1 });
+  } finally { await f.close(); }
+});
+
+integration("#782: an ambiguous batch send leaves every report in it send_unknown, never resent", async () => {
+  const f = await fixture();
+  try {
+    await queued(f, ["one", "two"]);
+    f.t.action(async () => { throw new Error("lost response after delivery"); }); await f.audit.runOnce();
+    await f.ready(); await f.audit.runOnce();
+    expect(f.t.calls).toHaveLength(1);
+    expect(await partStates(f)).toEqual([[1, 1, "send_unknown", 1, null], [2, 1, "send_unknown", 1, null]]);
+    expect(f.audit.health().sendUnknown).toBe(2);
+  } finally { await f.close(); }
+});
+
+integration("#782: a stale batch lease recovers every report as unknown and a late receipt cannot rewrite it", async () => {
+  const f = await fixture(); const other = auditor(f.t.api, options);
+  const sender = auditor(f.t.api, { ...options, timeoutMs: 30_000, sendLeaseMs: 60_000 });
+  try {
+    for (const i of [1, 2]) await sender.confirmed((await sender.prepare(-69, i, "r" + i))!);
+    let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+    f.t.action(async () => { entered(); await gate; return accepted(9); });
+    const running = sender.runOnce(); await started;
+    await f.pool.query("UPDATE deletion_audit_outbox SET lease_until=NOW()-INTERVAL '1 second' WHERE state='sending'");
+    await f.ready(); await other.runOnce();
+    release(); await running;
+    expect(f.t.calls).toHaveLength(1);
+    expect(await partStates(f)).toEqual([[1, 1, "send_unknown", 1, null], [2, 1, "send_unknown", 1, null]]);
+    expect((await f.pool.query("SELECT DISTINCT state FROM deletion_audit_outbox")).rows).toEqual([{ state: "send_unknown" }]);
+  } finally { await sender.close(); await other.close(); await f.close(); }
+});
+
+integration("#782: a 429 on a batch retries each report alone and still stops at five attempts", async () => {
+  const f = await fixture();
+  try {
+    await queued(f, ["one", "two"]);
+    f.t.action(async () => ({ ok: false, error_code: 429, description: "fixture", parameters: { retry_after: 60 } }));
+    await f.audit.runOnce();
+    expect(await partStates(f)).toEqual([[1, 1, "pending", 1, null], [2, 1, "pending", 1, null]]);
+    for (let i = 0; i < 9; i++) { await f.ready(); await f.audit.runOnce(); }
+    expect(texts(f.t.calls)).toEqual(["one" + PACK_SEPARATOR + "two", ...Array(4).fill("one"), ...Array(4).fill("two")]);
+    expect(await partStates(f)).toEqual([[1, 1, "terminal", 5, null], [2, 1, "terminal", 5, null]]);
+  } finally { await f.close(); }
+});
+
+integration("#782: a malformed 429 on a batch retries each report alone; a solo malformed 429 is terminal", async () => {
+  const f = await fixture();
+  try {
+    await queued(f, ["one", "two"]);
+    f.t.action(async () => ({ ok: false, error_code: 429, description: "fixture", parameters: { retry_after: "soon" } }));
+    await f.audit.runOnce();
+    expect(await partStates(f)).toEqual([[1, 1, "pending", 1, null], [2, 1, "pending", 1, null]]);
+    f.t.action(async () => texts(f.t.calls).at(-1) === "one" ? accepted(7) : { ok: false, error_code: 429, description: "fixture" });
+    for (let i = 0; i < 2; i++) { await f.ready(); await f.audit.runOnce(); }
+    expect(texts(f.t.calls)).toEqual(["one" + PACK_SEPARATOR + "two", "one", "two"]);
+    expect(await partStates(f)).toEqual([[1, 1, "sent", 2, 7], [2, 1, "terminal", 2, null]]);
+  } finally { await f.close(); }
+});
+
+integration("#782: a batch whose part leases lapsed is never finalized from a late receipt", async () => {
+  const f = await fixture(); const other = auditor(f.t.api, options);
+  const sender = auditor(f.t.api, { ...options, timeoutMs: 30_000, sendLeaseMs: 60_000 });
+  try {
+    for (const i of [1, 2]) await sender.confirmed((await sender.prepare(-69, i, "r" + i))!);
+    let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+    f.t.action(async () => { entered(); await gate; return accepted(9); });
+    const running = sender.runOnce(); await started;
+    // One shared lease per batch: the part leases and their parents' carry the same expiry.
+    expect((await f.pool.query("SELECT COUNT(DISTINCT lease_until)::int AS n FROM (SELECT lease_until FROM deletion_audit_parts UNION ALL SELECT lease_until FROM deletion_audit_outbox) l")).rows[0].n).toBe(1);
+    await f.pool.query("UPDATE deletion_audit_parts SET lease_until=NOW()-INTERVAL '1 second' WHERE state='sending'");
+    release(); await running;
+    expect(await partStates(f)).toEqual([[1, 1, "sending", 1, null], [2, 1, "sending", 1, null]]);
+    await f.pool.query("UPDATE deletion_audit_outbox SET lease_until=NOW()-INTERVAL '1 second' WHERE state='sending'");
+    await f.ready(); await other.runOnce();
+    expect(await partStates(f)).toEqual([[1, 1, "send_unknown", 1, null], [2, 1, "send_unknown", 1, null]]);
+    expect(f.t.calls).toHaveLength(1);
+  } finally { await sender.close(); await other.close(); await f.close(); }
 });

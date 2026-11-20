@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Api, GrammyError } from "grammy";
-import { AUDIT_CHAT_ID, sendAuditReport, PostgresDeletionAudit } from "./audit-outbox";
+import { AUDIT_CHAT_ID, MAX_PACKED_REPORTS, PACK_SEPARATOR, packReports, sendAuditReport, PostgresDeletionAudit } from "./audit-outbox";
 
 test("product grammY transport fixes sink, HTML and disabled previews without keyboards", async () => {
   const calls: unknown[] = [];
@@ -48,3 +48,17 @@ for (const messageId of [undefined, 0, -1, 1.5, "12", Number.MAX_SAFE_INTEGER + 
     await expect(sendAuditReport(api, "fixture", 100)).rejects.toThrow("Invalid audit receipt");
   });
 }
+
+test("#782: packs never-attempted single-part reports in order up to 4,000 characters and 20 reports", () => {
+  const r = (report: string, single = true, attempts = 0) => ({ report, single, attempts });
+  // A multipart or already-attempted head goes alone.
+  expect(packReports([r("a", false), r("b")]).map(c => c.report)).toEqual(["a"]);
+  expect(packReports([r("a", true, 1), r("b")]).map(c => c.report)).toEqual(["a"]);
+  // Later multipart/retried reports are skipped, not packed; packing stops at the first report that would not fit.
+  const fill = "x".repeat(4_000 - 2 * PACK_SEPARATOR.length - 2);
+  expect(packReports([r("a"), r("m", false), r("t", true, 2), r("b"), r(fill), r("c"), r("d")]).map(c => c.report))
+    .toEqual(["a", "b", fill]);
+  expect(packReports([r("a"), r("x".repeat(4_000 - PACK_SEPARATOR.length)), r("c")]).map(c => c.report)).toEqual(["a"]);
+  expect(packReports(Array.from({ length: 50 }, (_, i) => r(String(i))))).toHaveLength(MAX_PACKED_REPORTS);
+  expect(packReports([])).toEqual([]);
+});

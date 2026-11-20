@@ -16,7 +16,34 @@ type AuditApi = Pick<Api, "sendMessage">;
 type Options = { capacity?: number; retentionMs?: number; timeoutMs?: number; intentLeaseMs?: number;
   sendLeaseMs?: number; pollMs?: number; paceMs?: number; stallMs?: number };
 type Claimed = { id: string; sequence: number; report: string; lease_token: string; attempts: number };
+export type PackCandidate = { report: string; attempts: number; single: boolean };
 export const MAX_AUDIT_PARTS = 256;
+/** Same source bound as one stored part, so a packed message stays under Telegram's 4,096 characters. */
+const MAX_PACKED_LENGTH = 4_000;
+/** Bounds entities per message (each report carries a sender link and one or two pre blocks). */
+export const MAX_PACKED_REPORTS = 20;
+export const PACK_SEPARATOR = "\n\n———\n\n";
+/**
+ * #782: one paced send carries several reports, or deletions outrun the sink (~890 sends/h) and the outbox fills.
+ * Only never-attempted single-part reports pack: a continuation part has no sender of its own, and anything a
+ * send already touched (429, a rejected batch) goes alone, so one bad report cannot take its neighbours down.
+ * Takes the head in FIFO order, then later packable reports until the next one would not fit.
+ * ponytail: after a 429 the reports it held go out one per send; pack retries too if 429s become common.
+ */
+export function packReports<T extends PackCandidate>(candidates: T[]): T[] {
+  const [head] = candidates;
+  if (!head) return [];
+  const batch = [head];
+  if (!head.single || head.attempts) return batch;
+  let length = head.report.length;
+  for (const next of candidates.slice(1)) {
+    if (batch.length >= MAX_PACKED_REPORTS) break;
+    if (!next.single || next.attempts) continue;
+    if (length + PACK_SEPARATOR.length + next.report.length > MAX_PACKED_LENGTH) break;
+    batch.push(next); length += PACK_SEPARATOR.length + next.report.length;
+  }
+  return batch;
+}
 /** Retained reports have no hard cap (retention × deletion attempts); above the tested 100k scale, alert. */
 export const RETAINED_REPORTS_ALERT = 100_000;
 /** Parts that may still be sent; the only rows that occupy capacity (exported for the plan test). */
@@ -240,43 +267,60 @@ export class PostgresDeletionAudit implements DeletionAudit {
   }
   private async tick() {
     await this.initialize();
-    const row = await this.transaction(async (client): Promise<Claimed | undefined> => {
+    const rows = await this.transaction(async (client): Promise<Claimed[]> => {
       await this.lock(client); await this.maintain(client);
-      if (!(await client.query("SELECT 1 FROM deletion_audit_sink WHERE next_send_at<=clock_timestamp()")).rowCount) return;
+      if (!(await client.query("SELECT 1 FROM deletion_audit_sink WHERE next_send_at<=clock_timestamp()")).rowCount) return [];
       // One outstanding send per sink, including across processes and restarts.
-      if ((await client.query("SELECT 1 FROM deletion_audit_outbox WHERE state='sending' LIMIT 1")).rowCount) return;
-      const candidate = (await client.query("SELECT o.id,p.sequence FROM deletion_audit_outbox o JOIN deletion_audit_parts p ON p.audit_id=o.id WHERE o.state='pending' AND o.expires_at>clock_timestamp() AND p.state='pending' AND p.next_attempt_at<=clock_timestamp() AND NOT EXISTS (SELECT 1 FROM deletion_audit_parts earlier WHERE earlier.audit_id=o.id AND earlier.sequence<p.sequence AND earlier.state<>'sent') ORDER BY p.next_attempt_at,o.created_at,p.sequence LIMIT 1 FOR UPDATE OF o,p SKIP LOCKED")).rows[0];
-      if (!candidate) return;
-      const token = randomUUID();
-      const claimed = (await client.query("UPDATE deletion_audit_parts SET state='sending',lease_until=clock_timestamp()+$3*INTERVAL '1 millisecond',lease_token=$4,attempts=attempts+1 WHERE audit_id=$1 AND sequence=$2 RETURNING audit_id AS id,sequence,report,lease_token,attempts,lease_until", [candidate.id, candidate.sequence, this.limits.sendLeaseMs, token])).rows[0];
-      await client.query("UPDATE deletion_audit_outbox SET state='sending',lease_until=$2,lease_token=$3,attempts=$4 WHERE id=$1", [candidate.id, claimed.lease_until, token, claimed.attempts]);
+      if ((await client.query("SELECT 1 FROM deletion_audit_outbox WHERE state='sending' LIMIT 1")).rowCount) return [];
+      // Lock and sort narrow columns only: with FOR UPDATE the sort is unbounded, and carrying report text spilled to disk at a 10k backlog.
+      const locked = (await client.query("SELECT o.id,p.sequence,p.attempts,(p.sequence=1 AND NOT EXISTS (SELECT 1 FROM deletion_audit_parts later WHERE later.audit_id=o.id AND later.sequence>1)) AS single FROM deletion_audit_outbox o JOIN deletion_audit_parts p ON p.audit_id=o.id WHERE o.state='pending' AND o.expires_at>clock_timestamp() AND p.state='pending' AND p.next_attempt_at<=clock_timestamp() AND NOT EXISTS (SELECT 1 FROM deletion_audit_parts earlier WHERE earlier.audit_id=o.id AND earlier.sequence<p.sequence AND earlier.state<>'sent') ORDER BY p.next_attempt_at,o.created_at,p.sequence LIMIT $1 FOR UPDATE OF o,p SKIP LOCKED", [MAX_PACKED_REPORTS * 2])).rows;
+      if (!locked.length) return [];
+      // Texts for the locked rows only, measured in JS (UTF-16, like the 4,000 part bound); order stays the locked query's.
+      const texts = new Map((await client.query("SELECT audit_id,sequence,report FROM deletion_audit_parts WHERE (audit_id,sequence) IN (SELECT * FROM unnest($1::uuid[],$2::int[]))", [locked.map(row => row.id), locked.map(row => row.sequence)])).rows
+        .map(row => [row.audit_id + ":" + row.sequence, row.report as string]));
+      const batch = packReports(locked.map(row => ({ ...row, report: texts.get(row.id + ":" + row.sequence)! })));
+      if (!batch.length) return [];
+      // One token and one lease expiry for the whole packed send, so the batch is recovered as a unit; finalized per row, so a lease lapsing mid-loop leaves the rest send_unknown, never resent.
+      const token = randomUUID(); const claimed: Claimed[] = [];
+      const { until } = (await client.query("SELECT clock_timestamp()+$1*INTERVAL '1 millisecond' AS until", [this.limits.sendLeaseMs])).rows[0];
+      for (const candidate of batch) {
+        const part = (await client.query("UPDATE deletion_audit_parts SET state='sending',lease_until=$3,lease_token=$4,attempts=attempts+1 WHERE audit_id=$1 AND sequence=$2 RETURNING audit_id AS id,sequence,report,lease_token,attempts,lease_until", [candidate.id, candidate.sequence, until, token])).rows[0];
+        await client.query("UPDATE deletion_audit_outbox SET state='sending',lease_until=$2,lease_token=$3,attempts=$4 WHERE id=$1", [candidate.id, part.lease_until, token, part.attempts]);
+        claimed.push(part);
+      }
       await client.query("UPDATE deletion_audit_sink SET next_send_at=clock_timestamp()+$1*INTERVAL '1 millisecond'", [this.limits.paceMs]);
       return claimed;
     });
-    if (!row) return;
-    let state = "sent", delay = this.limits.paceMs;
+    if (!rows.length) return;
+    let delay = this.limits.paceMs;
     let receipt: number | null = null;
-    try { receipt = await sendAuditReport(this.api, row.report, this.limits.timeoutMs); }
+    let outcome: (row: Claimed) => string = () => "sent";
+    try { receipt = await sendAuditReport(this.api, rows.map(row => row.report).join(PACK_SEPARATOR), this.limits.timeoutMs); }
     catch (error) {
       // Only an explicit Telegram rejection proves the request was not accepted.
       if (error instanceof GrammyError && error.error_code === 429) {
         const seconds = error.parameters.retry_after;
         if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 && seconds <= 30 * 86400) {
           delay = Math.max(delay, seconds * 1000 + 1000);
-          state = row.attempts < 5 ? "pending" : "terminal";
-        } else state = "terminal";
-      } else if (error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500) state = "terminal";
-      else state = "send_unknown"; // Network/timeouts/5xx can follow delivery: never blindly resend.
+          outcome = row => row.attempts < 5 ? "pending" : "terminal";
+        } else outcome = () => rows.length > 1 ? "pending" : "terminal"; // Malformed retry_after: same as a rejection.
+      } else if (error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500) {
+        // A rejected batch was not delivered: each report retries alone, so only a bad one ends terminal.
+        outcome = () => rows.length > 1 ? "pending" : "terminal";
+      } else outcome = () => "send_unknown"; // Network/timeouts/5xx can follow delivery: never blindly resend.
     }
     await this.transaction(async (client) => {
       await this.lock(client);
-      const updated = await client.query("UPDATE deletion_audit_parts SET state=$4,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$5*INTERVAL '1 millisecond',receipt_message_id=$6 WHERE audit_id=$1 AND sequence=$2 AND state='sending' AND lease_token=$3 AND lease_until>clock_timestamp()", [row.id, row.sequence, row.lease_token, state, delay, receipt]);
-      if (!updated.rowCount) return;
-      const remaining = state === "sent" && (await client.query("SELECT 1 FROM deletion_audit_parts WHERE audit_id=$1 AND state<>'sent' LIMIT 1", [row.id])).rowCount;
-      await client.query("UPDATE deletion_audit_outbox SET state=$3,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$4*INTERVAL '1 millisecond' WHERE id=$1 AND state='sending' AND lease_token=$2", [row.id, row.lease_token, remaining ? "pending" : state, delay]);
+      for (const row of rows) {
+        const state = outcome(row);
+        const updated = await client.query("UPDATE deletion_audit_parts SET state=$4,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$5*INTERVAL '1 millisecond',receipt_message_id=$6 WHERE audit_id=$1 AND sequence=$2 AND state='sending' AND lease_token=$3 AND lease_until>clock_timestamp()", [row.id, row.sequence, row.lease_token, state, delay, state === "sent" ? receipt : null]);
+        if (!updated.rowCount) continue;
+        const remaining = state === "sent" && (await client.query("SELECT 1 FROM deletion_audit_parts WHERE audit_id=$1 AND state<>'sent' LIMIT 1", [row.id])).rowCount;
+        await client.query("UPDATE deletion_audit_outbox SET state=$3,lease_until=NULL,lease_token=NULL,next_attempt_at=clock_timestamp()+$4*INTERVAL '1 millisecond' WHERE id=$1 AND state='sending' AND lease_token=$2", [row.id, row.lease_token, remaining ? "pending" : state, delay]);
+        this.counters[state === "sent" ? "sent" : state === "pending" ? "retried" : state === "terminal" ? "terminal" : "sendUnknown"]++;
+      }
       // Completion-based pacing is conservative and survives a 429/restart/second worker.
       await client.query("UPDATE deletion_audit_sink SET next_send_at=GREATEST(next_send_at,clock_timestamp()+$1*INTERVAL '1 millisecond')", [delay]);
-      this.counters[state === "sent" ? "sent" : state === "pending" ? "retried" : state === "terminal" ? "terminal" : "sendUnknown"]++;
     });
   }
   /** Durable, identity/content-free state summary; throws a generic error on DB failure. */
