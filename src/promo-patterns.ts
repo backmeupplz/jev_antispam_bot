@@ -2599,23 +2599,27 @@ export const CREW_LENGTH = 300;
 export const CREW_MIN_PAY = 4000;
 export const CREW_MAX_PAY = 10000;
 const CREW_GREETING = re("^(?:[\\p{L}]+[\\s,!]+){0,2}?(?:привет\\p{L}*|здравств\\p{L}*|добр\\p{L}* (?:утр\\p{L}*|день|дня|вечер\\p{L}*)|доброго времени суток)›");
-// "нужно 3-4 человека", "нужны двое", "ищу 2 парней"; not "нужно было", "не нужно" or one person.
-const CREW_NEED = re("(?<!‹не\\s)‹(?:нужн[оаы]|нужен|надо|требу(?:ется|ются)|ищу|ищем)›(?!\\s(?:было|бы)›)\\s(?:[\\p{L}-]+\\s){0,3}?"
-  + "(?:(?<!\\d)(?:[2-9]|1\\d)(?:\\s?[-–—]\\s?\\d{1,2})?\\s(?:человек\\p{L}*|чел›|парн\\p{L}*|парен\\p{L}*|девуш\\p{L}*|помощник\\p{L}*|грузчик\\p{L}*)|(?:двое|трое|четверо|пятеро|пару человек|несколько человек)›)");
+// "нужно 3-4 человека", "нужно три человека", "нужны двое", "ищу 2 парней"; not "нужно было", "не нужно", one person or room
+// for a few ("машина для двух человек", "жильё на 2 человек"). "Троих" right after "ищу/ищем/нужны" or before people or help only:
+// "отвезти троих детей" and "подвезти троих, оплачу" are no crew.
+const CREW_NEED = re("(?<!‹не\\s)‹(?:ищу|ищем|нужны)\\s(?:двоих|троих|четверых)›(?!\\s\\p{L})|(?<!‹не\\s)‹(?:нужн[оаы]|нужен|надо|требу(?:ется|ются)|ищу|ищем)›(?!\\s(?:было|бы)›)\\s(?:[\\p{L}-]+\\s){0,3}?"
+  + "(?<!‹(?:на|для)\\s)(?:(?:(?<!\\d)(?:[2-9]|1\\d)(?:\\s?[-–—]\\s?\\d{1,2})?|‹(?:двух|тр[её]х|четыр[её]х|два|две|три|четыре|пять)(?:\\s?[-–—]\\s?\\p{L}+)?)\\s(?:человек\\p{L}*|чел›|парн\\p{L}*|парен\\p{L}*|девуш\\p{L}*|помощник\\p{L}*|грузчик\\p{L}*)|(?:двое|трое|четверо|пятеро|пару человек|несколько человек)›"
+  + "|(?:двоих|троих|четверых)\\s(?:человек|парн|парен|девуш|ребят|мужчин|мужик|помощник|грузчик|помо))");
 // A flat amount per head the author pays: "оплачу по 5200", "плачу по 5 тысяч", "оплачу каждому по 5000", "заплачу 5000 на
 // человека". A cost split ("аренда по 5000 с человека", "скидываемся по 5000", "билет по 4500 на человека") has no payer.
-// "к" thousands only right after the number ("5к"), so "по 500 к концу дня" stays 500; "5,5 тыс" is 5,500.
+// "к" thousands only right after the number ("5к"), so "по 500 к концу дня" stays 500; "5,5 тыс" is 5,500; "5 т.р." and "5тр" are 5,000.
 // Roubles only: the band means nothing in тенге, сум or dollars, so another currency after the amount ends the match (CREW_FOREIGN).
-const CREW_AMOUNT = `(\\d{1,3}(?:[ .,]\\d{3})+|\\d{1,6}(?:[.,]\\d)?)(?!\\d)(\\s?тыс\\p{L}*|к›|k›)?(?:\\s?(?:₽|руб\\p{L}*|р\\.|р›))?`;
+const CREW_AMOUNT = `(\\d{1,3}(?:[ .,]\\d{3})+|\\d{1,6}(?:[.,]\\d)?)(?!\\d)(\\s?тыс\\p{L}*|к›|k›|\\s?т\\.\\s?р›\\.?|\\s?тр›)?(?:\\s?(?:₽|руб\\p{L}*|р\\.|р›))?`;
 const CREW_FOREIGN = re(`^\\.?\\s?${CUR}`);
 // Singular only: "платим/оплатим по 5000 с человека" is a group splitting a cost. "Не оплачу по 5000" and "Оплачу не по 5000" offer nothing;
 // "оплачу не обижу по 5000" and "оплачу не меньше 5000 каждому" do.
 const CREW_PAYS = "(?<!‹не\\s)‹(?:плачу|заплачу|оплачу|оплачиваю|выплачу)\\s(?:(?!не\\s(?:по›|\\d))[\\p{L}-]+\\s){0,2}?";
 const CREW_PAY = re(`${CREW_PAYS}по\\s${CREW_AMOUNT}|${CREW_PAYS}${CREW_AMOUNT}\\s(?:каждому|на (?:человека|каждого|брата))›`, "giu");
 // The pay is offered, not asked about: its own clause ends in no "?" ("по 4000 на человека нормально будет?"), while the bait's
-// "оплачу по 4800, есть кто?" and "оплачу по 5200 кто свободен?" ask for people.
+// "оплачу по 4800, есть кто?", "оплачу по 5200 кто свободен?" and "оплачу по 5200 есть желающие?" ask for people
+// ("есть желающие на такую сумму?" and "вряд ли есть желающие?" weigh the pay).
 // A "кто" after "тем/тому/всем" is a relative clause, not a new one ("плачу по 4000 тем кто придёт пораньше?").
-const CREW_PAY_ASKED = re("^(?:(?!(?<!‹(?:тем|тому|той|тех|всем|те|тот)\\s)‹кто›)[^,;.!?\\n])*\\?");
+const CREW_PAY_ASKED = re("^(?!\\s?(?:есть\\sжелающ\\p{L}*|(?:желающ|свободн)\\p{L}*\\sесть)\\s?\\?)(?:(?!(?<!‹(?:тем|тому|той|тех|всем|те|тот)\\s)‹кто›)[^,;.!?\\n])*\\?");
 // Money collected from each person, or paid for something ("за билет", "за лодку", "за смену", "за 8 часов", "за выезд"), a fee,
 // or an entry is a shared cost or a wage, not a flat payout a head. Pay for the help, the move, the head or a vague "пару часов"
 // stays the bait's own ("за вашу помощь", "за труды", "за переезд", "за каждого", "за пару часов").
@@ -2630,19 +2634,45 @@ const CREW_COST = re("^\\p{L}+\\s(?:(?:каждому|всем|вам)\\s)?(?:а
 // "ежедневно", "на 8 часов"), not "в конце дня" or "в течение часа".
 const CREW_PERIOD = re("‹(?:(?:в|на)\\s(?:\\d{1,2}(?:\\s?[-–]\\s?\\d{1,2})?\\s|(?:рабоч|будн|кажд|целы|полн)\\p{L}*\\s)?|кажд\\p{L}*\\s)(?:смен\\p{L}*|вечер|день|дн[яеи]\\p{L}*|час\\p{L}*|сутки|суток|недел\\p{L}*|месяц\\p{L}*)›"
   + "|/\\s?(?:день|дн|час|смен|сут|нед|мес)|‹(?:ежедневн|еженедельн|ежемесячн|посуточн|почасов)");
-const CREW_RUB = re("^(?:руб\\p{L}*|р›|\\p{Sc})\\.?\\s?");
-const CREW_LEAD = re("^(?:(?:за|в|на|с)›|кажд|ежедн|еженед|ежемес|посуточ|почасов|/)");
-const crewPay = (text: string) => [...text.matchAll(CREW_PAY)].some((match) => {
+const CREW_RUB = re("^(?:руб\\p{L}*|р›|₽)\\.?\\s?");
+// A shift anywhere after the pay is a job's wage ("по 5000. Смена 12 часов", "Смена: 12 часов", "по 5000, за смену", "по 5 т.р. Выплата ежедневно").
+const CREW_SHIFT = re("‹смен[аы]\\s?[:—–-]?\\s?(?:по\\s)?\\d|‹(?:ежедневн|посменн|посуточн)|‹(?:кажд\\p{L}*|за)\\sсмен");
+// A sentence after the pay that names the shift or how it is paid carries the pay on ("по 5 т.р. Смена на 12 часов", "по 5 тыс.
+// руб. Наличными в день").
+const CREW_LEAD = re("^(?:(?:за|в|на|с)›|кажд|ежедн|еженед|ежемес|посуточ|почасов|/|смен|наличн|нал(?:ом)?›|чистыми›|деньгами›|переводом›|официальн)");
+// A wage worded another way in the sentence after the pay ("по 5 т.р. Рабочий день 12 часов", "Выплата каждый день", "Это в день",
+// "Работа на неделю", "Смена двенадцать часов"). A few hours or a date stay the bait's ("по 5к. Работы на 2 часа", "Помогите в день
+// переезда").
+const CREW_WAGE = re("‹смен(?:[аеуы]|ой|ам\\p{L}*)›|‹(?:[6-9]|1\\d|2[0-4])\\s?(?:час\\p{L}*|ч)›|‹(?:в|на)\\s(?:(?:рабоч|будн|кажд|целы|полн)\\p{L}*\\s)?(?:день|дн[яеи]\\p{L}*|сутки|суток|недел\\p{L}*|месяц\\p{L}*)›(?!\\s\\p{L})"
+  + "|‹кажд\\p{L}*\\s(?:день|дн|недел|месяц)|/\\s?(?:день|дн|час|смен|сут|нед|мес)|‹(?:ежедневн|еженедельн|ежемесячн|посуточн|почасов)");
+// Words after a dot, past a rouble sign, read from the raw text: a word written only capitalised there starts a new sentence ("по
+// 5к. Справимся за день"); anything else carries the pay clause on ("по 5 тыс. руб. без задержек за смену", all caps, an emoji
+// first), so a writer who never capitalises is missed rather than a wage offer deleted.
+const WORD_AFTER_DOT = /\.[^\p{L}\p{N}]*(?:[рР](?:[уУ][бБ](?:[лЛ]\p{L}*)?)?(?!\p{L})\.?[^\p{L}\p{N}]*)?(\p{L}[\p{L}\p{M}\p{Cf}]*)/gu;
+const startsSentence = (raw: string, word: string) => {
+  const seen = [...raw.matchAll(WORD_AFTER_DOT)].map((found) => found[1]!).filter((found) => promoText(found) === word);
+  return seen.some((found) => /^\p{Lu}\p{Ll}/u.test(found)) && !seen.some((found) => /^\p{Ll}/u.test(found));
+};
+const crewPay = (text: string, raw: string) => [...text.matchAll(CREW_PAY)].some((match) => {
   const [number, scale] = match[1] !== undefined ? [match[1], match[2]] : [match[3]!, match[4]];
   const value = /^\d+[.,]\d$/u.test(number) ? Number(number.replace(",", ".")) : Number(number.replace(/[ .,]/gu, ""));
   // "р." may end the sentence, so its dot is no part of the clause.
   const rest = text.slice(match.index + match[0].replace(/\.$/u, "").length);
   // The words between the verb and the amount count too ("плачу в день по 5000"). An abbreviation's dot ends no clause when a
   // period or a cost follows it ("по 5 тыс. за смену", "по 5000 р. в день"), but "по 5к. Работы на 2 часа" is a new sentence.
-  const next = /\p{L}\.?$/u.test(match[0]) && rest.startsWith(".") ? /^[^,;.!?\n]*/u.exec(rest.slice(1).trimStart().replace(CREW_RUB, ""))![0] : "";
-  const clause = `${match[0]} ${/^[^,;.!?\n]*/u.exec(rest)![0]} ${CREW_LEAD.test(next) ? next : ""}`;
+  // Roubles after that dot are the amount's own ("по 5 тыс. руб. Кто свободен?"), not a foreign currency. A question there weighs the
+  // pay only when the sentence goes on ("по 5 тыс. руб. каждому пойдёт?"); "по 5 тыс. руб. Поможете?" asks for people.
+  const abbr = /\p{L}\.?$/u.test(match[0]) && rest.startsWith(".");
+  const after = abbr ? rest.slice(1).trimStart().replace(CREW_RUB, "") : rest;
+  const next = abbr ? /^[^,;.!?\n]*/u.exec(after)![0] : "";
+  const word = /^\p{L}+/u.exec(next)?.[0];
+  const goesOn = abbr && (!word || CREW_LEAD.test(next) || !startsSentence(raw, word));
+  const clause = `${match[0]} ${/^[^,;.!?\n]*/u.exec(rest)![0]} ${goesOn ? next : ""}`;
+  // The whole next sentence is read for a wage unless it asks something ("по 5 тыс. руб. Кто свободен в день переезда?").
+  const sentence = abbr ? /^[^.!?\n]*\??/u.exec(after)![0] : "";
+  const wage = !sentence.endsWith("?") && CREW_WAGE.test(sentence);
   const pay = value * (scale ? 1000 : 1);
-  return pay >= CREW_MIN_PAY && pay <= CREW_MAX_PAY && !CREW_FOREIGN.test(rest) && !CREW_PAY_ASKED.test(rest) && !CREW_PERIOD.test(clause) && !CREW_SPLIT.test(clause) && !CREW_COST.test(match[0]);
+  return pay >= CREW_MIN_PAY && pay <= CREW_MAX_PAY && !CREW_FOREIGN.test(after) && !CREW_PAY_ASKED.test(goesOn ? after : rest) && !CREW_PERIOD.test(clause) && !wage && !CREW_SHIFT.test(rest) && !CREW_SPLIT.test(clause) && !CREW_COST.test(match[0]);
 });
 // …nor weighed in a question ("По 5000 каждому, это нормально?", "Сколько дать?").
 const CREW_RATE_ASK = any("‹(?:нормальн\\p{L}*|норм|адекватн\\p{L}*|много|мало|сколько|хватит|достаточно|справедлив\\p{L}*|жирно|дорого|дешево)›");
@@ -2658,7 +2688,7 @@ const CREW_CONCRETE = any(
 );
 // A street and house number with no "ул." ("Тверская 12", "Горького 5", "Садовая 5к2"), read from the raw text: only its capital
 // tells it from "нужно 2", and a unit after the number ("Нужно 3 человека", "Простая, 2-3 часа", "Оплачу 5 000") is no house.
-const CREW_STREET = /(?<![\p{L}\p{N}])\p{Lu}\p{Ll}+(?:,\s?|\s)(?:д\.?\s?)?\d{1,3}(?!\s?(?:[-–—]\s?\d{1,3}\s?)?(?i:час|ч(?!\p{L})|мин|дн|ден|недел|смен|сут|чел|раз|парн|парен|девуш|помощник|грузчик|тыс|к(?![\p{L}\p{N}])|k(?![\p{L}\p{N}])|₽|р(?:уб|\.|(?!\p{L}))|\d))(?:\s?(?:к|корп|стр)\.?\s?\d{1,2}|\p{Ll}|\/\d{1,3})?(?![\p{L}\p{N}])/u;
+const CREW_STREET = /(?<![\p{L}\p{N}])\p{Lu}\p{Ll}+(?:,\s?|\s)(?:д\.?\s?)?\d{1,3}(?!\s?(?:[-–—]\s?\d{1,3}\s?)?(?i:час|ч(?!\p{L})|мин|дн|ден|недел|смен|сут|чел|раз|парн|парен|девуш|помощник|грузчик|тыс|т\.?\s?р(?:\.|(?!\p{L}))|к(?![\p{L}\p{N}])|k(?![\p{L}\p{N}])|₽|р(?:уб|\.|(?!\p{L}))|\d))(?:\s?(?:к|корп|стр)\.?\s?\d{1,2}|\p{Ll}|\/\d{1,3})?(?![\p{L}\p{N}])/u;
 // Edits are rescored, so a request its author has closed ("UPD: всех нашли", "больше не нужно", "отбой", "вопрос закрыт",
 // "неактуально") stays;
 // "UPD: ещё ищу" and "если неактуально" do not. A partly filled "UPD: нашёл одного, нужен ещё один" is left to the model too:
@@ -2666,7 +2696,7 @@ const CREW_STREET = /(?<![\p{L}\p{N}])\p{Lu}\p{Ll}+(?:,\s?|\s)(?:д\.?\s?)?\d{1,
 const CREW_CLOSED = re("(?<!‹если\\s)‹не\\s?актуальн|‹(?:уже|больше) (?:никто |никого )?не (?:нуж|ищ)|‹(?:отбой|закрыт\\p{L}*|наш(?:ел|ла|ли|лись)|набрал\\p{L}*)›");
 function crewRecruitment(message: ModerationMessage, raw: string, text: string): boolean {
   if (raw.length > CREW_LENGTH || message.embeddedLinks.length || !CREW_GREETING.test(text) || !CREW_NEED.test(text)) return false;
-  if (!crewPay(text) || sentences(text).some((part) => isQuestion(part) && CREW_RATE_ASK.test(part))) return false;
+  if (!crewPay(text, raw) || sentences(text).some((part) => isQuestion(part) && CREW_RATE_ASK.test(part))) return false;
   if (CREW_CONCRETE.test(text) || CREW_STREET.test(raw) || CREW_CLOSED.test(text) || PLACE_NAMED.test(raw) || seeksWork(text) || ownJob(text) || doubtsTheOffer(text)) return false;
   return !answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source));
 }
