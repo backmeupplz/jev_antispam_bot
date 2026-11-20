@@ -38,6 +38,7 @@ import { cryptoTradeControls, cryptoTradeIncident, cryptoTradeParaphrases, crypt
 import { adultPromoControls, adultPromoIncident, adultPromoIncidentButtons, adultPromoParaphrases } from "./fixtures/adult-promo";
 import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/book-copy-offer";
 import { payoutTestimonialAds, payoutTestimonialControls, payoutTestimonialIncident } from "./fixtures/payout-testimonial";
+import { crewRecruitmentAds, crewRecruitmentControls, crewRecruitmentIncident } from "./fixtures/crew-recruitment";
 import { courierRecruitmentAds, courierRecruitmentControls, courierRecruitmentIncident } from "./fixtures/courier-recruitment";
 import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
   profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
@@ -2906,6 +2907,30 @@ test("the #725 courier recruitment is deleted by its pattern, also as a reply in
   expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([
     [1, "courier_recruitment"], [2, "courier_recruitment"], [3, "courier_recruitment"]]);
   expect(JSON.stringify(h.logs)).not.toContain("водитель");
+  await h.stats.stop();
+});
+
+// #777: the crew recruitment. No message text is logged; the kept candidates in that chat scored 0.6125–0.7785 under the 0.80 gate.
+test("the #777 crew recruitment is deleted by its pattern; controls stay kept; telemetry carries no text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.6421));
+  await h.send({ text: crewRecruitmentIncident });
+  h.setAnswer(keepAt(0.7785));
+  await h.send({ chat: groupB, text: crewRecruitmentAds[0] });
+  // Above the 0.20 pattern floor, under the 0.5 repeat floor: many controls are near-copies from one sender.
+  h.setAnswer(keepAt(0.49));
+  const controls: number[] = [];
+  for (const [index, text] of crewRecruitmentControls.entries()) controls.push(await h.send({ chat: [group, groupB, groupC][index % 3], text }));
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ chat: groupC, text: crewRecruitmentIncident });
+  expect(controls).toHaveLength(crewRecruitmentControls.length);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected" && controls.includes(log.messageId as number))).toEqual([]);
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.messageId, log.pattern, log.confidence, log.decision])).toEqual([
+    [1, "crew_recruitment", 0.6421, "pattern_delete"], [2, "crew_recruitment", 0.7785, "pattern_delete"], [floor, "crew_recruitment", 0.19, "keep"],
+  ]);
+  expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([[1, "crew_recruitment"], [2, "crew_recruitment"]]);
+  expect(JSON.stringify(h.logs)).not.toContain("человека");
   await h.stats.stop();
 });
 

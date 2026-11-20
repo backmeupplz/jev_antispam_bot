@@ -20,6 +20,8 @@ import type { ModerationMessage } from "./spam";
 // #725 adds coded courier recruitment (`courier_recruitment`): a need for a driver or courier dressed in road romance or a dismissal
 // of money ("Нам нужен надежный водитель с тонким чувством прекрасного… встречать рассветы и провожать закаты"), naming no task,
 // date, place, vehicle, licence or employer.
+// #777 adds crew recruitment (`crew_recruitment`): a greeting to the chat, a need for two or more people and a flat pay of at
+// least CREW_MIN_PAY a head ("Привет всем… нужно 3-4 человека, оплачу по 5200"), naming no address, time, item or contact.
 // #668 adds the "chat is moving" lure (`chat_moved_lure`): the chat or group is said to move, and the reader is told to tap this
 // text, press Start, or open a bot's ?start= link, the guest-bot reply a hijacked member's bot summon brings in.
 export type PromoPattern =
@@ -34,6 +36,7 @@ export type PromoPattern =
   | "mindset_hook"
   | "money_bait"
   | "courier_recruitment"
+  | "crew_recruitment"
   | "odd_job_linked"
   | "cjk_job_spam"
   | "cjk_job_mention"
@@ -2586,6 +2589,88 @@ function courierRecruitment(message: ModerationMessage, raw: string, text: strin
   return !answersRequest(message, (source) => DRIVER_TOPIC.test(source));
 }
 
+// --- #777 crew recruitment: a greeting to the chat, a crew of two or more and a flat, inflated pay per head. ---
+// "Привет всем,сегодня мне нужно помочь собрать вещи для переезда. нужно 3-4 человека,оплачу по 5200.есть кто свободен и
+// поможет ?" (kept at 0.61–0.78): the courier-dropper bait dressed as an errand. A member's real request names where, when or
+// what ("ул. Ленина, 5 этаж", "в субботу к 10:00", "диван и шкаф"), a phone or a handle, and pays what the task is worth.
+export const CREW_LENGTH = 300;
+// ponytail: a flat band; the bait pays 4600–5600 a head, a real helper for a few hours far less and a real job (a renovation,
+// weeks of work) far more. Move it if the bait's amounts move.
+export const CREW_MIN_PAY = 4000;
+export const CREW_MAX_PAY = 10000;
+const CREW_GREETING = re("^(?:[\\p{L}]+[\\s,!]+){0,2}?(?:привет\\p{L}*|здравств\\p{L}*|добр\\p{L}* (?:утр\\p{L}*|день|дня|вечер\\p{L}*)|доброго времени суток)›");
+// "нужно 3-4 человека", "нужны двое", "ищу 2 парней"; not "нужно было", "не нужно" or one person.
+const CREW_NEED = re("(?<!‹не\\s)‹(?:нужн[оаы]|нужен|надо|требу(?:ется|ются)|ищу|ищем)›(?!\\s(?:было|бы)›)\\s(?:[\\p{L}-]+\\s){0,3}?"
+  + "(?:(?<!\\d)(?:[2-9]|1\\d)(?:\\s?[-–—]\\s?\\d{1,2})?\\s(?:человек\\p{L}*|чел›|парн\\p{L}*|парен\\p{L}*|девуш\\p{L}*|помощник\\p{L}*|грузчик\\p{L}*)|(?:двое|трое|четверо|пятеро|пару человек|несколько человек)›)");
+// A flat amount per head the author pays: "оплачу по 5200", "плачу по 5 тысяч", "оплачу каждому по 5000", "заплачу 5000 на
+// человека". A cost split ("аренда по 5000 с человека", "скидываемся по 5000", "билет по 4500 на человека") has no payer.
+// "к" thousands only right after the number ("5к"), so "по 500 к концу дня" stays 500; "5,5 тыс" is 5,500.
+// Roubles only: the band means nothing in тенге, сум or dollars, so another currency after the amount ends the match (CREW_FOREIGN).
+const CREW_AMOUNT = `(\\d{1,3}(?:[ .,]\\d{3})+|\\d{1,6}(?:[.,]\\d)?)(?!\\d)(\\s?тыс\\p{L}*|к›|k›)?(?:\\s?(?:₽|руб\\p{L}*|р\\.|р›))?`;
+const CREW_FOREIGN = re(`^\\.?\\s?${CUR}`);
+// Singular only: "платим/оплатим по 5000 с человека" is a group splitting a cost. "Не оплачу по 5000" and "Оплачу не по 5000" offer nothing;
+// "оплачу не обижу по 5000" and "оплачу не меньше 5000 каждому" do.
+const CREW_PAYS = "(?<!‹не\\s)‹(?:плачу|заплачу|оплачу|оплачиваю|выплачу)\\s(?:(?!не\\s(?:по›|\\d))[\\p{L}-]+\\s){0,2}?";
+const CREW_PAY = re(`${CREW_PAYS}по\\s${CREW_AMOUNT}|${CREW_PAYS}${CREW_AMOUNT}\\s(?:каждому|на (?:человека|каждого|брата))›`, "giu");
+// The pay is offered, not asked about: its own clause ends in no "?" ("по 4000 на человека нормально будет?"), while the bait's
+// "оплачу по 4800, есть кто?" and "оплачу по 5200 кто свободен?" ask for people.
+// A "кто" after "тем/тому/всем" is a relative clause, not a new one ("плачу по 4000 тем кто придёт пораньше?").
+const CREW_PAY_ASKED = re("^(?:(?!(?<!‹(?:тем|тому|той|тех|всем|те|тот)\\s)‹кто›)[^,;.!?\\n])*\\?");
+// Money collected from each person, or paid for something ("за билет", "за лодку", "за смену", "за 8 часов", "за выезд"), a fee,
+// or an entry is a shared cost or a wage, not a flat payout a head. Pay for the help, the move, the head or a vague "пару часов"
+// stays the bait's own ("за вашу помощь", "за труды", "за переезд", "за каждого", "за пару часов").
+const CREW_SPLIT = re("‹с (?:человека|каждого|носа|рыла)›|‹(?:взнос|вход|проживан|аренд|участи[ея]›)|‹за\\s(?!(?:\\p{L}+\\s)?(?:помощ\\p{L}*|работу|труд\\p{L}*|переезд\\p{L}*"
+  + "|уборк\\p{L}*|погрузк\\p{L}*|разгрузк\\p{L}*|человека|каждого|голову|(?:пару|несколько) час\\p{L}*)›)");
+// A cost the payer covers, as the verb's own object before the amount ("оплачу билеты по 5000", "оплачу каждому билет по 5000",
+// "оплачу такси каждому по 4000", "оплачу билеты 5000 каждому"), is no pay for the help. Travel on top of the pay is the bait's:
+// after the amount ("оплачу по 5200 + проезд"), after a preposition ("оплачу с проездом по 5200") or joined ("оплачу дорогу и по 5200").
+const CREW_COST = re("^\\p{L}+\\s(?:(?:каждому|всем|вам)\\s)?(?:авиа)?(?:билет|проезд|перел[её]т|такси|бензин|путёвк|путевк|дорог[уиа]›)\\p{L}*\\s"
+  + "(?:(?:каждому|всем|вам)\\s)?(?:по\\s|\\d)");
+// A rate per shift, day or hour is a job's wage ("по 5000 каждому в день", "в рабочий день", "каждый день", "по 5000/день",
+// "ежедневно", "на 8 часов"), not "в конце дня" or "в течение часа".
+const CREW_PERIOD = re("‹(?:(?:в|на)\\s(?:\\d{1,2}(?:\\s?[-–]\\s?\\d{1,2})?\\s|(?:рабоч|будн|кажд|целы|полн)\\p{L}*\\s)?|кажд\\p{L}*\\s)(?:смен\\p{L}*|вечер|день|дн[яеи]\\p{L}*|час\\p{L}*|сутки|суток|недел\\p{L}*|месяц\\p{L}*)›"
+  + "|/\\s?(?:день|дн|час|смен|сут|нед|мес)|‹(?:ежедневн|еженедельн|ежемесячн|посуточн|почасов)");
+const CREW_RUB = re("^(?:руб\\p{L}*|р›|\\p{Sc})\\.?\\s?");
+const CREW_LEAD = re("^(?:(?:за|в|на|с)›|кажд|ежедн|еженед|ежемес|посуточ|почасов|/)");
+const crewPay = (text: string) => [...text.matchAll(CREW_PAY)].some((match) => {
+  const [number, scale] = match[1] !== undefined ? [match[1], match[2]] : [match[3]!, match[4]];
+  const value = /^\d+[.,]\d$/u.test(number) ? Number(number.replace(",", ".")) : Number(number.replace(/[ .,]/gu, ""));
+  // "р." may end the sentence, so its dot is no part of the clause.
+  const rest = text.slice(match.index + match[0].replace(/\.$/u, "").length);
+  // The words between the verb and the amount count too ("плачу в день по 5000"). An abbreviation's dot ends no clause when a
+  // period or a cost follows it ("по 5 тыс. за смену", "по 5000 р. в день"), but "по 5к. Работы на 2 часа" is a new sentence.
+  const next = /\p{L}\.?$/u.test(match[0]) && rest.startsWith(".") ? /^[^,;.!?\n]*/u.exec(rest.slice(1).trimStart().replace(CREW_RUB, ""))![0] : "";
+  const clause = `${match[0]} ${/^[^,;.!?\n]*/u.exec(rest)![0]} ${CREW_LEAD.test(next) ? next : ""}`;
+  const pay = value * (scale ? 1000 : 1);
+  return pay >= CREW_MIN_PAY && pay <= CREW_MAX_PAY && !CREW_FOREIGN.test(rest) && !CREW_PAY_ASKED.test(rest) && !CREW_PERIOD.test(clause) && !CREW_SPLIT.test(clause) && !CREW_COST.test(match[0]);
+});
+// …nor weighed in a question ("По 5000 каждому, это нормально?", "Сколько дать?").
+const CREW_RATE_ASK = any("‹(?:нормальн\\p{L}*|норм|адекватн\\p{L}*|много|мало|сколько|хватит|достаточно|справедлив\\p{L}*|жирно|дорого|дешево)›");
+// Where, when and what: an address, a floor, a route, a weekday, a date, a clock time, a part of the day, a named item or vehicle,
+// a meal, a phone, a handle or a link. An abbreviated place counts too ("в ТЦ", "в СНТ", "в МФЦ").
+const CREW_CONCRETE = any(
+  "‹(?:ул›\\.?|улиц\\p{L}*|проспект\\p{L}*|пр-т|переул\\p{L}*|шоссе|бульвар\\p{L}*|набережн\\p{L}*|метро|район\\p{L}*|адрес\\p{L}*|подъезд\\p{L}*|этаж\\p{L}*|лифт\\p{L}*|жк›|тц›|трц›|бц›|дк›|снт›|днт›|мфц›|дом\\s?№?\\s?\\d|д\\.\\s?\\d|кв\\.\\s?\\d)",
+  "‹(?:понедельник|вторник|сред[уы]›|четверг|пятниц|суббот|воскресень|выходн)", "(?<!‹добр\\p{L}*\\s)‹(?:утром|днем|вечером|ночью|с утра|к вечеру|вечерк\\p{L}*|утречк\\p{L}*|после (?:работы|обеда|\\d{1,2})|половин\\p{L}* дня)›",
+  "‹\\d{1,2}(?:-?го| числа)›",
+  "(?<!‹кто(?:-\\p{L}+)?\\s)‹из (?!(?:вас|нас|них|ребят|чат\\p{L}*|групп\\p{L}*|участник\\p{L}*|присутствующ\\p{L}*)›)\\p{L}{3,} (?:в|во|на) \\p{L}{3,}", `‹\\d{1,2}\\s?${MONTH}|‹\\d{1,2}[:.]\\d{2}›|‹(?:в|к|с|до) \\d{1,2}(?:\\s?(?:утра|вечера|ночи|час\\p{L}*))?›`,
+  "‹(?:диван|шкаф|холодильник|стиральн|пианино|кроват|комод|сейф|матрас|гардероб|газел|грузовик|фур[аыуе]›|камаз|накорм|покорм|обед)",
+  "\\+?\\d(?:[\\s()-]?\\d){9,13}", "@[\\p{L}\\d_]{3}", "‹(?:https?|www|t\\.me)›",
+);
+// A street and house number with no "ул." ("Тверская 12", "Горького 5", "Садовая 5к2"), read from the raw text: only its capital
+// tells it from "нужно 2", and a unit after the number ("Нужно 3 человека", "Простая, 2-3 часа", "Оплачу 5 000") is no house.
+const CREW_STREET = /(?<![\p{L}\p{N}])\p{Lu}\p{Ll}+(?:,\s?|\s)(?:д\.?\s?)?\d{1,3}(?!\s?(?:[-–—]\s?\d{1,3}\s?)?(?i:час|ч(?!\p{L})|мин|дн|ден|недел|смен|сут|чел|раз|парн|парен|девуш|помощник|грузчик|тыс|к(?![\p{L}\p{N}])|k(?![\p{L}\p{N}])|₽|р(?:уб|\.|(?!\p{L}))|\d))(?:\s?(?:к|корп|стр)\.?\s?\d{1,2}|\p{Ll}|\/\d{1,3})?(?![\p{L}\p{N}])/u;
+// Edits are rescored, so a request its author has closed ("UPD: всех нашли", "больше не нужно", "отбой", "вопрос закрыт",
+// "неактуально") stays;
+// "UPD: ещё ищу" and "если неактуально" do not. A partly filled "UPD: нашёл одного, нужен ещё один" is left to the model too:
+// the bait is pasted, not updated, and a member's closing note must never be deleted.
+const CREW_CLOSED = re("(?<!‹если\\s)‹не\\s?актуальн|‹(?:уже|больше) (?:никто |никого )?не (?:нуж|ищ)|‹(?:отбой|закрыт\\p{L}*|наш(?:ел|ла|ли|лись)|набрал\\p{L}*)›");
+function crewRecruitment(message: ModerationMessage, raw: string, text: string): boolean {
+  if (raw.length > CREW_LENGTH || message.embeddedLinks.length || !CREW_GREETING.test(text) || !CREW_NEED.test(text)) return false;
+  if (!crewPay(text) || sentences(text).some((part) => isQuestion(part) && CREW_RATE_ASK.test(part))) return false;
+  if (CREW_CONCRETE.test(text) || CREW_STREET.test(raw) || CREW_CLOSED.test(text) || PLACE_NAMED.test(raw) || seeksWork(text) || ownJob(text) || doubtsTheOffer(text)) return false;
+  return !answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -2946,6 +3031,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (payoutTestimonial(message, raw.replace(QUOTED, " "), text)) return "payout_testimonial";
   if (moneyBaitIn(message, raw, text) && !callsItACon(undenied)) return "money_bait";
   if (courierRecruitment(message, raw, text)) return "courier_recruitment";
+  if (crewRecruitment(message, raw, text) && !callsItACon(undenied)) return "crew_recruitment";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {

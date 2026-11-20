@@ -26,10 +26,11 @@ import {
   cjkJobMentionRemarks,
 } from "./fixtures/cjk-job-spam";
 import {
-  botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, COURIER_LENGTH, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
+  botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, COURIER_LENGTH, CREW_LENGTH, CREW_MAX_PAY, CREW_MIN_PAY, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
   promoText,
 } from "./promo-patterns";
 import type { ModerationMessage } from "./spam";
+import { crewRecruitmentAds, crewRecruitmentControls, crewRecruitmentIncident } from "./fixtures/crew-recruitment";
 import { courierRecruitmentAds, courierRecruitmentAnswer, courierRecruitmentControls, courierRecruitmentIncident, courierRecruitmentRequest, courierRecruitmentReview2Ads, courierRecruitmentReview2Controls, courierRecruitmentReview3Ads, courierRecruitmentReview3Controls, courierRecruitmentReview4Ads, courierRecruitmentReview4Controls, courierRecruitmentReview5Controls, courierRecruitmentReview6Ads, courierRecruitmentReview6Controls, courierRecruitmentReview7Ads, courierRecruitmentReview7Controls, courierRecruitmentReview8Ads, courierRecruitmentReview8Controls, courierRecruitmentReview9Ads, courierRecruitmentReview9Controls, courierRecruitmentReviewAds, courierRecruitmentReviewControls } from "./fixtures/courier-recruitment";
 import { chatMovedControls, chatMovedFamily, chatMovedHidden, chatMovedIncident, chatMovedLink, guestSummon } from "./fixtures/chat-moved-lure";
 
@@ -757,4 +758,36 @@ test("#725 matching stays fast on long adversarial input", () => {
     const bounded = text.slice(0, COURIER_LENGTH);
     expect(fastest(() => promoPattern(plain(bounded)))).toBeLessThan(LINEAR_MS);
   }
+});
+
+const crew = "crew_recruitment";
+test("the #777 crew recruitment matches standalone, as a channel-post comment, forwarded and as a reply to an unrelated message", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }, memberReply("Кто-нибудь знает, когда откроют новую станцию метро?")]) {
+    expect(promoPattern(plain(crewRecruitmentIncident, patch))).toBe(crew);
+  }
+});
+
+test.each(crewRecruitmentAds)("#777 crew recruitment variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(crew);
+});
+
+test("#777 crew recruitment controls never match: unpaid, one person, a fair rate, a named place, time, item or contact, rate questions, past jobs, seekers and warnings", () => {
+  expect(crewRecruitmentControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#777 each part is needed: a greeting, a crew of two or more, a flat pay of at least CREW_MIN_PAY a head, and nothing concrete", () => {
+  const ad = "Всем привет! Нужно 2 человека помочь с переездом, плачу по 5000. Кто свободен?";
+  expect(promoPattern(plain(ad))).toBe(crew);
+  expect(promoPattern(plain(ad.replace("Всем привет! Нужно", "Нужно")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("2 человека", "человек")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("по 5000", "5000")))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("по 5000", `по ${CREW_MIN_PAY - 1}`)))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("по 5000", `по ${CREW_MIN_PAY}`)))).toBe(crew);
+  expect(promoPattern(plain(ad.replace("по 5000", `по ${CREW_MAX_PAY}`)))).toBe(crew);
+  expect(promoPattern(plain(ad.replace("по 5000", `по ${CREW_MAX_PAY + 1}`)))).toBeUndefined();
+  expect(promoPattern(plain(ad.replace("с переездом", "с переездом в субботу")))).toBeUndefined();
+  // The pay asked about, not offered; a reply to a member asking for work is requested.
+  expect(promoPattern(plain(ad.replace("плачу по 5000. Кто свободен?", "плачу по 5000?")))).toBeUndefined();
+  expect(promoPattern(plain(ad, memberReply("Ищу подработку на выходные, кто может что-то предложить?")))).toBeUndefined();
+  expect(promoPattern(plain(ad + " Подробности при встрече.".repeat(CREW_LENGTH / 20)))).toBeUndefined();
 });
