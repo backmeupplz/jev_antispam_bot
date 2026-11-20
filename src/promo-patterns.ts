@@ -2645,28 +2645,65 @@ const CREW_RUB = re("^(?:руб\\p{L}*|р›|₽)\\.?\\s?");
 // Six to twelve in words, "-и" also joining "-часовой" ("двенадцатичасовая"), so "семьи" or "шестерым" is no number.
 const HOURS_WORD = "(?:‹(?:шест|сем|девят|десят|одиннадцат|двенадцат)[ьи]|‹вос(?:емь|ьми))";
 const LONG_HOURS = `(?:(?<!\\d\\s?[-–—]\\s?)(?<!\\d)(?:[6-9]|1\\d|2[0-4])(?:\\s?[-–—]\\s?\\d{1,2})?|${HOURS_WORD})\\s?[-–]?\\s?(?:час\\p{L}*|ч›)`;
-const WORK_HOURS = LONG_HOURS.replace("|ч›", "");
-// Daily or weekly pay, said with a pay word ("Оплата каждый день", "Еженедельные выплаты", "ЗП каждую неделю"), not "Каждый день новые
+const WORK_HOURS = `(?:${LONG_HOURS.replace("|ч›", "")}|(?<!\\d)(?:(?:[6-9]|1\\d|2[0-4])\\s?[-–—]\\s?\\d{1,2}|24)\\s?ч›)`;
+// Daily, weekly or monthly pay, said with a pay word ("Оплата каждый день", "Еженедельные выплаты", "ЗП каждую неделю"), not "Каждый день новые
 // заказы", nor a pay line followed by one: the words between stay on one line and name no orders after it.
-const CREW_PAID = "(?:оплат|оплач|выплат|расч[её]т|деньг|зарплат|зп|з/п|плат(?:им|ит|ят)›|плачу›)";
-const CREW_EVERY = "(?:кажд(?:ый|ую|ой)\\s(?:день|недел)|еженедельн)";
-const NO_ORDERS = "(?!\\p{L}* (?:нов|есть|работ)|[^\\n.!?]*‹(?:заказ|объект|подработ|клиент|вакан))";
+const CREW_PAID = "(?:оплат|оплач|выплат|выплач|выдач|заплачу›|расплач|получк|расч[её]т|деньг|зарплат|зп|з/п|плат(?:им|ит|ят)›|плачу›)";
+// How or how reliably it is paid ("наличными", "на карту", "СБП", "сразу", "стабильно", "вовремя", "плюс премия").
+const PAY_HOW = "(?:налич|нал(?:ом)?›|безнал|к[эе]ш(?:ем)?›|сразу›|чистыми›|деньгами›|перев|карт|сбп›|аванс|официальн|стабильн|вовремя›|гарантир|всегда›|строго›|плюс›|прем|после›)";
+const CREW_EVERY = "(?:кажд(?:ый|ую|ой|ого|ом)\\s(?:(?:рабоч|отработ)\\p{L}*\\s)?(?:день|дн[яе]|недел|месяц)|еженедельн|ежемесячн)";
+// Orders straight after the period or pay word ("Каждый день заказы", "Каждый день с заказами", "Каждый день оплачиваемые заказы"),
+// not a cut of them ("Оплата каждую неделю с заказов").
+const ORDERS_NEXT = "\\s(?:с\\sзаказами›|заказ(?!чи))";
+// Orders are the bait's news, named by its shape: new orders, orders described in the nominative or counted as many, orders that are
+// there or keep coming, or orders right after the period ("новые заказы", "срочные заказы", "новые заказчики", "куча заказов", "есть
+// заказы", "Заказы каждый день", "заказов много", "Каждый день заказы", "новые объекты", "новые подработки"). Any other order, site,
+// client or job is the work itself ("сбор заказов", "сборка заказов каждый день", "доставка срочных заказов", "работа с постоянными
+// заказчиками", "работа на новом объекте", "Новая вакансия", "подработка на складе"), and so is a "не" after it ("новых клиентов не
+// ищем").
+// A described or recurring order is news only when it ends its clause or a predicate or another description follows ("срочные
+// заказы", "Заказы каждый день, пишите", "заказы всегда есть", "свежие заказы ждут", "заказы каждый день новые", "хорошие заказы и
+// адекватные люди"), not when the work on it follows ("срочные заказы доставляем", "заказы каждый день собираем на складе", "заказы
+// всегда готовы к выдаче", "горячие заказы и напитки развозить", "крупные заказы постоянным клиентам").
+const CLAUSE_END = "(?=\\p{L}*(?:\\s?[,;:.!?…—–(\\n-]|$|\\s(?:есть›|будут›|ид[уё]т›|поступа|ждут›|(?:и\\s\\p{L}+(?:ые|ие|ая)|\\p{L}+(?:ые|(?<![нт])ие))›)))";
+const ORDERS = `[^\\n.!?]*(?:(?:‹нов\\p{L}*\\sзаказ|‹(?:свеж|горяч|срочн|крупн|массов|жирн|хорош|больш|оплачиваем|постоянн|регулярн|ежедневн)\\p{L}*(?:ые|ие)\\sзаказ(?!чи)${CLAUSE_END}|‹нов(?:ые|ых)\\s(?:объект|клиент|подработ|вакан))(?!\\p{L}*\\sне›)`
+  + `|‹(?:много|полно|куч|пачк|сотн|сотк|десятк|поток|вагон|тонн|море)\\p{L}*\\sзаказ|‹(?:есть|будут)\\sзаказ(?!чи)|‹заказов\\s(?:много|полно|хватает|куча|вагон|валом|море)›`
+  + `|‹заказы?\\s(?:есть|будут|поступа|ид[уё]т|на\\s(?:месяц|недел|год))|‹заказы\\s(?:кажд\\p{L}*\\s\\p{L}+|(?:ежедневн|еженед|постоянн|регулярн|стабильн)\\p{L}*|всегда)${CLAUSE_END}|‹${CREW_EVERY}\\p{L}*${ORDERS_NEXT})`;
+const NO_ORDERS = `(?!\\p{L}* (?:нов|есть|работ)|\\p{L}*${ORDERS_NEXT}|${ORDERS})`;
+// A start ("Начало работы 9 ч", "Старт работы 10 часов", "Сбор на работу 8 часов") or a time of day ("9 часов утра") is no shift.
+const START_WORD = "(?:начал[оаи]?|начин\\p{L}*|начн\\p{L}*|старт\\p{L}*|выход\\p{L}*|приступ\\p{L}*)›";
+const GATHER_WORD = "(?:выезд|приезд|приход|подход|сбор›|явк)";
+const TIME_OF_DAY = "(?!\\p{L}*\\s(?:утра|вечера|дня|ночи)›)";
 const SHIFT_HOURS = `(?:\\d|${HOURS_WORD}›|сут(?:ки|ок)›)`;
 const CREW_SHIFT = re(`‹смен[аы]\\s?[:—–-]?\\s?(?:по\\s)?(?:${SHIFT_HOURS}|(?:будн|выходн)\\p{L}*)|‹рабоч\\p{L}*\\s(?:день|смен\\p{L}*)\\s?[:—–-]?\\s?(?:(?:по\\s)?(?:${LONG_HOURS}|сут(?:ки|ок)›)|с\\s\\d)`
-  // After "работ…" a bare "ч" is a clock time ("Работаем 9 ч"), so only "час…" counts as hours worked, and neither a start ("Старт
-  // работы 10 часов", "Сбор на работу 8 часов", not "Сборочные работы 12 часов") nor a time of day ("Работа 9 часов утра") is one. Hours before "рабоч…" count only
-  // with a working day, shift or time ("12ч рабочий день", "8 часов рабочего времени"), not "Сбор 8 часов рабочая одежда".
-  + `|(?<!‹(?:начал|начин|начн|старт|выход|приступ)\\p{L}*\\s(?:на\\s|к\\s)?|‹(?:выезд|приезд|приход|подход|сбор|явк)\\p{L}*\\s(?:на|к)\\s|‹(?:приход|подход)ит?[еь]?\\s)‹работ\\p{L}*\\s(?:на\\s|по\\s)?${WORK_HOURS}(?!\\p{L}*\\s(?:утра|вечера|дня|ночи)›)|${LONG_HOURS}\\s(?:смен[аыу]›|рабоч\\p{L}*\\s(?:день|дн[яеи]|смен|времен))|‹сменн\\p{L}*\\s(?:график|режим|работ)`
+  // After "работ…" a bare "ч" is a clock time ("Работаем 9 ч") unless a range, 24, "на" or "по" makes it a length ("Работа 10-12 ч",
+  // "Работаем по 12 ч", "Выход на работу на 12 часов"). Neither a start ("Старт работы 10 часов", "Сбор на работу 8 часов", not
+  // "Сборочные работы 12 часов") nor a time of day ("Работа 9 часов утра") is one. Hours before "рабоч…" count only with a working
+  // day, shift or time ("12ч рабочий день", "8 часов рабочего времени"), not "Сбор 8 часов рабочая одежда".
+  + `|‹работ\\p{L}*\\s(?:на|по)\\s${LONG_HOURS}${TIME_OF_DAY}|(?<!‹${START_WORD}\\s(?:на\\s|к\\s)?|‹${GATHER_WORD}\\p{L}*\\s(?:на|к)\\s|‹(?:приход|подход)ит?[еь]?\\s)‹работ\\p{L}*\\s${WORK_HOURS}${TIME_OF_DAY}|${LONG_HOURS}\\s(?:смен[аыу]›|рабоч\\p{L}*\\s(?:день|дн[яеи]|смен|времен))|‹сменн\\p{L}*\\s(?:график|режим|работ)`
   + "|‹график\\p{L}*\\s?[:—–-]?\\s?(?:работы\\s?[:—–-]?\\s?)?\\d\\s?/\\s?\\d|‹(?:ежедневн|посменн|посуточн)|‹кажд\\p{L}*\\sсмен|‹за\\sсмен"
-  + `|‹${CREW_PAID}\\p{L}* ?[:—–-]? ?(?:(?:будет|производ\\p{L}*|осуществля\\p{L}*|дела\\p{L}*|ид[её]т|в|конце|строго|стабильно|всегда|тоже|также|у|нас) ){0,2}${CREW_EVERY}${NO_ORDERS}|‹${CREW_EVERY}\\p{L}* ${CREW_PAID}\\p{L}*${NO_ORDERS}`);
+  + `|‹${CREW_PAID}\\p{L}* ?[:—–-]? ?(?:(?:будет|производ\\p{L}*|осуществля\\p{L}*|дела\\p{L}*|ид[её]т|в|за|по|на|через|или|руки|месте|факту|без|задерж\\p{L}*|полност\\p{L}*|только|конце|итогам|окончании|тоже|также|у|нас|${PAY_HOW}\\p{L}*) ){0,4}${CREW_EVERY}${NO_ORDERS}|‹${CREW_EVERY}\\p{L}* ${CREW_PAID}\\p{L}*${NO_ORDERS}`);
 // A sentence after the pay that names the shift or how it is paid carries the pay on ("по 5 т.р. Смена на 12 часов", "по 5 тыс.
-// руб. Наличными в день").
-const CREW_LEAD = re("^(?:(?:за|в|на|с)›|кажд|ежедн|еженед|ежемес|посуточ|почасов|/|смен|наличн|нал(?:ом)?›|чистыми›|деньгами›|переводом›|официальн)");
-// A wage worded another way in the sentence after the pay ("по 5 т.р. Рабочий день 12 часов", "Выплата каждый день", "Это в день",
-// "Работа на неделю", "Смена двенадцать часов"). A few hours or a date stay the bait's ("по 5к. Работы на 2 часа", "Помогите в день
-// переезда").
-const CREW_WAGE = re("‹смен(?:[аеуы]|ой|ам\\p{L}*)›|‹(?:[6-9]|1\\d|2[0-4])\\s?(?:час\\p{L}*|ч)›|‹(?:в|на)\\s(?:(?:рабоч|будн|кажд|целы|полн)\\p{L}*\\s)?(?:день|дн[яеи]\\p{L}*|сутки|суток|недел\\p{L}*|месяц\\p{L}*)›(?!\\s\\p{L})"
-  + "|‹кажд\\p{L}*\\s(?:день|дн|недел|месяц)|/\\s?(?:день|дн|час|смен|сут|нед|мес)|‹(?:ежедневн|еженедельн|ежемесячн|посуточн|почасов)");
+// руб. Наличными в день"). "Каждый день" or "Еженедельно" followed by a word does so only when that word says how or when it is paid
+// ("Каждый день наличными", "Каждую неделю оплата", "Каждый день без задержек"), and only when the sentence names no orders: not
+// for the bait's own news ("по 5 тыс. Каждый день новые заказы", "Каждый день оплата новые заказы", "Каждый день, новые заказы").
+const CREW_LEAD = re("^(?!(?:кажд\\p{L}*\\s(?:день|дн\\p{L}*|недел\\p{L}*|месяц\\p{L}*)|(?:еженед|ежемес)\\p{L}*)"
+  + `(?:\\s(?:и\\s|(?!и\\s))(?!(?:за|в|на|с|по|до|без|кроме|через)›|${CREW_PAID}|${PAY_HOW})\\p{L}|[.!?…]*(?:${ORDERS_NEXT}|${ORDERS})))`
+  + "(?:(?:за|в|на|с)›|кажд|ежедн|еженед|ежемес|посуточ|почасов|/|смен|наличн|нал(?:ом)?›|чистыми›|деньгами›|переводом›|официальн)");
+// A wage worded another way in the sentence after the pay ("по 5 т.р. Рабочий день 12 часов", "Это в день", "Работа на неделю",
+// "Смена двенадцать часов", "Выход на 12 часов", "Выезд на объект 12 часов"). A few hours, a range from under six, a start or a
+// date stay the bait's ("по 5к. Работы на 2 часа", "Работы на 2-6 часов", "Начало работы 9 ч", "Старт завтра 10 часов",
+// "Помогите в день переезда"), but only the nouns "Начало" and "Старт" make one ("Начинаем сразу 12 часов" is a shift). Hours
+// right after "работ…" are left to CREW_SHIFT ("Работаем 9 часов", not "Работаем 9 ч" or "Работа 9 часов утра"), and daily pay
+// to PAID_EVERY.
+const CREW_WAGE = re(`‹смен(?:[аеуы]|ой|ам\\p{L}*)›|(?<!‹работ\\p{L}*\\s(?:на\\s|по\\s)?|‹(?:начал[оа]|старт)\\s(?:\\p{L}+\\s)?)${LONG_HOURS}${TIME_OF_DAY}`
+  + "|‹(?:в|на)\\s(?:(?:рабоч|будн|кажд|целы|полн)\\p{L}*\\s)?(?:день|дн[яеи]\\p{L}*|сутки|суток|недел\\p{L}*|месяц\\p{L}*)›(?!\\s\\p{L})"
+  + "|/\\s?(?:день|дн|час|смен|сут|нед|мес)|‹(?:ежедневн|посуточн|почасов)");
+// The sentence after the pay says it is paid daily, weekly or monthly, worded any way, with a pay word anywhere in it ("по 5 тыс.
+// Зарплата выдаётся каждый день", "Каждый день рассчитываемся", "Аванс переводим каждую неделю", "Заработная плата каждую неделю",
+// "Жалование каждую неделю"), and names no orders.
+const CREW_ZP = re("‹з\\.\\s?пл?›(\\.?)(?=\\s?(\\p{L}*))", "giu");
+const PAID_EVERY = re(`^(?!${ORDERS})(?=.*‹${CREW_EVERY})(?=.*‹(?:${CREW_PAID}|${PAY_HOW}|оклад|заработ|плат(?:[аеуы]|ой)›|жалован|чаев|доход|рас{1,2}ч(?:ит|[её]т)|вознагр|выда|получ|(?:за)?плат(?:и|ят|[её]ж)|аванс|гонорар|ставк|бабк|денеж|налич|начисл|перев(?:од|ед|ож)|перечисл|карт(?:у|ой)›|руки›))`);
 // Words after a dot, past a rouble sign, read from the raw text: a word written only capitalised there starts a new sentence ("по
 // 5к. Справимся за день"); anything else carries the pay clause on ("по 5 тыс. руб. без задержек за смену", all caps, an emoji
 // first), so a writer who never capitalises is missed rather than a wage offer deleted.
@@ -2688,11 +2725,14 @@ const crewPay = (text: string, raw: string) => [...text.matchAll(CREW_PAY)].some
   const after = abbr ? rest.slice(1).trimStart().replace(CREW_RUB, "") : rest;
   const next = abbr ? /^[^,;.!?\n]*/u.exec(after)![0] : "";
   const word = /^\p{L}+/u.exec(next)?.[0];
-  const goesOn = abbr && (!word || CREW_LEAD.test(next) || !startsSentence(raw, word));
+  const goesOn = abbr && (!word || CREW_LEAD.test(after) || !startsSentence(raw, word));
   const clause = `${match[0]} ${/^[^,;.!?\n]*/u.exec(rest)![0]} ${goesOn ? next : ""}`;
-  // The whole next sentence is read for a wage unless it asks something ("по 5 тыс. руб. Кто свободен в день переезда?").
-  const sentence = abbr ? /^[^.!?\n]*\??/u.exec(after)![0] : "";
-  const wage = !sentence.endsWith("?") && CREW_WAGE.test(sentence);
+  // The whole next sentence is read for a wage unless it asks something ("по 5 тыс. руб. Кто свободен в день переезда?"). "з.п."
+  // is "зп", and its last dot ends the sentence only before a capitalised word ("Каждую неделю з.п. и новые заказы", not "Каждую
+  // неделю з.п. Новые заказы").
+  const zp = (_: string, dot: string, word: string) => dot && word && startsSentence(raw, word) ? "зп." : "зп";
+  const sentence = abbr ? /^[^.!?\n]*\??/u.exec(after.replace(CREW_ZP, zp))![0] : "";
+  const wage = !sentence.endsWith("?") && (CREW_WAGE.test(sentence) || PAID_EVERY.test(sentence));
   const pay = value * (scale ? 1000 : 1);
   return pay >= CREW_MIN_PAY && pay <= CREW_MAX_PAY && !CREW_FOREIGN.test(after) && !CREW_PAY_ASKED.test(goesOn ? after : rest) && !CREW_PERIOD.test(clause) && !wage && !CREW_SHIFT.test(rest) && !CREW_SPLIT.test(clause) && !CREW_COST.test(match[0]);
 });
