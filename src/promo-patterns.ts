@@ -24,6 +24,8 @@ import type { ModerationMessage } from "./spam";
 // least CREW_MIN_PAY a head ("Привет всем… нужно 3-4 человека, оплачу по 5200"), naming no address, time, item or contact.
 // #668 adds the "chat is moving" lure (`chat_moved_lure`): the chat or group is said to move, and the reader is told to tap this
 // text, press Start, or open a bot's ?start= link, the guest-bot reply a hijacked member's bot summon brings in.
+// #779 adds search-code bait (`search_code_bait`): a code to type into Telegram search ("в поиске PLG135") in a message disguised
+// letter by letter (mixed scripts, stray accents, a zero for o), or in plain free child or adult content wording.
 export type PromoPattern =
   | "chat_moved_lure"
   | "side_gig_offer"
@@ -37,6 +39,7 @@ export type PromoPattern =
   | "money_bait"
   | "courier_recruitment"
   | "crew_recruitment"
+  | "search_code_bait"
   | "odd_job_linked"
   | "cjk_job_spam"
   | "cjk_job_mention"
@@ -2720,6 +2723,101 @@ function crewRecruitment(message: ModerationMessage, raw: string, text: string):
   return !answersRequest(message, (source) => GIG.test(source) || SEEKER.test(source) || WORK_TOPIC.test(source));
 }
 
+// --- Search-code bait (#779): no link or handle, only a code to type into Telegram search, e.g. "🔮 ДẼЕТ S̃K0E БEС̇П̂ЛӒӒTH0 🍇
+// 🍃 В п̃oо𝚞́𝚜̃𝚔𝚎 PLG135". ---
+export const SEARCH_CODE_LENGTH = 600;
+// Two to six Latin letters then two to six digits, standing alone: "PLG135", also in math letters and before a full stop. Raw
+// text, so a Cyrillic word never counts.
+const SEARCH_CODE = /(?<![\p{L}\p{N}@/._-])[A-Za-z]{2,6}\d{2,6}(?![\p{L}\p{N}/_-])(?!\.[\p{L}\p{N}])/u;
+// A word is disguised when a Latin letter that looks Cyrillic (a, c, e, o, p, x, y, k, m, t, b; math letters count) sits
+// between Cyrillic letters, or the reverse ("БEСП", "п̃oо𝚞́𝚜̃𝚔𝚎"); when it keeps an accent no precomposed letter absorbs
+// (S̃, П̂); or when a zero stands between letters of a Cyrillic word ("ДЕТСК0Е"). Only lookalikes count: Tatar, Kazakh or Chuvash typed with Latin ə,
+// ç or ă, Bashkir with a Latin h for һ, Ukrainian with a Latin i ("Привiт") and a brand glued to a preposition ("вTelegramе") are no disguise. Nor are a
+// Latin word with a Russian ending ("iPhoneы"), a stress mark ("звони́т"), names and hex such as "P0", "Layer0" or "0xC0DE",
+// styled text in one script ("𝐇𝐞𝐥𝐥𝐨"), or Greek (µF, kΩ, Δx). Three such words, distinct, are the obfuscation.
+const DISGUISE_WORDS = 3;
+const LATIN_LOOKALIKE = /^[acekmopxytbACEKMOPXYTB]$/u;
+function disguised(word: string): boolean {
+  // Strike-through, (double) underline, (double) overline and crossed-out x marks (U+0305, U+0332–U+0338, U+033D, U+033F, U+0353)
+  // style a crossed-out price, and the double-width marks (U+035C–U+0362) draw kaomoji such as ( ͡° ͜ʖ ͡°), not a disguise.
+  // Only when at most half the letters carry one: the spam marks one or two letters a word, while fancy-text generators, Zalgo,
+  // IPA ([ɑ̃]) and math hats (х̂) mark every letter. Only a plain Latin or a Cyrillic letter counts, and none in a word with an
+  // IPA letter, so IPA ([bɔ̃], [nɐ̃w̃]) never does, and a mark on no letter (kaomoji, a lone combining mark) neither.
+  const marked = /[\u0250-\u02af]/u.test(word) ? 0 : (word.match(/\p{L}\p{M}*[\u0302-\u0304\u0306-\u0331\u0339-\u033c\u033e\u0340-\u0352\u0354-\u035b\u0363-\u036f]/gu) ?? [])
+    .filter((letter) => /^[A-Za-z\p{Script=Cyrillic}]/u.test(letter.normalize("NFKD"))).length;
+  if (marked && marked * 2 <= (word.match(/\p{L}/gu)?.length ?? 0)) return true;
+  // A zero between letters disguises a Cyrillic word ("SK0E" carries an accent too); "L0L" or "n0pe" alone is gamer slang.
+  if (/\p{Script=Cyrillic}/u.test(word) && !/[1-9]/u.test(word) && !/^0/u.test(word) && /\p{L}0\p{L}/u.test(word)) return true;
+  // An accented Latin letter (ă, ç) is a letter of its own language, never a lookalike; a math letter folds to its plain form.
+  const scripts = [...word.normalize("NFC")].map((char) => /\p{Script=Cyrillic}/u.test(char) ? "C"
+    : LATIN_LOOKALIKE.test(char.normalize("NFKD")) && char.normalize("NFKD").length === 1 ? "L"
+    : /\p{Script=Latin}/u.test(char.normalize("NFKD")) ? "x" : "").join("");
+  return /CL+C|LC+L/u.test(scripts);
+}
+// Plain wording: a search cue right before the code (a dash may sit between), free, and child or adult content
+// ("Детское бесплатно. В поиске PLG135"), in transliteration too ("detsk0e besplatn0 v poiske PLG135").
+const SEARCH_CUE = re("‹(?:в поиске|в поиск|поиск|v poiske|poisk|ищи|ищите|вбей|вбейте|введи|введите|search|find|type)›\\s?[:–—-]?\\s?[a-z]{2,6}\\d{2,6}›");
+const SEARCH_FREE = re("‹(?:бесплатн|besplatn|халяв|free›)");
+// "Детское бесплатно" names the content only when it opens a line or sentence; anywhere else it is a thing given away or
+// asked for ("Отдам почти новое детское бесплатно", "Кресло детское, доставка бесплатно", "Есть бесплатно детское?"), and
+// so are "детское питание/фото". No giveaway verb excuses "детское видео/контент". "18+" alone is an age limit (driving
+// courses); only "18+ видео/контент/фото" is content. "Школьниц", "малолет" and "несовершеннолет" fill camp and ticket
+// notices, so they count only beside "видео", "фото" or "контент"; "ЦП" is also a CPU, so it counts only right before
+// "видео" or "бесплатно", or after them at a phrase end ("бесплатно ЦП видеокарту" is hardware; only a Cyrillic "цп": a
+// Latin "cp" is what "ср", Wednesday, folds to). A content word ends at a letter, digit or hyphen ("видеокарта", "видео-уроки").
+const MINORS = "(?:малолет|школьниц|несовершеннолет)\\p{L}*";
+const SEARCH_CONTENT = "(?:виде[о0]|ф[о0]т[о0]|контент\\p{L}{0,2})(?![\\p{L}\\p{N}-])";
+// "Интим не предлагать" is stock wording in rental and job ads, and a blocker or protection names porn it fights ("блокировщик
+// порно", "защита от порно").
+const NOT_AGAINST = "(?<!‹(?:блокиров\\p{L}*|защит\\p{L}*|против|от)\\s)";
+const SEARCH_BAIT = re(`‹(?:(?:детск[о0]е|detsk[o0]e)\\s?(?:виде[о0]|контент\\p{L}{0,2})(?![\\p{L}\\p{N}-])|${MINORS}\\s${SEARCH_CONTENT}|(?:виде[о0]|ф[о0]т[о0]|контент\\p{L}{0,2})\\s(?:со?\\s)?${MINORS}|loli›|${NOT_AGAINST}(?:п[o0]рн|p[o0]rn)|nudes|нюдс|интим›(?!\\s?не\\s(?:предлага|интересу|нуж[её]?н))|интимн\\p{L}{0,3}\\s${SEARCH_CONTENT}(?:\\sи\\s${SEARCH_CONTENT})?(?:[\\s!.,]{0,3}бесплатн|[\\s!.,:–—-]{0,4}бесплатн[о0]›(?![^\\S\\n]?(?!ищи|в поиск|поиск|вбей|введи|search|find)\\p{L}))|бесплатн\\p{L}*[\\s!.,:–—-]{1,4}интимн\\p{L}{0,3}\\s${SEARCH_CONTENT}|18 ?\\+\\s?(?:${SEARCH_CONTENT}|video›|content›))`);
+// Weaker wording that a giveaway or a marketplace excuses ("Детское бесплатно отдаю, на Юле в поиске LOT123", "Отдам ЦП
+// бесплатно, на Авито ищи FX8350"). "Детское бесплатно" opens a line or sentence and may be split by a full stop or an
+// exclamation ("Детское. Бесплатно."), but not by a dash or comma, the shape of a price list ("Детское — бесплатно,
+// взрослое — 300 ₽"); "бесплатное питание" is a thing. Reversed, "Бесплатно детское" must end its sentence.
+const SEARCH_KIDS = re(`(?:^|[.!?\\n]\\s?)(?:(?:детск[о0]е|detsk[o0]e)[\\s.!]{0,5}(?:бесплатн|besplatn)[о0]›|(?:бесплатн|besplatn)[о0]\\s(?:детск[о0]е|detsk[o0]e)(?=\\s?(?:[.!\\n]|$)))`);
+// A price list excuses it ("Детское бесплатно, взрослое 500 ₽"): a price, or "взрослое" right before a number that is no age ("18+", "18 лет"). "р" needs a
+// space before it, so "1080p" is no price. Hardware words, or "(никто) не отдаст/дадут" right after the free word, excuse
+// "ЦП бесплатно" ("Видюху не бери, ЦП бесплатно никто не отдаст"); any other "не" is ad copy ("ЦП бесплатно не пропусти!").
+const PRICE_LIST = re("‹взросл\\p{L}*\\s?[:–—-]?\\s?(?:по\\s|от\\s)?\\d(?!\\d*\\s?(?:\\+|лет›))|\\d\\s?(?:₽|руб)|\\d\\sр(?:›|\\.)");
+const SEARCH_CPU = re(`‹цп›(?=\\s?(?:видео(?![\\p{L}\\p{N}-])|бесплатн))|‹(?:видео|бесплатн\\p{L}*)\\s?цп›(?!\\s?\\p{L})`);
+const CPU_TALK = re("‹бесплатн\\p{L}*\\s(?:никто\\s|ничего\\s)?не\\s(?:отда|дад|дае|да[её]т|даст)|‹(?:видюх|видеокарт|проц›|процессор|материнк|бп›|б/у›|rtx|gtx|ryzen|intel|amd›|cpu›|gpu›|fx\\d{4}›|xeon|pentium|athlon|celeron|сокет|socket)");
+const GIVEAWAY = re("‹(?:отдам|отдаю|отда[её]м|раздаю|раздам|дарю|дарим|продаю|продам|куплю|размер|забирайте|самовывоз|авито|avito|юл[аеу]|озон|ozon|olx|kufar|wb|wildberries)›");
+// An admission age excuses it in a ticket notice only ("Детское бесплатно до 7 лет. Введите NY2025 при покупке"); the bait
+// names an age too ("ДЕТСКОЕ БЕСПЛАТНО до 14 лет"), and "Входи", "вход свободный" or "без покупки" sell no ticket.
+const ADMISSION = re("‹до\\s\\d{1,2}\\s?(?:лет›|год)|‹(?:детям|детей)\\sдо\\s\\d");
+const TICKET = re("‹(?:билет\\p{L}{0,2}|при покупке|при входе|на входе)›");
+const CODE_WORD = /^[A-Za-z]{2,6}\d{2,6}$/u;
+const ZERO_LOOKALIKES = /^[acekmopxytbshiACEKMOPXYTBSHI]+(?:0[acekmopxytbshiACEKMOPXYTBSHI]+)+$/u;
+
+// Three disguised words; or two and the free word or search cue (the sample half disguised); or the plain wording with the
+// cue itself disguised ("ДЕТСКОЕ БЕСПЛАТНО\nВ п̃oо𝚞́𝚜̃𝚔𝚎 PLG135").
+function searchCodeBait(raw: string, text: string): boolean {
+  // NFKC reads "№45" as the code "No45"; an invisible character splits no code or word ("PLG\u200b135").
+  const cleaned = raw.replaceAll("№", " ").replace(/[\p{Cf}\u034f\u115f\u1160\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0]/gu, "");
+  if (cleaned !== raw) text = promoText(raw = cleaned);
+  if (raw.length > SEARCH_CODE_LENGTH || !SEARCH_CODE.test(raw.normalize("NFKC"))) return false;
+  const words = raw.normalize("NFC").split(/[^\p{L}\p{M}\p{N}]+/u);
+  const masked = new Set(words.filter(disguised));
+  // A zero between letters of a word typed in Latin lookalikes only ("SK0E", "TH0E"; also S, H and I, as in Ѕ, Н and І) is part
+  // of the disguise once two Cyrillic words are disguised by mixed scripts or an accent, not by a zero alone: gamer slang such as
+  // "Л0Л t0p" or "L0L" stays slang, and one typo ("Пpивет! Продаю XB0X") makes no product name a disguise.
+  if ([...masked].filter((word) => /\p{Script=Cyrillic}/u.test(word) && disguised(word.replaceAll("0", ""))).length >= 2) {
+    for (const word of words) if (ZERO_LOOKALIKES.test(word.normalize("NFKC"))) masked.add(word);
+  }
+  const disguise = masked.size;
+  const cue = SEARCH_CUE.test(text);
+  const disguisedCue = words.some((word, index) => CODE_WORD.test(words[index + 1]?.normalize("NFKC") ?? "") && disguised(word));
+  const free = SEARCH_FREE.test(text);
+  // A sale typed with Latin lookalikes ("Пpoдaм iPhone13, дocтaвкa бесплатно") is no bait; one with accents or a zero in a
+  // word is ("ДẼЕТ S̃K0E БEС̇П̂ЛӒӒTH0 дарю").
+  // A disguised "Детское бесплатно" with the cue is bait whatever word joins it ("ДEТCKOE БECПЛATHO дарю\nВ пoиcкe PLG135").
+  const sale = GIVEAWAY.test(text) && !SEARCH_BAIT.test(text) && !(cue && SEARCH_KIDS.test(text)) && !/[\u0300-\u036f]|\p{L}0\p{L}/u.test(raw.normalize("NFC"));
+  if (!sale && (disguise >= DISGUISE_WORDS || disguise >= 2 && (cue || free))) return true;
+  const kids = SEARCH_KIDS.test(text) && !PRICE_LIST.test(text) && !(ADMISSION.test(text) && TICKET.test(text)) || SEARCH_CPU.test(text) && !CPU_TALK.test(text);
+  return (cue || disguisedCue) && free && (SEARCH_BAIT.test(text) || kids && !GIVEAWAY.test(text));
+}
+
 function isAttributed(raw: string): boolean {
   const name = ATTRIBUTED.exec(raw)?.[0];
   if (!name) return false;
@@ -3081,6 +3179,7 @@ export function promoPattern(message: ModerationMessage): PromoPattern | undefin
   if (moneyBaitIn(message, raw, text) && !callsItACon(undenied)) return "money_bait";
   if (courierRecruitment(message, raw, text)) return "courier_recruitment";
   if (crewRecruitment(message, raw, text) && !callsItACon(undenied)) return "crew_recruitment";
+  if (searchCodeBait(raw.replace(QUOTED, " "), text)) return "search_code_bait";
   if (raw.length <= HOOK_LENGTH && mindsetHook(message, raw, promoText(raw.replace(QUOTED, " ").replace(/[^\S\n]*\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0F\u200D]*\s*(?=\p{Lu})/gu, "\n")))) return "mindset_hook";
   if (ADDRESSED.test(text) || answersRequest(message, (source) => BOT_TOPIC.test(source))) return;
   for (const match of text.matchAll(TESTIMONIAL)) {

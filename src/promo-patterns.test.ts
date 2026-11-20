@@ -27,8 +27,9 @@ import {
 } from "./fixtures/cjk-job-spam";
 import {
   botSummon, carriesLink, chatMovedLure, CJK_MENTION_MIN_SCORE, COURIER_LENGTH, CREW_LENGTH, CREW_MAX_PAY, CREW_MIN_PAY, cjkJobSpam, moneyBait, oddJobOpener, PATTERN_MIN_SCORE, patternMinScore, promoPattern,
-  promoText,
+  promoText, SEARCH_CODE_LENGTH,
 } from "./promo-patterns";
+import { searchCodeBaitAds, searchCodeBaitControls, searchCodeBaitIncident } from "./fixtures/search-code-bait";
 import type { ModerationMessage } from "./spam";
 import { crewRecruitmentAds, crewRecruitmentControls, crewRecruitmentIncident } from "./fixtures/crew-recruitment";
 import { courierRecruitmentAds, courierRecruitmentAnswer, courierRecruitmentControls, courierRecruitmentIncident, courierRecruitmentRequest, courierRecruitmentReview2Ads, courierRecruitmentReview2Controls, courierRecruitmentReview3Ads, courierRecruitmentReview3Controls, courierRecruitmentReview4Ads, courierRecruitmentReview4Controls, courierRecruitmentReview5Controls, courierRecruitmentReview6Ads, courierRecruitmentReview6Controls, courierRecruitmentReview7Ads, courierRecruitmentReview7Controls, courierRecruitmentReview8Ads, courierRecruitmentReview8Controls, courierRecruitmentReview9Ads, courierRecruitmentReview9Controls, courierRecruitmentReviewAds, courierRecruitmentReviewControls } from "./fixtures/courier-recruitment";
@@ -790,4 +791,82 @@ test("#777 each part is needed: a greeting, a crew of two or more, a flat pay of
   expect(promoPattern(plain(ad.replace("плачу по 5000. Кто свободен?", "плачу по 5000?")))).toBeUndefined();
   expect(promoPattern(plain(ad, memberReply("Ищу подработку на выходные, кто может что-то предложить?")))).toBeUndefined();
   expect(promoPattern(plain(ad + " Подробности при встрече.".repeat(CREW_LENGTH / 20)))).toBeUndefined();
+});
+
+const searchBait = "search_code_bait";
+test("the #779 search-code bait matches standalone, as a channel-post comment, forwarded and as a reply", () => {
+  for (const patch of [{}, channelReply, { isForwarded: true }, memberReply("Ребята, кто знает хороший детский сад в центре?")]) {
+    expect(promoPattern(plain(searchCodeBaitIncident, patch))).toBe(searchBait);
+  }
+});
+
+test("#779 the incident still matches with any single accent dropped, precomposed ones (Ẽ, Ӓ) included", () => {
+  const chars = [...searchCodeBaitIncident];
+  const variants = chars.flatMap((char, index) => {
+    const bare = /\p{M}/u.test(char) ? "" : char.normalize("NFD").replace(/\p{M}/gu, "");
+    return bare === char ? [] : [[...chars.slice(0, index), bare, ...chars.slice(index + 1)].join("")];
+  });
+  expect(variants.length).toBeGreaterThan(10);
+  expect(variants.filter((text) => promoPattern(plain(text)) !== searchBait)).toEqual([]);
+});
+
+test("#779 only the stock 'Интим не предлагать' and porn fought as a whole word are excused; Latin slang needs a real disguise", () => {
+  for (const text of ["Hot porn free, search PLG135", "Вот порно бесплатно, в поиске PLG135", "Разблокировка порно бесплатно, ищи PLG135",
+    "Интим! Не пропусти! Бесплатно. В поиске PLG135", "Интим не дорого! Бесплатно первым. В поиске PLG135"]) {
+    expect(promoPattern(plain(text))).toBe(searchBait);
+  }
+  for (const text of ["Л0Л t0p бесплатно AK47", "Интим не нужен! Обучение бесплатно. Введите INVITE25", "к0роче h0t сетап, введи CODE24", "н0рм b0t, бесплатно, введи BOT24"]) {
+    expect(promoPattern(plain(text))).toBeUndefined();
+  }
+});
+
+test.each(searchCodeBaitAds)("#779 search-code bait variant matches: %s", (text) => {
+  expect(promoPattern(plain(text))).toBe(searchBait);
+});
+
+test("#779 the code is no code inside a file name, domain, handle or longer token", () => {
+  for (const code of ["PLG135.txt", "PLG135.com", "@PLG135", "PLG135_bot", "ABCDEFGH135", "PLG135x", "PLG135/1", "PLG1234567"]) {
+    expect(promoPattern(plain(`🔮 ДẼЕТ S̃K0E БEС̇П̂ЛӒӒTH0 🍇\n🍃 В п̃oо𝚞́𝚜̃𝚔𝚎 ${code}`))).toBeUndefined();
+  }
+});
+
+test("#779 search-code bait controls never match: bare promo codes, named giveaways, styled text, layout slips and reports", () => {
+  expect(searchCodeBaitControls.filter((text) => promoPattern(plain(text)) || promoPattern(plain(text, { isForwarded: true })))).toEqual([]);
+});
+
+test("#779 each part is needed: the code, three disguised words or the plain bait wording, and a short message", () => {
+  // No code: the disguise alone does not delete.
+  expect(promoPattern(plain("🔮 ДẼЕТ S̃K0E БEС̇П̂ЛӒӒTH0 🍇\n🍃 В п̃oо𝚞́𝚜̃𝚔𝚎"))).toBeUndefined();
+  // Two disguised words need the free word or the search cue; one needs the plain wording and must be the cue itself.
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 PLG135"))).toBeUndefined();
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 бесплатно PLG135"))).toBe(searchBait);
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 в поиске PLG135"))).toBe(searchBait);
+  expect(promoPattern(plain("ДẼЕТ S̃K0E бесплатно PLG135"))).toBeUndefined();
+  expect(promoPattern(plain("ДЕТСКОЕ БЕСПЛАТНО п̃oо𝚞́𝚜̃𝚔𝚎, код PLG135"))).toBeUndefined();
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 п̃oо𝚞́𝚜̃𝚔𝚎 PLG135"))).toBe(searchBait);
+  // A word counts as disguised by marks only when at most half its letters carry them.
+  expect(promoPattern(plain("S̃̃K̃E S̃K0E БEС̇П̂ЛӒӒTH0 PLG135"))).toBeUndefined();
+  // An accented Latin letter is a letter of its own language (Chuvash ă), not a lookalike: "ДẼЕТ" alone is no disguise.
+  expect(promoPattern(plain("ДẼЕТ S̃K0E БEС̇П̂ЛӒӒTH0 PLG135"))).toBeUndefined();
+  // The same disguised word repeated counts once.
+  expect(promoPattern(plain("ДẼЕТ ДẼЕТ ДẼЕТ PLG135"))).toBeUndefined();
+  // A code needs two digits, and digits only are no code.
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 п̃oо𝚞́𝚜̃𝚔𝚎 PLG1"))).toBeUndefined();
+  expect(promoPattern(plain("S̃K0E БEС̇П̂ЛӒӒTH0 п̃oо𝚞́𝚜̃𝚔𝚎 135135"))).toBeUndefined();
+  // Plain wording needs the cue right before the code, free, and the content.
+  expect(promoPattern(plain("Детское бесплатно. В поиске PLG135"))).toBe(searchBait);
+  expect(promoPattern(plain("Детское бесплатно. Код PLG135"))).toBeUndefined();
+  expect(promoPattern(plain("Детское. В поиске PLG135"))).toBeUndefined();
+  expect(promoPattern(plain("Бесплатно. В поиске PLG135"))).toBeUndefined();
+  // Too long.
+  expect(promoPattern(plain(searchCodeBaitIncident + " а".repeat(SEARCH_CODE_LENGTH)))).toBeUndefined();
+});
+
+test("#779 matching stays fast on long adversarial input", () => {
+  for (const text of ["П̃".repeat(300), "ДẼЕТ ".repeat(120) + "PLG135", "a0".repeat(300), "в поиске ".repeat(66) + "PLG135",
+    "детское ".repeat(75) + "PLG135", "AB12 ".repeat(120)]) {
+    // The code goes first so the slice keeps it and each input reaches the disguise and bait matching.
+    const bounded = ("PLG135 " + text).slice(0, SEARCH_CODE_LENGTH);
+    expect(fastest(() => promoPattern(plain(bounded)))).toBeLessThan(LINEAR_MS);
+  }
 });

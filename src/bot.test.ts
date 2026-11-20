@@ -40,6 +40,7 @@ import { bookCopyControls, bookCopyFamily, bookCopyIncident } from "./fixtures/b
 import { payoutTestimonialAds, payoutTestimonialControls, payoutTestimonialIncident } from "./fixtures/payout-testimonial";
 import { crewRecruitmentAds, crewRecruitmentControls, crewRecruitmentIncident } from "./fixtures/crew-recruitment";
 import { courierRecruitmentAds, courierRecruitmentControls, courierRecruitmentIncident } from "./fixtures/courier-recruitment";
+import { searchCodeBaitAds, searchCodeBaitControls, searchCodeBaitIncident } from "./fixtures/search-code-bait";
 import { profitTestimonialAnswer, profitTestimonialControls, profitTestimonialFamily, profitTestimonialFrDeControls, profitTestimonialFrDeIncidents,
   profitTestimonialIncident, profitTestimonialRequest } from "./fixtures/profit-testimonial";
 import { airdropButtons } from "./fixtures/media-buttons";
@@ -2931,6 +2932,29 @@ test("the #777 crew recruitment is deleted by its pattern; controls stay kept; t
   ]);
   expect(h.logs.filter((log) => log.event === "spam_deleted").map((log) => [log.messageId, log.rule])).toEqual([[1, "crew_recruitment"], [2, "crew_recruitment"]]);
   expect(JSON.stringify(h.logs)).not.toContain("человека");
+  await h.stats.stop();
+});
+
+// #779: the search-code bait. The live model scored the reported text 0.8908 standalone (a model delete) and 0.7853 after one
+// context message, under the gate; the rule covers the band below it.
+test("the #779 search-code bait is deleted by its pattern under the gate; controls stay kept; telemetry carries no text", async () => {
+  const h = harness();
+  h.setAnswer(keepAt(0.7853));
+  await h.send({ text: searchCodeBaitIncident });
+  h.setAnswer(keepAt(0.5));
+  await h.send({ chat: groupB, text: searchCodeBaitAds[1] });
+  // Above the 0.20 pattern floor, under the 0.5 repeat floor: the price-list controls are near-copies from one sender.
+  h.setAnswer(keepAt(0.49));
+  const controls: number[] = [];
+  for (const [index, text] of searchCodeBaitControls.entries()) controls.push(await h.send({ chat: [group, groupB, groupC][index % 3], text }));
+  h.setAnswer(keepAt(0.19));
+  const floor = await h.send({ text: searchCodeBaitIncident });
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected" && controls.includes(log.messageId as number))).toEqual([]);
+  expect(deleted(h)).toEqual([[group.id, 1], [groupB.id, 2]]);
+  expect(h.logs.filter((log) => log.event === "promo_pattern_detected").map((log) => [log.messageId, log.pattern, log.confidence, log.decision])).toEqual([
+    [1, "search_code_bait", 0.7853, "pattern_delete"], [2, "search_code_bait", 0.5, "pattern_delete"], [floor, "search_code_bait", 0.19, "keep"],
+  ]);
+  expect(JSON.stringify(h.logs)).not.toContain("PLG135");
   await h.stats.stop();
 });
 
